@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nahriva-grid-analysis-backend"
+version = "1.0.0"
+description = "Nahriva Grid Analysis — simulation results and FDWH analytics"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.12,<1",
+    "uvicorn[standard]>=0.30.6,<1",
+    "orjson>=3.10.7,<4",
+    "sqlalchemy>=2.0.35,<3",
+    "oracledb>=2.0.0,<27",
+    "pydantic>=2.11,<3",
+    "python-jose[cryptography]>=3.5.0,<4",
+    "python-multipart>=0.0.22,<1",
+    "openpyxl>=3.1.5,<4",
+    "reportlab>=4.4,<5",
+    "requests>=2.32.4,<3",
+]
+
+[project.optional-dependencies]
+duckdb = ["duckdb>=1.0,<2"]
+dev = ["pytest>=8.3.3,<9", "httpx>=0.28.1,<1", "ruff>=0.11,<1"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.analysis" = ["migrations/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]

@@ -1,0 +1,13 @@
+{
+  "name": "dashb-backend-docs-assets",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Not part of the running app. Fetches pinned swagger-ui-dist/redoc packages (via npm, lockfile-pinned and auditable) and copies the few files app/main.py serves locally at /docs and /redoc, so the API docs render without depending on a CDN at runtime.",
+  "scripts": {
+    "fetch": "node fetch-assets.mjs"
+  },
+  "dependencies": {
+    "swagger-ui-dist": "^5.17.14",
+    "redoc": "^2.1.5"
+  }
+}
