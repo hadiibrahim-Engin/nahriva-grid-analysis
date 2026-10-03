@@ -1,0 +1,92 @@
+/* grid-map.css — animations and resets for GridMapLibre */
+
+@keyframes grid-map-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Ensure MapLibre canvas fills its host exactly */
+.grid-map-libre .maplibregl-canvas-container,
+.grid-map-libre .maplibregl-canvas {
+  width:  100% !important;
+  height: 100% !important;
+}
+
+/* Attribution: a clearly visible, themed info button that expands on hover or
+   click so curious users can see the OpenStreetMap / CARTO sources. */
+.grid-map-libre .maplibregl-ctrl-attrib.maplibregl-compact {
+  background:     transparent;
+  box-shadow:     none;
+  min-height:     26px;
+}
+
+/* Collapsed state: a prominent circular "i" toggle. */
+.grid-map-libre .maplibregl-ctrl-attrib-button {
+  width:          26px;
+  height:         26px;
+  border-radius:  9999px;
+  background-color: var(--grid-surface, rgba(20, 20, 35, 0.92));
+  background-image: none;
+  border:         1px solid var(--grid-border, rgba(255, 255, 255, 0.25));
+  box-shadow:     0 1px 6px rgba(0, 0, 0, 0.3);
+  cursor:         pointer;
+  display:        flex;
+  align-items:    center;
+  justify-content: center;
+  transition:     background-color 0.15s ease, transform 0.15s ease;
+}
+.grid-map-libre .maplibregl-ctrl-attrib-button::after {
+  content:        "i";
+  font-family:    Georgia, "Times New Roman", serif;
+  font-style:     italic;
+  font-weight:    700;
+  font-size:      14px;
+  line-height:    1;
+  color:          var(--grid-primary, #3b82f6);
+}
+.grid-map-libre .maplibregl-ctrl-attrib-button:hover {
+  background-color: var(--grid-control-hover, rgba(255, 255, 255, 0.12));
+  transform:      scale(1.08);
+}
+
+/* Expanded state (hover or click): a readable themed panel. */
+.grid-map-libre .maplibregl-ctrl-attrib.maplibregl-compact:hover,
+.grid-map-libre .maplibregl-ctrl-attrib.maplibregl-compact-show {
+  background:     var(--grid-surface, rgba(20, 20, 35, 0.92));
+  border:         1px solid var(--grid-border, rgba(255, 255, 255, 0.18));
+  border-radius:  6px;
+  padding:        4px 30px 4px 9px;
+  box-shadow:     0 2px 10px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+}
+.grid-map-libre .maplibregl-ctrl-attrib.maplibregl-compact:hover .maplibregl-ctrl-attrib-inner,
+.grid-map-libre .maplibregl-ctrl-attrib.maplibregl-compact-show .maplibregl-ctrl-attrib-inner {
+  display:        block;
+  font-size:      10.5px;
+  line-height:    1.45;
+  color:          var(--grid-text, #e6e6e6);
+}
+.grid-map-libre .maplibregl-ctrl-attrib a {
+  color:          var(--grid-primary, #6db3ff);
+  text-decoration: underline;
+}
+
+/* Navigation control */
+.grid-map-libre .maplibregl-ctrl-group {
+  background: var(--grid-surface, rgba(20, 20, 35, 0.9));
+  border:     1px solid var(--grid-border, rgba(255,255,255,0.12));
+}
+.grid-map-libre .maplibregl-ctrl-group button {
+  color:      var(--grid-text, #e0e0e0);
+  background: transparent;
+}
+.grid-map-libre .maplibregl-ctrl-group button:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+/* Scale bar */
+.grid-map-libre .maplibregl-ctrl-scale {
+  background:  rgba(20,20,35,0.7);
+  border-color: var(--grid-border, rgba(255,255,255,0.3));
+  color:        var(--grid-text, #ccc);
+  font-size:    10px;
+}

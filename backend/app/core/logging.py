@@ -17,7 +17,7 @@ from typing import Any
 
 request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 
-# Accumulated Oracle/DB execution time for the current request, in
+# Accumulated DB execution time for the current request, in
 # milliseconds. The repository adds to it per statement; middleware reads
 # it to emit a Server-Timing header and a structured `db_ms` log field.
 db_time_ms_var: ContextVar[float] = ContextVar("db_time_ms", default=0.0)

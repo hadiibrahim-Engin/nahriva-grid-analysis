@@ -2,54 +2,44 @@ async (page) => {
   const errors = [];
   const onError = error => errors.push(error.message);
   page.on('pageerror', onError);
-  const base = new URL(page.url()).origin;
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
-  async function change(action, match = () => true) {
-    const pending = page.waitForResponse(r => r.url().includes('/api/analysis/query?') && match(r.url()));
-    await action();
-    const response = await pending;
-    assert(response.status() === 200, `Query failed: ${response.status()}`);
-    const data = await response.json();
-    await page.getByRole('region', { name: 'Kennzahlen' }).waitFor();
-    return data;
-  }
   try {
-    await page.goto(base + '/');
-    await page.getByRole('region', { name: 'Kennzahlen' }).waitFor();
-    const compared = await change(() => page.getByRole('combobox', { name: 'Vergleichs-Run', exact: true }).selectOption('demo-reference'), url => url.includes('compare_run_id=demo-reference'));
-    assert(compared.comparison.matched_count > 0 && compared.comparison.mean_delta > 0, 'Comparison must use matching pairs');
-    await page.getByRole('button', { name: 'Trafo Mitte T2 elm-006', exact: true }).click();
-    await page.getByRole('region', { name: 'Ausgewähltes Element' }).waitFor();
-    await page.getByText('Elementreferenz anzeigen', { exact: true }).click();
-    assert((await page.locator('pre').innerText()).includes('"id": "elm-006"'), 'Stable element ID missing');
-    const selected = await change(() => page.getByRole('button', { name: 'Nur dieses Element analysieren', exact: true }).click(), url => url.includes('element_ids=elm-006'));
-    assert(selected.meta.element_count === 1 && selected.stats.count === 192, 'Element filter did not affect KPIs');
-    const downloadPromise = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'CSV exportieren', exact: true }).click();
-    const download = await downloadPromise; await download.saveAs('output/playwright/analysis.csv');
-    const empty = await change(() => page.getByRole('textbox', { name: 'Element suchen', exact: true }).fill('nicht-vorhanden'), url => url.includes('search=nicht-vorhanden'));
-    assert(empty.stats.count === 0 && empty.elements.length === 0, 'Empty filter result is stale');
-    await page.getByRole('heading', { name: 'Keine gültigen Messwerte in dieser Auswahl' }).waitFor();
-    await change(() => page.getByRole('button', { name: 'Filter zurücksetzen', exact: true }).click(), url => !url.includes('search=') && !url.includes('element_ids='));
-    const voltage = await change(() => page.getByRole('combobox', { name: 'Messgröße', exact: true }).selectOption('voltage'), url => url.includes('metric_id=voltage'));
-    assert(voltage.metric.unit === 'p.u.' && voltage.stats.count === 384, 'Voltage switch is inconsistent');
-    await page.reload();
-    await page.getByRole('region', { name: 'Kennzahlen' }).waitFor();
-    assert(await page.getByRole('combobox', { name: 'Messgröße', exact: true }).inputValue() === 'voltage', 'URL filters did not survive reload');
-    await page.getByRole('link', { name: 'FDWH-Messdaten', exact: true }).click();
-    await page.getByRole('heading', { name: 'Oracle ist noch nicht konfiguriert' }).waitFor();
-    await page.getByRole('link', { name: 'Datenquellen', exact: true }).click();
-    await page.getByRole('heading', { name: 'Datenquellen', exact: true }).waitFor();
-    await page.getByRole('link', { name: 'Analyseübersicht', exact: true }).click();
-    await page.getByRole('region', { name: 'Kennzahlen' }).waitFor();
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
-    const layout = await page.evaluate(() => ({ content: document.documentElement.scrollWidth, viewport: innerWidth }));
-    assert(layout.content <= layout.viewport, `Mobile page overflow: ${JSON.stringify(layout)}`);
-    await page.screenshot({ path: 'output/playwright/mobile.png', fullPage: true });
-    await page.setViewportSize({ width: 1440, height: 1100 });
-    await page.screenshot({ path: 'output/playwright/desktop-full.png', fullPage: true });
-    assert(errors.length === 0, `Browser errors: ${errors.join('; ')}`);
-    console.log('PASS: comparison, element reference, selection filter, CSV, empty state, metric switch, URL persistence, navigation, mobile layout, no runtime exceptions');
+    await page.evaluate(() => {
+      localStorage.removeItem('powerfactoryDashboardView');
+      sessionStorage.removeItem('pf_simulation_cache_v1');
+    });
+    await page.goto(new URL(page.url()).origin);
+    await page.getByRole('heading', { name: 'Outage Assessment', exact: true }).waitFor();
+    const catalog = await (await page.request.get(new URL('/api/simulation/outage-management', page.url()).href)).json();
+    assert(catalog.catalog.dummy_qds_version === 1, 'Browser smoke requires the dummy QDS database');
+    assert(await page.getByRole('contentinfo').count() === 0, 'Footer remains');
+    assert(await page.getByText('Zeitraum', { exact: true }).count() === 0, 'Date picker remains');
+    assert(await page.getByText('Abmelden', { exact: true }).count() === 0, 'Login UI remains');
+    for (const kind of ['REF', 'OUTAGE']) {
+      await page.getByRole('button', { name: 'Szenario', exact: true }).click();
+      await page.getByRole('option', { name: `Freischaltung Leitung Nord · ${kind} · Dummy QDS · synthetische Testdaten`, exact: true }).click();
+      await page.getByRole('button', { name: 'Betriebsmittel', exact: true }).click();
+      await page.getByRole('option', { name: 'Leitung Nord–West (ElmLne)', exact: true }).click();
+      await page.getByRole('button', { name: 'Messgröße', exact: true }).click();
+      await page.getByRole('option', { name: 'Auslastung (%)', exact: true }).click();
+      const pending = page.waitForResponse(r => r.url().includes('/timeseries/raw/') && r.status() === 200);
+      await page.getByRole('button', { name: 'Hinzufügen', exact: true }).click();
+      const response = await pending;
+      const data = await response.json();
+      const requestURL = new URL(response.url());
+      assert(!requestURL.searchParams.has('start') && !requestURL.searchParams.has('end'), 'Hidden date filter remains');
+      assert(data.data.length === 672, 'Complete seven-day QDS series was not displayed');
+      assert(data.data[0].timestamp.startsWith('2026-01-31'), 'Old simulation timestamp was excluded');
+    }
+    await page.getByText(/1[.,]344 Punkte/).waitFor();
+    await page.getByRole('link', { name: 'Zeitreihe', exact: true }).click();
+    await page.waitForFunction(() => document.getElementById('timeseries-panel').getBoundingClientRect().top < 400);
+    await page.locator('#timeseries-panel canvas').first().waitFor();
+    await page.screenshot({ path: 'output/playwright/outage-assessment.png' });
+    const heatmap = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/heatmap') && r.status() === 200);
+    await page.getByRole('link', { name: 'Heatmap', exact: true }).click();
+    await heatmap;
+    assert(errors.length === 0, `Runtime exceptions: ${errors.join('; ')}`);
+    console.log('PASS: Outage Assessment, no login/footer/date filter, complete REF/OUTAGE rows, original charts and heatmap, no runtime exceptions');
   } finally { page.off('pageerror', onError); }
 }

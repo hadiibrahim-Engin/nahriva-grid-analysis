@@ -1,9 +1,9 @@
-const CHART_NUMBER_FORMATTER = new Intl.NumberFormat("de-DE", {
+const CHART_NUMBER_FORMATTER = new Intl.NumberFormat('de-DE', {
   maximumFractionDigits: 3,
 });
 
 export function formatChartNumber(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "-";
+  if (value == null || !Number.isFinite(value)) return '-';
   return CHART_NUMBER_FORMATTER.format(value);
 }
 
@@ -12,24 +12,20 @@ export function formatChartPercent(value: number | null | undefined): string {
 }
 
 export function formatChartValue(value: unknown): string {
-  if (typeof value === "number") return formatChartNumber(value);
+  if (typeof value === 'number') return formatChartNumber(value);
   if (Array.isArray(value)) {
-    const numeric = [...value]
-      .reverse()
-      .find((item) => typeof item === "number");
-    return typeof numeric === "number"
-      ? formatChartNumber(numeric)
-      : String(value);
+    const numeric = [...value].reverse().find((item) => typeof item === 'number');
+    return typeof numeric === 'number' ? formatChartNumber(numeric) : String(value);
   }
-  return String(value ?? "-");
+  return String(value ?? '-');
 }
 
 export function yAxisNameStyle(color: string, gap = 62) {
   return {
-    nameLocation: "middle" as const,
+    nameLocation: 'middle' as const,
     nameGap: gap,
     nameRotate: 90,
-    nameTextStyle: { color, align: "center" as const },
+    nameTextStyle: { color, align: 'center' as const },
   };
 }
 
@@ -41,7 +37,7 @@ export const DATA_ZOOM_RIGHT = 8;
 export const DATA_ZOOM_Y_GRID_RIGHT = 56;
 
 export interface YAxisScaleProps {
-  yAxisScaleType?: "auto" | "manual";
+  yAxisScaleType?: 'auto' | 'manual';
   yAxisMin?: number;
   yAxisMax?: number;
   yAxisLog?: boolean;
@@ -59,21 +55,21 @@ export function scaledValueAxis(
     scaleToData?: boolean;
   },
 ) {
-  const manual = scale?.yAxisScaleType === "manual";
+  const manual = scale?.yAxisScaleType === 'manual';
   const axis: {
-    type: "value" | "log";
+    type: 'value' | 'log';
     min?: unknown;
     max?: unknown;
     scale?: boolean;
   } = {
-    type: manual && scale?.yAxisLog ? "log" : "value",
+    type: manual && scale?.yAxisLog ? 'log' : 'value',
   };
 
   if (manual && scale?.yAxisMin != null) axis.min = scale.yAxisMin;
-  else if (fallback && "min" in fallback) axis.min = fallback.min;
+  else if (fallback && 'min' in fallback) axis.min = fallback.min;
 
   if (manual && scale?.yAxisMax != null) axis.max = scale.yAxisMax;
-  else if (fallback && "max" in fallback) axis.max = fallback.max;
+  else if (fallback && 'max' in fallback) axis.max = fallback.max;
 
   if (!manual && opts?.scaleToData) axis.scale = true;
 
@@ -85,10 +81,10 @@ export function scaledValueAxis(
 function sanitizeNamePart(part: string): string {
   return part
     .trim()
-    .replace(/[\s/\\]+/g, "-")
-    .replace(/[<>:"|?*]+/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+    .replace(/[\s/\\]+/g, '-')
+    .replace(/[<>:"|?*]+/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 /**
@@ -118,5 +114,5 @@ export function buildChartExportName(opts: {
   if (start && end && start !== end) parts.push(start, end);
   else if (start) parts.push(start);
 
-  return parts.filter(Boolean).join("_") || "chart";
+  return parts.filter(Boolean).join('_') || 'chart';
 }

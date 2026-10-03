@@ -3,21 +3,10 @@ import io
 from datetime import datetime
 from typing import Annotated
 from fastapi import APIRouter, Depends, Query
-from fastapi.security import OAuth2PasswordBearer
 from fastapi.responses import Response
 from app.analysis.bootstrap import ANALYSIS_MODE, get_repository
 from app.analysis.service import analyze
 from app.analysis.models import AnalysisResponse, RunSummary, Element, Metric
-from app.auth.auth import get_current_user
-from app.config import APP_ENV, DB_NAME
-
-optional_token = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
-
-
-def authorize(token: str | None = Depends(optional_token)):
-    if ANALYSIS_MODE == "demo" and APP_ENV != "production":
-        return
-    return get_current_user(token or "")
 
 
 router = APIRouter(prefix="/api/analysis", tags=["Simulation Analysis"])
@@ -27,21 +16,18 @@ router = APIRouter(prefix="/api/analysis", tags=["Simulation Analysis"])
 def capabilities():
     return {
         "mode": ANALYSIS_MODE,
-        "auth_required": ANALYSIS_MODE != "demo" or APP_ENV == "production",
-        "oracle_configured": bool(DB_NAME),
-        "powerfactory_bridge": False,
+        "powerfactory_bridge": True,
         "schema_version": 1,
     }
 
 
-@router.get("/runs", dependencies=[Depends(authorize)], response_model=list[RunSummary])
+@router.get("/runs", response_model=list[RunSummary])
 def runs(repo=Depends(get_repository)):
     return repo.runs()
 
 
 @router.get(
     "/runs/{run_id}/elements",
-    dependencies=[Depends(authorize)],
     response_model=list[Element],
 )
 def elements(run_id: str, repo=Depends(get_repository)):
@@ -50,7 +36,6 @@ def elements(run_id: str, repo=Depends(get_repository)):
 
 @router.get(
     "/runs/{run_id}/metrics",
-    dependencies=[Depends(authorize)],
     response_model=list[Metric],
 )
 def metrics(run_id: str, repo=Depends(get_repository)):
@@ -81,9 +66,7 @@ def result(
     )
 
 
-@router.get(
-    "/query", dependencies=[Depends(authorize)], response_model=AnalysisResponse
-)
+@router.get("/query", response_model=AnalysisResponse)
 def query(data=Depends(result)):
     return data[0]
 
@@ -94,7 +77,7 @@ def safe_csv(value):
     return value
 
 
-@router.get("/export.csv", dependencies=[Depends(authorize)])
+@router.get("/export.csv")
 def export(data=Depends(result)):
     analysis, rows = data
     lookup = {e["id"]: e for e in analysis["elements"]}

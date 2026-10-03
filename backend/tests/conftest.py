@@ -1,7 +1,6 @@
 """Shared pytest fixtures and import-path setup.
 
-Tests never touch Oracle. AnalyticsService and TimeseriesService accept a
-FDWHRepository via constructor injection, so tests pass a fake.
+Simulation data and queued jobs use temporary SQLite databases in tests.
 """
 
 from __future__ import annotations

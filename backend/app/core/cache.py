@@ -1,7 +1,7 @@
 """Tiny in-process TTL+LRU cache for analytics responses.
 
 HTTP Cache-Control lets one browser dodge repeats; this layer dodges
-Oracle work when *different* users hit the same window in quick
+database work when *different* users hit the same window in quick
 succession (common when multiple operators inspect the same trafo).
 
 Keep the TTL short — minutes, not hours — so freshly-arrived
@@ -59,7 +59,7 @@ class TTLCache:
             pending.wait()
 
         try:
-            # Compute outside the lock so slow Oracle queries don't block other tenants.
+            # Compute outside the lock so slow database queries don't block other tenants.
             value = compute()
         except BaseException:
             with self._lock:

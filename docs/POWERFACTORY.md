@@ -1,56 +1,44 @@
-# Vorbereitung für DIgSILENT PowerFactory
+# PowerFactory: Outage Assessment
 
-Es existiert keine aktive PowerFactory-Bridge im ursprünglichen Dashboard.
-Das benachbarte Berichtsprojekt ist weder SDK noch IPC-Schnittstelle dieser Anwendung.
-Dieses Projekt führt deshalb keine PowerFactory-Befehle aus und verändert keine Netzmodelle.
+Der normale Einstieg ist das externe ComPython-Skript
+`powerfactory/start_assessment.py`. Datenbankordner und Dateiname werden dort
+mit `DATABASE_DIRECTORY` und `DATABASE_NAME` gesetzt. `SCENARIOS=None` bedeutet
+ein Szenario pro auswertbarem Planned Outage unter seinem vorhandenen Namen.
+Eine Liste mit `name` und `outages` definiert eigene Kombinationen. Sämtliche
+Referenzen und Namen werden vor dem ersten Rechenlauf geprüft.
 
-## Ergebnisimport
+Start, Ende, Schrittweite, Profile und Ergebnisvariablen stammen aus dem aktiven
+`ComStatsim`. Das Script verarbeitet die Szenarien nacheinander und öffnet am
+Ende Outage Assessment für exakt die konfigurierte SQLite-Datei.
 
-Versionierter Vertrag: `run-bundle.schema.json`; generiert aus `RunBundle`:
+## Anwendung der Ausfälle
 
-```bash
-cd backend
-.venv/bin/python scripts/export_contract.py > ../docs/run-bundle.schema.json
-.venv/bin/python scripts/import_results.py ../docs/example-run.json --database data/analysis.sqlite3
-```
+Wie GridLens wird `ComStatsim.iopt_maint=0` für REF und `1` für OUTAGE verwendet.
+PowerFactory berücksichtigt die eigenen `starttime`-/`endtime`-Fenster der
+`IntPlannedout`-Objekte. Ausgewählte Ausfälle erhalten vorübergehend `outserv=0`,
+übrige `outserv=1`. Auch vorher ignorierte Einträge können explizit Teil eines
+Szenarios sein. Es gibt keine erfundenen Apply-/Reset-Aufrufe.
 
-Ein zukünftiger Exporter liefert pro Simulation einen Run mit Projekt/Study Case, den
-Elementsnapshot, Messgrößen samt Einheiten/Grenzen und zeitzonenbehaftete Samples.
-PowerFactory-Variablennamen werden im Exportadapter auf fachliche Messgrößen-IDs abgebildet.
-Weitere Messgrößen sind ohne neue Datenbankspalten und ohne neue Diagrammkomponenten möglich.
+Outage-Flags, `iopt_maint`, `SetTime.cDate`/`cTime` und die originale
+`ComStatsim.results`-Bindung werden erfasst, wiederhergestellt und verifiziert.
+Die Rechnung verwendet kopierte ElmRes-Objekte mit der vorhandenen Variablenauswahl.
+Erst nach ihrer Entfernung werden Szenarioname und beide vollständigen Ergebnisläufe
+in einer SQLite-Transaktion gespeichert. Fehlerhafte Rechnungen bzw. nicht
+verifizierte Wiederherstellung erzeugen kein gespeichertes neues Szenario.
 
-`element.id` muss innerhalb des Projekts über Runs stabil bleiben, auch bei Namensänderungen.
-Wenn die reale Schnittstelle keine stabile ID liefert, muss der Adapter eine dauerhafte
-Zuordnung verwalten; ein Anzeigename ist kein Ersatz. Vollständige Objektpfade können sich
-bei Umbenennungen ändern und ergänzen deshalb die ID, statt sie zu ersetzen.
+`analysis_worker.py` enthält diese Verarbeitung und kann weiterhin einen einzelnen
+bereits angelegten Auftrag bearbeiten. `start_assessment.py` legt solche Aufträge
+selbst an; das Dashboard dient der Ergebnisvisualisierung und benötigt keine
+manuelle Web-Auftragsanlage.
 
-## Elementauswahl
+## Daten und reale Abnahme
 
-Die Tabelle bietet Details und „Elementreferenz kopieren“. Ein DOM-Ereignis
-`analysis:element-selected` verwendet denselben versionierten Payload:
+Native Ergebnisse umfassen Auslastungen von Leitungen/Transformatoren und
+Spannungen aus den konfigurierten QDS-Variablen. Der Datenbankexport speichert alle
+Zeilen bis zur expliziten GridLens-Ergebnisgrenze, ohne Berichtsausdünnung auf 200
+Punkte. REF und OUTAGE benötigen identische Zeitachsen. Unklare/out-of-period
+Zeitachsen werden abgelehnt; keine Zeitverschiebung wird erfunden.
 
-```json
-{
-  "schemaVersion": 1,
-  "action": "select-element",
-  "runId": "run-2026-09-21",
-  "project": "Projekt",
-  "studyCase": "Study Case",
-  "element": {
-    "id": "stabile-kennung",
-    "name": "Leitung A",
-    "className": "ElmLne",
-    "type": "line",
-    "path": "Projekt/Netzmodell/Leitung A.ElmLne"
-  }
-}
-```
-
-Daraus kann eine spätere Bridge den Workflow Dashboard → Elementauswahl → PowerFactory →
-Markierung aufbauen. Noch erforderlich: Transportentscheidung (lokaler Dienst/IPC),
-Authentifizierung und erlaubte Aktionen, verifizierte Objektauflösung, Zuordnung von
-Projekt/Study Case und eine strukturierte Erfolgs-/Fehlerrückmeldung. Die konkrete
-PowerFactory-Version und deren tatsächliche API werden erst bei dieser Integration festgelegt.
-
-Zurzeit gibt es bewusst keinen funktionslosen „In PowerFactory öffnen“-Button.
-Die UI benennt die fehlende Verbindung ausdrücklich.
+Die GridLens-Prüfung, ob ElmRes-Zeitstempel Intervallenden markieren, bleibt Teil
+der nativen Windows-Abnahme. Ein echter PowerFactory-2026-Lauf wurde auf dem Mac
+nicht ausgeführt. [Ablaufdiagramme und Fehlerpfade](../BIG_PICTURE.md).

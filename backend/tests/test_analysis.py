@@ -171,14 +171,14 @@ def test_failed_measurement_is_not_used_as_zero(repo):
 
 
 @pytest.fixture
-def client(repo, monkeypatch):
+def client(repo, monkeypatch, tmp_path):
     from app.main import app
     from app.analysis.bootstrap import get_repository
-    from app.analysis import routes
-    from app.auth.rate_limit import _api_limiter
+    from app.simulation import settings
+    import app.main as main_module
 
-    _api_limiter._entries.clear()
-    monkeypatch.setattr(routes, "ANALYSIS_MODE", "demo")
+    monkeypatch.setattr(settings, "ANALYSIS_DB_PATH", str(tmp_path / "jobs.sqlite3"))
+    monkeypatch.setattr(main_module, "initialize_analysis", lambda: None)
     app.dependency_overrides[get_repository] = lambda: repo
     with TestClient(app) as client:
         yield client
@@ -218,20 +218,11 @@ def test_api_errors_are_actionable_and_map_endpoints_absent(client):
     assert not any(p.startswith("/api/map") or "topology" in p for p in paths)
 
 
-def test_persisted_data_requires_existing_jwt_auth(client, monkeypatch):
-    from app.analysis import routes
-    from app.auth.auth import create_access_token
-
-    monkeypatch.setattr(routes, "ANALYSIS_MODE", "sqlite")
-    assert client.get("/api/analysis/runs").status_code == 401
-    assert client.get("/api/analysis/export.csv?run_id=run-a").status_code == 401
-    token = create_access_token({"sub": "test-reader"})
-    assert (
-        client.get(
-            "/api/analysis/runs", headers={"Authorization": f"Bearer {token}"}
-        ).status_code
-        == 200
-    )
+def test_local_data_is_accessible_without_login(client):
+    assert client.get("/api/analysis/runs").status_code == 200
+    assert client.get("/api/analysis/export.csv?run_id=run-a").status_code == 200
+    paths = client.get("/openapi.json").json()["paths"]
+    assert not any("auth" in path or "login" in path for path in paths)
 
 
 def test_schema_migration_is_idempotent_and_data_persists(tmp_path):

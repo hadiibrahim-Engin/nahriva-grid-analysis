@@ -5,12 +5,9 @@ import {
   useRef,
   type CSSProperties,
   type Ref,
-} from "react";
-import type { ECharts, EChartsCoreOption } from "echarts/core";
-import {
-  registerChartExportRoot,
-  unregisterChartExportRoot,
-} from "./chartExportRegistry";
+} from 'react';
+import type { ECharts, EChartsCoreOption } from 'echarts/core';
+import { registerChartExportRoot, unregisterChartExportRoot } from './chartExportRegistry';
 
 type EChartsModule = {
   init: (
@@ -30,28 +27,14 @@ interface Props {
   notMerge?: boolean;
   lazyUpdate?: boolean;
   theme?: string | object;
-  opts?: {
-    renderer?: "canvas" | "svg";
-    width?: number | string;
-    height?: number | string;
-  };
+  opts?: { renderer?: 'canvas' | 'svg'; width?: number | string; height?: number | string };
   style?: CSSProperties;
   className?: string;
   onEvents?: Record<string, (params: unknown) => void>;
 }
 
 function ReactECharts(
-  {
-    echarts,
-    option,
-    notMerge = false,
-    lazyUpdate = false,
-    theme,
-    opts,
-    style,
-    className,
-    onEvents,
-  }: Props,
+  { echarts, option, notMerge = false, lazyUpdate = false, theme, opts, style, className, onEvents }: Props,
   ref: Ref<ReactEChartsHandle>,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -80,10 +63,7 @@ function ReactECharts(
     const inst = echarts.init(container, theme ?? null, initial.opts);
     instanceRef.current = inst;
     registerChartExportRoot(container, inst);
-    inst.setOption(initial.option, {
-      notMerge: initial.notMerge,
-      lazyUpdate: initial.lazyUpdate,
-    });
+    inst.setOption(initial.option, { notMerge: initial.notMerge, lazyUpdate: initial.lazyUpdate });
 
     const ro = new ResizeObserver(() => inst.resize());
     ro.observe(container);
@@ -112,7 +92,7 @@ function ReactECharts(
     };
   }, [onEvents]);
 
-  return <div ref={containerRef} style={{ ...style, overflow: "hidden" }} className={className} />;
+  return <div ref={containerRef} style={style} className={className} />;
 }
 
 export default forwardRef<ReactEChartsHandle, Props>(ReactECharts);

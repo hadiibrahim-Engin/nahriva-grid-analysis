@@ -13,7 +13,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --frozen --extra dev --extra duckdb --python 3.12
+      - run: uv sync --frozen --extra dev --python 3.12
         working-directory: backend
       - run: npm ci
         working-directory: frontend

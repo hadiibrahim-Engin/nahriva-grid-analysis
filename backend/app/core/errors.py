@@ -3,7 +3,7 @@
 Each domain error carries a stable, machine-readable ``error_code`` and an
 optional ``suggested_action`` so the API can return a consistent error
 envelope (see ``app.models.schemas.ErrorResponse``) without leaking raw
-Oracle/SQL internals to dashboard users.
+SQL internals to dashboard users.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class DashboardError(RuntimeError):
 
 
 class ResourceNotFoundError(DashboardError):
-    """Raised when a requested FDWH entity or result set does not exist."""
+    """Raised when a requested scenario entity or result set does not exist."""
 
     error_code = "NO_DATA"
     http_status = 404
@@ -85,10 +85,3 @@ class UnsupportedAggregationError(InvalidRequestError):
 
     error_code = "UNSUPPORTED_BUCKET"
     http_status = 422
-
-
-class ForbiddenError(DashboardError):
-    """Raised when an authenticated user lacks the required role."""
-
-    error_code = "FORBIDDEN"
-    http_status = 403

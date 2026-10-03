@@ -1,0 +1,25 @@
+{
+  "brand": {
+    "appName": "Outage Assessment",
+    "description": "PowerFactory Szenarien und Simulationsergebnisse."
+  },
+  "support": {
+    "emails": [
+      "support@example.com",
+      "leitwarte@example.com"
+    ],
+    "accessRequest": {
+      "subject": "Zugriff auf Grid Monitor anfragen",
+      "body": "Hallo,\n\nich benötige Zugriff auf den Grid Monitor.\n\nName:\nAbteilung:\nBegründung:\n\nVielen Dank."
+    }
+  },
+  "legal": {
+    "companyName": "ACME",
+    "rightsText": "Alle Rechte vorbehalten.",
+    "confidentialityText": "Die bereitgestellten Inhalte sind vertraulich und nur für berechtigte Nutzer bestimmt.",
+    "fullConfidentialityText": "Die im Dashboard bereitgestellten Inhalte und Daten sind vertraulich und ausschließlich für berechtigte Nutzer bestimmt. Eine Weitergabe, Vervielfältigung oder Nutzung außerhalb des vorgesehenen Zwecks ist nur mit vorheriger ausdrücklicher Genehmigung von ACME gestattet."
+  },
+  "build": {
+    "fallbackVersion": "1.0.0"
+  }
+}

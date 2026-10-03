@@ -1,47 +1,34 @@
-# Validierung
+# Validierung: Outage Assessment
 
-Stand: 29.09.2026.
+Stand: 03.10.2026.
 
 | Prüfung | Ergebnis |
 |---|---|
-| Backend Ruff | bestanden |
-| Backend pytest | 184 Tests bestanden, einschließlich übernommener FDWH-/DuckDB-/ETL-Tests |
-| TypeScript `tsc -b` | bestanden |
-| ESLint | bestanden |
-| Frontend Node-Tests | 2 Tests bestanden |
-| Vite Production-Build | bestanden; ECharts separat/lazy geladen |
+| Backend Ruff | bestanden, einschließlich neuer Starter und PF-Batch-Skript |
+| Backend pytest | 39 Tests bestanden |
+| PowerFactory-API-Nachbildung | einzelne Planned Outages, eigene Kombinationen, Batch, REF/OUTAGE, vollständige Reihen, Wiederherstellung und atomare Speicherung bestanden |
+| Dummy-QDS-Datenbank | drei Szenarien, sechs Ergebnisläufe, 672 Punkte je Messreihe; idempotent und keine Überschreibung fremder Ergebnisse |
+| TypeScript, ESLint, Frontend-Tests | bestanden; 18 Tests, keine Lintfehler, zwei übernommene Hook-Warnungen |
+| Production-Build | bestanden; Warnung zu großen übernommenen Chart-/Kartenbibliotheken |
 | npm audit | 0 bekannte Schwachstellen |
-| Production-Smoke-Test | echter Uvicorn-Prozess, temporäre SQLite-Datei, lokale Anmeldung, JWT-Pflicht, Query und CSV bestanden |
-| Browser Chrome | Vergleich, Elementreferenz, Einzelfilter, CSV-Download, Empty State, Messgrößenwechsel, URL-Persistenz und Navigation bestanden |
-| Responsive | 1440 px Desktop und 390 px Smartphone geprüft; kein horizontaler Seitenüberlauf nach Chart-Resize |
-| Browser Runtime | keine JavaScript-Laufzeitausnahmen im Smoke-Test |
-| Kartenbereinigung | keine MapLibre-/Leaflet-Abhängigkeiten, Kartenkomponenten oder Topologierouten in aktiven Quellen |
-| Quellprojekt | ursprünglicher Git-Status unverändert |
+| Mac-Starter | `start-demo.command --no-browser --port 18017` vollständig ausgeführt; SQLite und Server bereit |
+| Launcher-/Produktions-Smoke | isolierte Datenbank, richtige Datei bei Readiness, SPA, vollständige Rohreihen ohne Start/Ende, CSV und entfernte Login-Routen bestanden |
+| Browser Chrome auf macOS | Name Outage Assessment; kein Login, Footer oder Datumsfilter; alle 1.344 Punkte im REF-/OUTAGE-Overlay und Heatmap; keine JavaScript-Laufzeitausnahmen |
 
-`bash scripts/check.sh` führt Backend- und Frontend-Prüfungen aus.
-`backend/.venv/bin/python scripts/smoke_production.py` prüft den echten Produktionsmodus.
-`npm audit` benötigt Registry-Zugriff; eine Sandbox-DNS-Sperre wurde durch den autorisierten
-separaten Audit-Lauf aufgelöst, nicht als bestandener Audit übergangen.
+`bash scripts/check.sh` prüft Backend, Frontend und npm audit.
+`backend/.venv/bin/python scripts/smoke_production.py` verwendet den gleichen
+Launcher wie PowerFactory, mit temporärer Dummy-Datenbank.
+`scripts/browser-smoke.js` setzt die eigene Dummy-QDS-Datenbank voraus.
+Screenshot: `output/playwright/outage-assessment.png` (ignoriertes lokales Artefakt).
 
-Browser-Smoke mit installiertem Playwright CLI:
+## Noch offene native Abnahme
 
-```bash
-mkdir -p output/playwright
-playwright-cli -s=grid-analysis open http://127.0.0.1:5186 --browser chrome
-playwright-cli -s=grid-analysis run-code --filename=scripts/browser-smoke.js
-```
+- Kein echter PowerFactory-2026-Lauf auf diesem Mac. Die QDS-Abnahme benötigt Windows.
+- ElmRes-Zeitstempel vs. Intervallende und Planned-Outage-Fenster müssen dort fachlich
+  geprüft werden; die Anwendung nimmt keine automatische Verschiebung vor.
+- Windows-Prozessstart und Browseröffnung aus der echten ComPython-Umgebung bleiben
+  zu prüfen. Der portable Dashboard-Launcher ist auf macOS geprüft.
+- Nicht sämtliche Diagrammvorlagen/WebGL-Pfade und kein großer produktiver Lasttest.
+- Starlette/httpx meldet eine Deprecation-Warnung; Tests bestehen.
 
-Der Test verwendet die gekennzeichneten Demo-Runs. Screenshots/Downloads sind lokale,
-ignorierte Prüfartefakte unter `output/playwright/`. Die mobile Prüfung wartet auf den
-ResizeObserver des Charts, bevor die Seitengröße beurteilt wird.
-
-## Grenzen der Abnahme
-
-- Kein Live-Oracle-Test: keine konfigurierte erreichbare FDWH-Instanz und keine Credentials.
-  SQL-/Service-/Routing-/Replika-Verhalten ist durch die übernommenen Tests geprüft.
-- Keine PowerFactory-Bridge oder Prüfung mit einer realen PowerFactory-Sitzung.
-- Docker ist nicht installiert; Container-Build nicht ausgeführt. Native Production-Auslieferung geprüft.
-- Übernommene DuckDB-ETL-Tests und Starlette/httpx melden Deprecation-Warnungen;
-  diese sind keine Testfehler und können separat modernisiert werden.
-- Kein Lasttest für große produktive Simulationsbestände. Explizite Abfragelimits verhindern
-  unbegrenzte Transfers; Batchimport/SQL-Aggregation sind mögliche spätere Erweiterungen.
+[Code und Ablaufdiagramme](../BIG_PICTURE.md).

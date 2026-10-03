@@ -1,4 +1,4 @@
-"""SQL access for simulation results; never connects to or mutates FDWH tables."""
+"""SQL access for persisted PowerFactory simulation results."""
 
 import sqlite3
 from pathlib import Path
