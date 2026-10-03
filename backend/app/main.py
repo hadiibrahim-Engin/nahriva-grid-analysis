@@ -5,9 +5,9 @@ from pathlib import Path
 import uuid
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
-from app.analysis.bootstrap import initialize_analysis, get_repository
+from app.analysis.bootstrap import initialize_analysis, get_repository, close_repositories
 from app.analysis.routes import router as analysis_router
 from app.simulation.routes import router as simulation_router
 from app.simulation.store import ScenarioStore
@@ -21,7 +21,10 @@ async def lifespan(app):
     if settings.ANALYSIS_MODE == "sqlite":
         store = ScenarioStore(settings.ANALYSIS_DB_PATH)
         store.close()
-    yield
+    try:
+        yield
+    finally:
+        close_repositories()
 
 
 app = FastAPI(title="Outage Assessment", lifespan=lifespan)
@@ -75,6 +78,8 @@ DIST = Path(__file__).resolve().parents[2] / "frontend/dist"
 
 @app.get("/{path:path}", include_in_schema=False)
 def spa(path: str):
+    if path == "favicon.ico":
+        return Response(status_code=204)
     if path == "api" or path.startswith("api/"):
         raise HTTPException(404, "API route not found.")
     candidate = (DIST / path).resolve()

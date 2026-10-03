@@ -2,6 +2,7 @@
 
 import argparse
 from pathlib import Path
+
 from dashboard_launcher import ROOT, launch_dashboard
 from seed_dummy_qds import create_dummy_database
 
@@ -13,12 +14,26 @@ def main():
     )
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument(
+        "--existing",
+        action="store_true",
+        help="Vorhandene Ergebnisdatenbank öffnen; keine Dummy-Daten erzeugen.",
+    )
     args = parser.parse_args()
-    database = create_dummy_database(args.db)
+    if args.existing:
+        from app.analysis.bootstrap import close_repositories, select_database
+
+        database = Path(select_database(str(args.db.expanduser().resolve())))
+        close_repositories()
+    else:
+        database = create_dummy_database(args.db)
     dashboard = launch_dashboard(
         database, port=args.port, open_browser=not args.no_browser
     )
-    print("Outage Assessment · Dummy QDS (synthetisch)", flush=True)
+    print(
+        "Outage Assessment" + ("" if args.existing else " · Dummy QDS (synthetisch)"),
+        flush=True,
+    )
     print("Datenbank: " + str(database), flush=True)
     print("Dashboard: " + dashboard["url"], flush=True)
     print("Ctrl+C beendet diesen Dashboard-Server.", flush=True)

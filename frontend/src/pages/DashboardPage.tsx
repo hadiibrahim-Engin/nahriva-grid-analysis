@@ -10,7 +10,6 @@ import {
   getHeatmap,
   getResolutions,
   getShare,
-  subscribeInFlight,
   clearCache,
   RawRangeTooLargeError,
   type Facility,
@@ -39,10 +38,8 @@ import type { MapLayerMode } from '../components/charts/GridMapChart';
 import ErrorBoundary from '../components/ErrorBoundary';
 import DataSection from '../components/DataSection';
 import SearchableDropdown from '../components/SearchableDropdown';
-import LoadingProgressPanel, { type QueryPipelineItem } from '../components/LoadingProgressPanel';
 import DynamicChartCard from '../components/DynamicChartCard';
 import ChartTemplatePicker from '../components/ChartTemplatePicker';
-import ShareButton from '../components/ShareButton';
 import type { DashboardChartConfig, DynamicChartConfig } from '../util/dynamicCharts';
 import {
   readViewFromUrl,
@@ -55,20 +52,17 @@ import {
 import { useInView } from '../hooks/useInView';
 import InfoHint from '../components/InfoHint';
 import { logError } from '../debug/debugLog';
-import { buildTimeseriesCsv, saveCsvToDisk, type SeriesExportRow } from '../util/csvExport';
-import type { PdfChartSpec, PdfExportPhase, PdfSummarySection } from '../util/pdfExport';
 import { formatChartNumber } from '../components/charts/format';
 import type { MockStation, MockTopology } from '../components/charts/gridMockData';
 import type { GridTopologyCompat } from '../map/types';
-import GeoContextBar from '../components/GeoContextBar';
 import HelpPanel from '../components/HelpPanel';
-import BrandLogo from '../components/BrandLogo';
 import CinematicThemeSwitch from '../components/ui/cinematic-theme-switcher';
 import { matchStation, matchAll as matchAllStations, type MatchResult } from '../util/facilityMatcher';
 import { fallbackGridTopology } from '../api/gridTopology';
 import { applyGridThemeMode, storedThemeMode, type ThemeMode } from '../util/theme';
 import AnimatedButton from '../components/ui/AnimatedButton';
 import OutageManagement from '../components/OutageManagement';
+import DatabasePicker from '../components/DatabasePicker';
 import GeneratingLoader from '../components/ui/GeneratingLoader';
 import { useUiConfig } from '../config/uiConfig';
 
@@ -113,23 +107,9 @@ function seriesLabel(series: SelectedSeries): string {
   return `${series.facilityName} / ${series.componentName} - ${measurement}`;
 }
 
-function sanitizePdfPart(value: string): string {
-  return value
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 80) || 'report';
-}
-
 // Desktop app can override this at runtime via Einstellungen > Karte.
 // Falls back to the build-time VITE_ENABLE_GRID_MAP flag.
 const ENABLE_GRID_MAP = false;
-
-interface PdfExportState {
-  phase: PdfExportPhase;
-  progress: number;
-  message: string;
-  error: string | null;
-}
 
 const MAP_LAYER_OPTIONS: { id: MapLayerMode; label: string }[] = [
   { id: 'grid', label: 'Default' },
@@ -357,7 +337,6 @@ export default function DashboardPage() {
   const [measurementTypesLoading, setMeasurementTypesLoading] = useState(false);
   const [timeseriesLoadingKeys, setTimeseriesLoadingKeys] = useState<Set<string>>(() => new Set());
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => storedThemeMode());
-  const [inFlight, setInFlight] = useState(0);
   const [resolutions, setResolutions] = useState<ResolutionInfo[]>([
     { minutes: 60, label: '1 Stunde' },
     { minutes: 240, label: '4 Stunden' },
@@ -426,13 +405,6 @@ export default function DashboardPage() {
   const [peakDemandSelectionKey, setPeakDemandSelectionKey] = useState<string | null>(null);
   const [peakDemandPeriod, setPeakDemandPeriod] = useState<PeakDemandPeriod>('month');
   const [selectedPeakIndex, setSelectedPeakIndex] = useState(0);
-  const [pdfExportState, setPdfExportState] = useState<PdfExportState>({
-    phase: 'idle',
-    progress: 0,
-    message: '',
-    error: null,
-  });
-
   // True while the overview is showing a frozen snapshot (from a shared link).
   // Auto-clears once a real fetch happens (e.g. the user changes the range).
   const [snapshotActive, setSnapshotActive] = useState(false);
@@ -513,17 +485,17 @@ export default function DashboardPage() {
   // Scrollytelling: map is sticky full-viewport; charts scroll up over it
   // and the map dims progressively as the chart cards take focus.
   const [gridTopology, setGridTopology] = useState<MockTopology>(() => ENABLE_GRID_MAP ? fallbackGridTopology() : { stations: [], circuits: [], transformers: [] });
-  const [gridLoading, setGridLoading] = useState(ENABLE_GRID_MAP);
+  const [, setGridLoading] = useState(ENABLE_GRID_MAP);
   // Defer mounting the MapLibre map (the single largest JS chunk, ~273 KB gz)
   // until the browser is idle, so the dashboard shell, controls, and charts
   // paint first. A placeholder holds the layout until then.
   const [mapDeferReady, setMapDeferReady] = useState(false);
-  const [gridError, setGridError] = useState<string | null>(null);
-  const [gridWarnings, setGridWarnings] = useState<string[]>([]);
+  const [, setGridError] = useState<string | null>(null);
+  const [, setGridWarnings] = useState<string[]>([]);
   const [mapWheelMode, setMapWheelMode] = useState<'scroll' | 'zoom'>('scroll');
   const [mapLayerMode, setMapLayerMode] = useState<MapLayerMode>('grid');
   const [selectedStationUuid, setSelectedStationUuid] = useState<string | null>(null);
-  const [geoMatchResult, setGeoMatchResult] = useState<MatchResult | null>(null);
+  const [, setGeoMatchResult] = useState<MatchResult | null>(null);
   const [activeSectionId, setActiveSectionId] = useState<NavSectionId>('map-selection');
   useEffect(() => {
     if (!ENABLE_GRID_MAP) return;
@@ -548,9 +520,7 @@ export default function DashboardPage() {
   const tabScrollRef = useRef<HTMLDivElement>(null);
   const mapHeroRef = useRef<HTMLElement>(null);
   const navDockRef = useRef<HTMLElement>(null);
-  const chartExportRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => subscribeInFlight(setInFlight), []);
 
   // GridMapLibre fires this once it finishes loading + validating topology.
   // We adapt the GridTopologyCompat → MockTopology shape so all downstream
@@ -1073,7 +1043,6 @@ export default function DashboardPage() {
     return matchAllStations(gridTopology.stations, facilities);
   }, [facilities, gridTopology]);
 
-  const lastSelected = selectedSeriesList[selectedSeriesList.length - 1];
 
   const heatmapCandidates = useMemo(
     () => selectedSeriesList,
@@ -1149,413 +1118,9 @@ export default function DashboardPage() {
       .finally(() => setAnalyticsLoading((p) => ({ ...p, heatmap: false })));
   }, [heatmapSeries, heatmapInView, startIso, endIso, refreshNonce]);
 
-  const exportableRows = useMemo<SeriesExportRow[]>(
-    () => selectedSeriesList
-      .map((s) => {
-        const data = timeseriesDataMap[s.key];
-        return data
-          ? {
-              facilityId: s.facilityId,
-              facilityName: s.facilityName,
-              componentId: s.componentId,
-              componentName: s.componentName,
-              measurementType: s.measurementType,
-              data,
-            }
-          : null;
-      })
-      .filter((r): r is SeriesExportRow => r !== null),
-    [selectedSeriesList, timeseriesDataMap],
-  );
-
-  const exportedSignalLabels = useMemo(
-    () => selectedSeriesList.map((series) => seriesLabel(series)),
-    [selectedSeriesList],
-  );
-
   const timeseriesRefreshing = loading || timeseriesLoadingKeys.size > 0;
   const selectedPeakDemandData = peakDemandSeries ? timeseriesDataMap[peakDemandSeries.key] : null;
   const peakDemandLoading = !!peakDemandSeries && (timeseriesLoadingKeys.has(peakDemandSeries.key) || timeseriesRefreshing || !selectedPeakDemandData);
-
-  const hasPlottedCharts =
-    seriesDataList.length > 0 ||
-    peakDemandRows.length > 0 ||
-    dynamicCharts.length > 0 ||
-    !!heatmapData;
-
-  const selectedObjectLabel = selectedFacilityForBar?.name
-    || selectedStation?.langname
-    || selectedFacilityForBar?.id
-    || 'Szenarioauswahl';
-
-  const pdfSummarySections = useMemo<PdfSummarySection[]>(() => {
-    const matchLines = ENABLE_GRID_MAP
-      ? [
-          geoMatchResult
-            ? `Match confidence: ${geoMatchResult.confidence} (${Math.round(geoMatchResult.score * 100)} %)`
-            : selectedStation
-              ? 'Keine fuzzy bestätigte Zuordnung.'
-              : 'Keine Station ausgewählt.',
-          selectedStation
-            ? `Station: ${selectedStation.langname} · ${selectedStation.identifierKurz}`
-            : 'Station: nicht gesetzt',
-        ]
-      : ['Grid map disabled.'];
-
-    return [
-      {
-        title: 'Auswahl',
-        lines: [
-          `Station / Facility: ${selectedObjectLabel}`,
-          selectedFacilityForBar?.id ? `Anlagennummer: ${selectedFacilityForBar.id}` : 'Anlagennummer: nicht verfügbar',
-          selectedFacilityForBar?.spannungsebene || selectedStation?.spannungsebenen.join(' / ')
-            ? `Spannungsebene: ${selectedFacilityForBar?.spannungsebene ?? selectedStation?.spannungsebenen.join(' / ')}`
-            : 'Spannungsebene: nicht verfügbar',
-          'Gesamte Simulationsreihe',
-          `Aggregation / Resampling: ${resolutions.filter((resolution) => resolution.minutes > 0).map((resolution) => resolution.label).join(', ') || 'Standard'}`,
-          `Geplottete Signale: ${selectedSeriesList.length}`,
-        ],
-      },
-      { title: 'Match-Kontext', lines: matchLines },
-    ];
-  }, [
-    geoMatchResult,
-    resolutions,
-    selectedFacilityForBar,
-    selectedObjectLabel,
-    selectedSeriesList.length,
-    selectedStation,
-  ]);
-
-  const handleExportCsv = useCallback(async () => {
-    if (exportableRows.length === 0) return;
-    const csv = buildTimeseriesCsv(exportableRows);
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    await saveCsvToDisk(csv, `outage-assessment-${stamp}.csv`);
-  }, [exportableRows]);
-
-  const handleExportPdf = useCallback(async () => {
-    if (!hasPlottedCharts) {
-      setPdfExportState({
-        phase: 'error',
-        progress: 0,
-        message: 'No charts available for export.',
-        error: 'No charts available for export.',
-      });
-      return;
-    }
-    if (pdfExportState.phase === 'preparing' || pdfExportState.phase === 'rendering' || pdfExportState.phase === 'generating') {
-      return;
-    }
-
-    const exportTimestamp = new Date();
-    const exportId = selectedFacilityForBar?.id
-      || selectedStation?.identifierKurz
-      || selectedStation?.uuid
-      || 'selection';
-    const exportFilename = `Outage_Assessment_${sanitizePdfPart(exportId)}_${exportTimestamp.toISOString().slice(0, 10)}.pdf`;
-    const { exportDashboardPdf, requestPdfSaveTarget } = await import('../util/pdfExport');
-
-    const saveTarget = await requestPdfSaveTarget(exportFilename);
-    if (!saveTarget) {
-      setPdfExportState({ phase: 'idle', progress: 0, message: '', error: null });
-      return;
-    }
-
-    setPdfExportState({
-      phase: 'preparing',
-      progress: 5,
-      message: 'Preparing charts',
-      error: null,
-    });
-
-    const palette = ['#1d4ed8', '#0f766e', '#b45309', '#b91c1c', '#7c3aed', '#0369a1', '#be123c'];
-    const toTimePoints = (series: TimeseriesData) => series.data
-      .map((point) => ({ x: Date.parse(point.timestamp), y: point.value }))
-      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
-    const pdfCharts: PdfChartSpec[] = [];
-
-    if (seriesDataList.length > 0) {
-      const units = Array.from(new Set(seriesDataList.map((series) => series.unit).filter(Boolean)));
-      pdfCharts.push({
-        kind: 'line',
-        title: 'Zeitreihen',
-        subtitle: `${seriesDataList.length} Signal${seriesDataList.length === 1 ? '' : 'e'} · vollständige Simulation`,
-        xType: 'time',
-        xLabel: 'Zeit',
-        yLabel: units.length === 1 ? units[0] : 'Wert',
-        series: seriesDataList.map((series, index) => ({
-          name: `${series.component_name} - ${series.measurement_type}`,
-          color: palette[index % palette.length],
-          points: toTimePoints(series),
-        })),
-      });
-    }
-
-    if (heatmapData && heatmapData.data.length > 0) {
-      pdfCharts.push({
-        kind: 'heatmap',
-        title: 'Heatmap',
-        subtitle: `${heatmapData.component_name} - ${heatmapData.measurement_type} (${heatmapData.unit})`,
-        xLabel: 'Stunde',
-        yLabel: 'Wochentag',
-        xLabels: Array.from({ length: 24 }, (_, hour) => `${hour}:00`),
-        yLabels: ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'],
-        cells: heatmapData.data.map((cell) => ({ x: cell.hour, y: cell.day_of_week, value: cell.value })),
-        lowLabel: 'Low',
-        highLabel: 'High',
-      });
-    }
-
-    if (pdfCharts.length === 0) {
-      setPdfExportState({
-        phase: 'error',
-        progress: 0,
-        message: 'No charts available for export.',
-        error: 'No charts available for export.',
-      });
-      return;
-    }
-
-    try {
-      await exportDashboardPdf({
-        title: 'PowerFactory Simulation Results',
-        filename: exportFilename,
-        exportedObjectLabel: selectedObjectLabel,
-        exportTimestamp,
-        metadata: [
-          { label: 'Station / Facility', value: selectedObjectLabel },
-          { label: 'Anlagennummer', value: selectedFacilityForBar?.id ?? 'n/a' },
-          { label: 'Facility name', value: selectedFacilityForBar?.name ?? 'n/a' },
-          { label: 'Voltage level', value: selectedFacilityForBar?.spannungsebene ?? selectedStation?.spannungsebenen.join(' / ') ?? 'n/a' },
-          { label: 'Datenumfang', value: 'Vollständige Simulation' },
-          { label: 'Exported signals', value: String(selectedSeriesList.length) },
-        ],
-        summarySections: pdfSummarySections,
-        signals: exportedSignalLabels,
-        sections: [],
-        charts: pdfCharts,
-        mapSnapshot: ENABLE_GRID_MAP ? mapHeroRef.current : null,
-        saveTarget,
-        onProgress: (progress) => {
-          setPdfExportState({
-            phase: progress.phase,
-            progress: progress.progress,
-            message: progress.message,
-            error: progress.phase === 'error' ? progress.message : null,
-          });
-        },
-      });
-    } catch (err) {
-      const message = extractError(err);
-      logError('Dashboard', 'export failed', message);
-      setPdfExportState({
-        phase: 'error',
-        progress: 0,
-        message,
-        error: message,
-      });
-    }
-  }, [
-    exportedSignalLabels,
-    hasPlottedCharts,
-    heatmapData,
-    mapHeroRef,
-    pdfExportState.phase,
-    pdfSummarySections,
-    selectedFacilityForBar,
-    selectedObjectLabel,
-    selectedSeriesList.length,
-    selectedStation,
-    seriesDataList,
-  ]);
-
-  useEffect(() => {
-    if (pdfExportState.phase !== 'ready') return;
-    const timer = window.setTimeout(() => {
-      setPdfExportState({ phase: 'idle', progress: 0, message: '', error: null });
-    }, 5000);
-    return () => window.clearTimeout(timer);
-  }, [pdfExportState.phase]);
-
-  const anyAnalyticsLoading = Object.values(analyticsLoading).some(Boolean);
-  const anyChartData =
-    seriesDataList.length > 0 ||
-    peakDemandRows.length > 0 ||
-    dynamicCharts.length > 0 ||
-    !!heatmapData;
-  const anyChartError =
-    Object.keys(timeseriesErrors).length > 0 ||
-    !!heatmapError;
-
-  const queryPipeline = useMemo<QueryPipelineItem[]>(() => {
-    const selectedCount = selectedSeriesList.length;
-    const loadedCount = selectedSeriesList.filter((series) => timeseriesDataMap[series.key]?.data.length > 0).length;
-    const failedCount = Object.keys(timeseriesErrors).length;
-    const historicalRunning = loading || timeseriesLoadingKeys.size > 0;
-    const historicalProgress = selectedCount === 0
-      ? 0
-      : historicalRunning
-        ? Math.max(18, (loadedCount / selectedCount) * 86)
-        : failedCount > 0
-          ? Math.max(35, (loadedCount / selectedCount) * 100)
-          : 100;
-    const mapStationCount = gridTopology.stations.length;
-    const mapWarningCount = gridWarnings.length;
-    const matchedStationCount = stationMatchMap.size;
-    const matchingProgress = mapStationCount > 0 ? (matchedStationCount / mapStationCount) * 100 : 0;
-    const signalReady = components.length > 0 && measurementTypes.length > 0;
-    const pdfPipelineItems: QueryPipelineItem[] = pdfExportState.phase === 'idle'
-      ? []
-      : [
-          {
-            id: 'pdf-export-prepare',
-            label: 'PDF export preparation',
-            status: pdfExportState.phase === 'error' ? 'error' : pdfExportState.phase === 'preparing' ? 'running' : 'done',
-            progress: pdfExportState.phase === 'preparing' ? 20 : 100,
-            message: pdfExportState.phase === 'error' ? (pdfExportState.error ?? pdfExportState.message) : 'Preparing charts',
-          },
-          {
-            id: 'pdf-export-render',
-            label: 'Chart capture/rendering',
-            status: pdfExportState.phase === 'error' ? 'queued' : pdfExportState.phase === 'rendering' ? 'running' : pdfExportState.phase === 'generating' || pdfExportState.phase === 'ready' ? 'done' : 'queued',
-            progress: pdfExportState.phase === 'rendering' ? Math.max(35, pdfExportState.progress) : pdfExportState.phase === 'generating' || pdfExportState.phase === 'ready' ? 100 : 0,
-            message: pdfExportState.phase === 'error' ? 'Capture skipped.' : pdfExportState.phase === 'rendering' ? pdfExportState.message : 'Waiting for chart capture.',
-          },
-          {
-            id: 'pdf-export-generate',
-            label: 'PDF generation',
-            status: pdfExportState.phase === 'error' ? 'queued' : pdfExportState.phase === 'generating' ? 'running' : pdfExportState.phase === 'ready' ? 'done' : 'queued',
-            progress: pdfExportState.phase === 'generating' ? Math.max(70, pdfExportState.progress) : pdfExportState.phase === 'ready' ? 100 : 0,
-            message: pdfExportState.phase === 'error' ? 'Generation skipped.' : pdfExportState.phase === 'generating' ? pdfExportState.message : 'Waiting for PDF build.',
-          },
-          {
-            id: 'pdf-export-ready',
-            label: 'Download ready',
-            status: pdfExportState.phase === 'error' ? 'error' : pdfExportState.phase === 'ready' ? 'done' : 'queued',
-            progress: pdfExportState.phase === 'ready' ? 100 : pdfExportState.phase === 'error' ? 100 : 0,
-            message: pdfExportState.phase === 'error' ? (pdfExportState.error ?? 'PDF export failed.') : pdfExportState.phase === 'ready' ? pdfExportState.message || 'PDF ready' : 'Waiting for download.',
-          },
-        ];
-
-    return [
-      {
-        id: 'map-grid',
-        label: 'Map/Grid-Daten',
-        status: gridError ? 'error' : gridLoading ? 'running' : mapWarningCount > 0 ? 'partial' : 'done',
-        progress: gridError ? 100 : gridLoading ? 68 : 100,
-        message: gridError
-          ?? (mapWarningCount > 0
-            ? `${mapStationCount} Stationen geladen; ${mapWarningCount} Element(e) wegen ungueltiger Topologie/Koordinaten nicht angezeigt.`
-            : `${mapStationCount} Stationen und ${gridTopology.circuits.length} Stromkreise geladen.`),
-      },
-      {
-        id: 'facility-metadata',
-        label: 'Szenario-Metadaten',
-        status: facilitiesError ? 'error' : facilitiesLoading ? 'running' : facilities.length > 0 ? 'cached' : 'queued',
-        progress: facilitiesError ? 100 : facilitiesLoading ? 58 : facilities.length > 0 ? 100 : 0,
-        message: facilitiesError ?? (facilities.length > 0 ? `${facilities.length} Berechnungsläufe verfügbar.` : 'Noch keine Szenarioergebnisse gespeichert.'),
-      },
-      {
-        id: 'signal-metadata',
-        label: 'Ergebnis-Metadaten',
-        status: componentsLoading || measurementTypesLoading ? 'running' : signalReady ? 'done' : selectedFacilityId ? 'partial' : 'queued',
-        progress: componentsLoading || measurementTypesLoading ? 62 : signalReady ? 100 : selectedFacilityId ? 45 : 0,
-        message: signalReady
-          ? `${components.length} Betriebsmittel, ${measurementTypes.length} Messgrößen.`
-          : selectedFacilityId
-            ? 'Anlage gewählt, Signalmetadaten werden vorbereitet.'
-            : 'Noch keine Anlage gewählt.',
-      },
-      {
-        id: 'fuzzy-match',
-        label: 'Matching/Fuzzy Matching',
-        status: selectedStationUuid
-          ? geoMatchResult?.confidence === 'high'
-            ? 'done'
-            : geoMatchResult
-              ? 'partial'
-              : 'partial'
-          : matchedStationCount > 0
-            ? 'cached'
-            : facilitiesLoading || gridLoading
-              ? 'running'
-              : 'queued',
-        progress: selectedStationUuid ? 100 : matchingProgress,
-        message: selectedStationUuid
-          ? geoMatchResult
-            ? `${geoMatchResult.facility.name} (${Math.round(geoMatchResult.score * 100)} %).`
-            : 'Station gewählt, kein sicherer FDWH-Treffer.'
-          : matchedStationCount > 0
-            ? `${matchedStationCount} Stationsabgleiche vorbereitet.`
-            : 'Wartet auf Karte und Anlagenliste.',
-      },
-      {
-        id: 'duckdb-timeseries',
-        label: 'SQLite-Ergebnisabfrage',
-        status: failedCount > 0 && loadedCount > 0 ? 'partial' : failedCount > 0 ? 'error' : historicalRunning ? 'running' : selectedCount > 0 ? 'done' : 'queued',
-        progress: historicalProgress,
-        message: selectedCount === 0
-          ? 'Keine Zeitreihe in der Auswahl.'
-          : historicalRunning
-            ? `${timeseriesLoadingKeys.size} Serie(n) laufen, ${loadedCount}/${selectedCount} geladen.`
-            : failedCount > 0
-              ? `${failedCount} Fehler, ${loadedCount}/${selectedCount} Serie(n) geladen.`
-              : `${loadedCount}/${selectedCount} vollständige Simulationsreihe(n) bereit.`,
-      },
-      {
-        id: 'heatmap',
-        label: 'Heatmap',
-        status: heatmapError ? 'partial' : analyticsLoading.heatmap ? 'running' : heatmapData ? 'done' : heatmapSeries ? 'queued' : 'queued',
-        progress: heatmapError ? 78 : analyticsLoading.heatmap ? 72 : heatmapData ? 100 : 0,
-        message: heatmapData
-          ? 'Heatmap ist geladen.'
-          : heatmapSeries
-            ? 'Wartet auf sichtbares Heatmap-Panel.'
-            : 'Keine Heatmap-Zeitreihe ausgewählt.',
-      },
-      {
-        id: 'chart-rendering',
-        label: 'Chart Rendering',
-        status: anyChartError ? 'partial' : loading || anyAnalyticsLoading ? 'running' : anyChartData ? 'done' : 'queued',
-        progress: anyChartError ? 78 : loading || anyAnalyticsLoading ? 74 : anyChartData ? 100 : 0,
-        message: anyChartData ? 'Foreground-Panels sind mit Daten verbunden.' : 'Diagramme rendern nach der ersten Auswahl.',
-      },
-      ...pdfPipelineItems,
-    ].filter(item => ENABLE_GRID_MAP || !['map-grid', 'fuzzy-match'].includes(item.id)) as QueryPipelineItem[];
-  }, [
-    analyticsLoading,
-    anyAnalyticsLoading,
-    anyChartData,
-    anyChartError,
-    components,
-    componentsLoading,
-    facilities,
-    facilitiesError,
-    facilitiesLoading,
-    geoMatchResult,
-    gridError,
-    gridLoading,
-    gridWarnings,
-    gridTopology,
-    heatmapData,
-    heatmapError,
-    heatmapSeries,
-    loading,
-    measurementTypes,
-    measurementTypesLoading,
-    pdfExportState.error,
-    pdfExportState.message,
-    pdfExportState.phase,
-    pdfExportState.progress,
-    selectedFacilityId,
-    selectedSeriesList,
-    selectedStationUuid,
-    stationMatchMap,
-    timeseriesDataMap,
-    timeseriesErrors,
-    timeseriesLoadingKeys,
-  ]);
 
   const resetNavDock = useCallback(() => {
     navDockRef.current?.querySelectorAll<HTMLElement>('.one-page-nav__item').forEach((item) => {
@@ -1614,7 +1179,7 @@ export default function DashboardPage() {
     <div className="grid-theme-scope dashboard-shell h-screen flex flex-col bg-[var(--grid-bg)] text-[var(--grid-text)] overflow-hidden">
       <header className="sticky top-0 z-[900] grid grid-cols-1 items-center gap-3 bg-[var(--grid-header)] border-b border-[var(--grid-border)] px-4 py-3 shrink-0 xl:grid-cols-[minmax(180px,1fr)_auto_minmax(260px,1fr)]">
         <div className="flex min-w-0 items-center gap-2 xl:justify-self-start">
-          <BrandLogo size={32} />
+          <DatabasePicker />
           <h1 className="truncate text-base font-bold tracking-tight text-[var(--grid-text)]">{uiConfig.brand.appName}</h1>
         </div>
 
@@ -1641,36 +1206,10 @@ export default function DashboardPage() {
 
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-3 xl:justify-self-end">
           <CinematicThemeSwitch value={themeMode} onChange={setThemeMode} />
-          {lastSelected && (
-            <div className="flex gap-2">
-              <AnimatedButton
-                variant="primary"
-                size="sm"
-                onClick={handleExportCsv}
-                disabled={exportableRows.length === 0}
-                title={exportableRows.length === 0 ? 'Keine geladenen Zeitreihen' : 'CSV der ausgewählten Zeitreihen speichern'}
-                icon={<span aria-hidden>↓</span>}
-              >
-                CSV
-              </AnimatedButton>
-              <AnimatedButton
-                variant="primary"
-                size="sm"
-                disabled
-                title="PDF Export kommt bald"
-                icon={<span aria-hidden>📄</span>}
-              >
-                PDF (coming soon)
-              </AnimatedButton>
-              {(selectedSeriesList.length > 0 || dynamicCharts.length > 0) && (
-                <ShareButton view={currentView} />
-              )}
-            </div>
-          )}
+
         </div>
       </header>
 
-      <LoadingProgressPanel items={queryPipeline} inFlight={inFlight} />
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
@@ -1918,35 +1457,8 @@ export default function DashboardPage() {
                     </div>
                   )}
 
-                  {ENABLE_GRID_MAP && (
-                    <div className="px-4 mb-4">
-                      <GeoContextBar
-                        selectedStation={selectedStation}
-                        matchResult={geoMatchResult}
-                        selectedFacility={selectedFacilityForBar}
-                        dateStart=""
-                        dateEnd=""
-                        onClearSelection={clearMapSelection}
-                        onConfirmMatch={(fac) => {
-                          setSelectedFacilityId(fac.id);
-                          setGeoMatchResult((prev) =>
-                            prev ? { ...prev, confidence: 'high' } : null,
-                          );
-                        }}
-                        onManualSelect={() => {
-                          setGeoMatchResult(null);
-                        }}
-                        onExportPdf={handleExportPdf}
-                        exportDisabled={!hasPlottedCharts || pdfExportState.phase === 'preparing' || pdfExportState.phase === 'rendering' || pdfExportState.phase === 'generating'}
-                        exportBusy={pdfExportState.phase === 'preparing' || pdfExportState.phase === 'rendering' || pdfExportState.phase === 'generating'}
-                        exportStatusMessage={pdfExportState.phase === 'idle' ? (hasPlottedCharts ? null : 'No charts available for export.') : pdfExportState.message}
-                        exportErrorMessage={pdfExportState.phase === 'error' ? (pdfExportState.error ?? pdfExportState.message) : null}
-                      />
-                    </div>
-                  )}
-
                   {/* Chart content */}
-                  <div ref={chartExportRef} className="space-y-4 px-4 pb-16">
+                  <div className="space-y-4 px-4 pb-16">
                     {!hiddenPanels.has('timeseries') && (
                     <section id="timeseries-panel" className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                       <div id="timeseries-overview-panel">

@@ -20,12 +20,22 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 650,
       rolldownOptions: {
         output: {
+          // ECharts modules register models and renderers during evaluation.
+          // Preserve their initialization order when size groups split cycles.
+          strictExecutionOrder: true,
           codeSplitting: {
             groups: [
+              {
+                name: "map-vendor",
+                test: /node_modules[\\/](maplibre-gl)[\\/]/,
+                priority: 40,
+                maxSize: 500_000,
+              },
               {
                 name: "echarts-vendor",
                 test: /node_modules[\\/](echarts|zrender)[\\/]/,
                 priority: 30,
+                maxSize: 500_000,
               },
               {
                 name: "react-vendor",

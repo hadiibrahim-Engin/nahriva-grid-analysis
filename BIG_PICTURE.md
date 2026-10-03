@@ -289,6 +289,41 @@ nur in den jeweiligen Dummy-Ausfallfenstern. Sie sind synthetisch und werden als
 
 ## 8. Tests und reale Abnahme
 
+### Lokale Datenbank wechseln
+
+```mermaid
+flowchart TD
+    Start[Mac-Starter mit --db oder PowerFactory-Konfiguration] --> Active[Aktive lokale SQLite-Datei]
+    Button[Header: Datenbank hinzufügen] --> Path[Absoluten Dateipfad eingeben]
+    Path --> Check[POST /api/simulation/database: vorhandene Datei und Schema prüfen]
+    Check -->|Ungültig| Error[Fehler anzeigen, bisherige Auswahl beibehalten]
+    Check -->|Gültig| Switch[Aktives Repository und Datenbankpfad umstellen]
+    Switch --> Reload[Frontend-Cache und gespeicherte Auswahl löschen, neu laden]
+    Active --> Queries[API liest vollständige Reihen]
+    Reload --> Queries
+    Queries --> Charts[Bestehende DashB-Diagramme]
+```
+
+Der Pfad bezeichnet eine Datei auf dem Rechner des Servers, bei PowerFactory
+also auf der VM. Die Auswahl verändert weder die gespeicherten Messwerte noch
+die Startkonfiguration. Alte Repository-Verbindungen bleiben für bereits
+laufende Abfragen bis zum Server-Ende verfügbar. Der neue Mac-Starter
+`start-dashboard.command` prüft eine bestehende Ergebnisdatei; `start-demo.command`
+erzeugt bzw. verwendet die synthetische Testdatei.
+
+### Darstellung und Build
+
+Die bestehenden Light-Mode-Variablen und ausschließlich unter
+`[data-grid-theme="light"]` geltende Regeln in `frontend/src/index.css` steuern
+die optische Anpassung. Die Dark-Mode- und gemeinsamen Layout-Regeln bleiben
+unverändert. `docs/LIGHT_MODE.css` enthält eine Kopie der angepassten Sektion zur
+Code-Erklärung, keinen zusätzlich eingebundenen Stylesheet.
+
+Vite lädt Diagramme weiterhin dynamisch. Die bestehenden ECharts- und
+MapLibre-Bibliotheken werden über Rolldown-Chunk-Gruppen mit `maxSize` verteilt;
+die Warnschwelle bleibt bei 650 kB. Logo, Query-Monitor und Export-/Teilen-Buttons
+sind entfernt.
+
 Worker-Tests verwenden eine native API-Nachbildung und prüfen einzelne Ausfälle,
 benannte Kombinationen, Batch-Verarbeitung, Zustandswiederherstellung und atomare
 Persistenz. Der Produktions-Smoke startet den gleichen Dashboard-Launcher mit

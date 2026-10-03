@@ -1,7 +1,12 @@
 async (page) => {
   const errors = [];
   const onError = error => errors.push(error.message);
+  const heatmapResponses = [];
+  const onResponse = response => {
+    if (new URL(response.url()).pathname.endsWith('/heatmap') && response.status() === 200) heatmapResponses.push(response);
+  };
   page.on('pageerror', onError);
+  page.on('response', onResponse);
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   try {
     await page.evaluate(() => {
@@ -15,6 +20,10 @@ async (page) => {
     assert(await page.getByRole('contentinfo').count() === 0, 'Footer remains');
     assert(await page.getByText('Zeitraum', { exact: true }).count() === 0, 'Date picker remains');
     assert(await page.getByText('Abmelden', { exact: true }).count() === 0, 'Login UI remains');
+    assert(await page.locator('.query-sidebar').count() === 0, 'Query Monitor remains');
+    assert(await page.locator('header svg[role="img"]').count() === 0, 'Brand icon remains');
+    assert(await page.getByRole('button', { name: /^(CSV|PDF|Teilen)/ }).count() === 0, 'Export/share buttons remain');
+    await page.getByRole('button', { name: 'Datenbank hinzufügen', exact: true }).waitFor();
     for (const kind of ['REF', 'OUTAGE']) {
       await page.getByRole('button', { name: 'Szenario', exact: true }).click();
       await page.getByRole('option', { name: `Freischaltung Leitung Nord · ${kind} · Dummy QDS · synthetische Testdaten`, exact: true }).click();
@@ -33,13 +42,15 @@ async (page) => {
     }
     await page.getByText(/1[.,]344 Punkte/).waitFor();
     await page.getByRole('link', { name: 'Zeitreihe', exact: true }).click();
-    await page.waitForFunction(() => document.getElementById('timeseries-panel').getBoundingClientRect().top < 400);
+    await page.waitForFunction(() => { const top = document.getElementById('timeseries-panel').getBoundingClientRect().top; return top >= 0 && top < 400; });
     await page.locator('#timeseries-panel canvas').first().waitFor();
     await page.screenshot({ path: 'output/playwright/outage-assessment.png' });
-    const heatmap = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/heatmap') && r.status() === 200);
+    // Scrolling can prefetch the heatmap before its navigation link is clicked.
+    const heatmap = heatmapResponses.length ? Promise.resolve() : page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/heatmap') && r.status() === 200);
     await page.getByRole('link', { name: 'Heatmap', exact: true }).click();
     await heatmap;
     assert(errors.length === 0, `Runtime exceptions: ${errors.join('; ')}`);
-    console.log('PASS: Outage Assessment, no login/footer/date filter, complete REF/OUTAGE rows, original charts and heatmap, no runtime exceptions');
-  } finally { page.off('pageerror', onError); }
+    await page.locator('#heatmap-panel canvas').first().waitFor();
+    console.log('PASS: Outage Assessment, no login/footer/date filter/logo/query monitor/export buttons, complete REF/OUTAGE rows, original charts and heatmap, no runtime exceptions');
+  } finally { page.off('pageerror', onError); page.off('response', onResponse); }
 }

@@ -3,11 +3,29 @@ import uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, ConfigDict
-from app.analysis.bootstrap import get_repository
+from app.analysis.bootstrap import get_repository, select_database
 from app.simulation import data, settings
 from app.simulation.store import ScenarioStore, catalog_signature, now
 
 router = APIRouter(prefix="/api/simulation", tags=["PowerFactory scenarios"])
+
+
+class DatabaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=4096)
+
+
+@router.get("/database")
+def database():
+    return {"path": settings.ANALYSIS_DB_PATH}
+
+
+@router.post("/database")
+def change_database(body: DatabaseRequest):
+    try:
+        return {"path": select_database(body.path.strip())}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def store():

@@ -37,6 +37,31 @@ Unter **Szenario** REF auswählen, dann Betriebsmittel und Messgröße wählen u
 Die ursprünglichen DashB-Plots zeigen beide vollständigen Reihen. Unter
 **Szenariodetails** stehen die gespeicherten Ausfallfenster und der Datenbankpfad.
 
+## Vorhandene Ergebnisdatenbank auswählen
+
+Im Header **Datenbank hinzufügen** anklicken und den absoluten SQLite-Dateipfad
+auf dem Rechner des Dashboard-Servers eingeben. **Datenbank laden** prüft die
+vorhandene Datei und lädt das Dashboard mit ihren Ergebnissen neu. Bei ungültigen
+Pfaden bleibt die bisherige Datenbank aktiv. Die Auswahl gilt für diesen
+Server-Prozess; beim nächsten Start gilt wieder der angegebene Startpfad.
+
+Auf dem Mac direkt mit einer bestehenden Datenbank starten:
+
+```bash
+./start-dashboard.command --db /absoluter/pfad/ergebnisse.sqlite3
+```
+
+Per Doppelklick fragt dieser Starter den Pfad im Terminal ab. Er erzeugt keine
+Dummy-Daten. Der PowerFactory-Starter verwendet weiterhin `DATABASE_DIRECTORY`
+und `DATABASE_NAME`. Logo, Query Monitor sowie CSV-/PDF-/Teilen-Buttons sind aus
+dem Dashboard entfernt.
+
+Die visuelle Überarbeitung verwendet ausschließlich Light-Mode-CSS: bestehende
+Variablen, weiße Cards, dezente Schatten, Purple für Auswahl sowie Grün/Gelb/Rot
+für Status. Layout und Dark-Mode-Regeln bleiben erhalten. Alle geänderten Regeln
+stehen zum Nachlesen in [docs/LIGHT_MODE.css](docs/LIGHT_MODE.css); die Anwendung
+verwendet weiterhin `frontend/src/index.css`.
+
 ## Auf Windows vorbereiten
 
 `start-app.cmd` richtet Backend und Frontend-Abhängigkeiten ein und startet die

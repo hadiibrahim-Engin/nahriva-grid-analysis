@@ -4,7 +4,8 @@ from datetime import datetime
 from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
-from app.analysis.bootstrap import ANALYSIS_MODE, get_repository
+from app.analysis.bootstrap import get_repository
+from app.simulation import settings
 from app.analysis.service import analyze
 from app.analysis.models import AnalysisResponse, RunSummary, Element, Metric
 
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/analysis", tags=["Simulation Analysis"])
 @router.get("/capabilities")
 def capabilities():
     return {
-        "mode": ANALYSIS_MODE,
+        "mode": settings.ANALYSIS_MODE,
         "powerfactory_bridge": True,
         "schema_version": 1,
     }

@@ -1,0 +1,187 @@
+/* Review copy of the light-only rules in frontend/src/index.css. */
+[data-grid-theme="light"] {
+  --grid-color-scheme: light;
+  --grid-bg: #F5F5F6;
+  --grid-header: #FFFFFF;
+  --grid-surface: #FFFFFF;
+  --grid-surface-soft: #FFFFFF;
+  --grid-surface-strong: #F5F5F6;
+  --grid-subpanel: #F8F8FA;
+  --grid-control: #FFFFFF;
+  --grid-control-hover: #F0EFFD;
+  --grid-border: #E7E8EA;
+  --grid-border-soft: #E7E8EA;
+  --grid-text: #161210;
+  --grid-text-soft: #646A78;
+  --grid-muted: #646A78;
+  --grid-muted-2: #B4BDCA;
+  --grid-primary: #4734F6;
+  --grid-primary-hover: #3928D8;
+  --grid-info: #4734F6;
+  --grid-info-soft: #F0EFFD;
+  --grid-success: #3B9181;
+  --grid-warning: #F8AF1C;
+  --grid-warning-soft: #FFF6E2;
+  --grid-danger: #C43C49;
+  --grid-danger-soft: #FCEEF0;
+  --grid-success-soft: #EDF6F3;
+  --grid-warning-text: #8A5A00;
+  --grid-danger-text: #B52D3A;
+  --grid-card-shadow: 0 2px 8px rgba(22, 18, 16, 0.03), 0 8px 24px rgba(22, 18, 16, 0.035);
+
+  /* Geist design-system tokens (used by the calendar, inputs, selects, etc.).
+     The dark block above also targets bare :root, so without re-stating the
+     light values here these would stay dark in light mode. */
+  --context-card-border: #E7E8EA;
+  --ds-blue-900: #4734F6;
+  --ds-gray-200: #E7E8EA;
+  --ds-gray-alpha-100: rgba(0, 0, 0, 0.05);
+  --ds-gray-alpha-200: hsla(0, 0%, 0%, 0.08);
+  --ds-gray-alpha-300: hsla(0, 0%, 0%, 0.1);
+  --ds-gray-alpha-400: hsla(0, 0%, 0%, 0.08);
+  --ds-gray-alpha-500: hsla(0, 0%, 0%, 0.21);
+  --accents-2: #E7E8EA;
+  --accents-5: #646A78;
+  --ds-red-800: #C43C49;
+  --ds-red-900: #B52D3A;
+  --ds-blue-700: #4734F6;
+  --ds-amber-800: #F8AF1C;
+  --ds-gray-100: #F5F5F6;
+  --ds-gray-400: #E7E8EA;
+  --ds-gray-700: #646A78;
+  --ds-gray-900: #646A78;
+  --ds-gray-1000: #161210;
+  --ds-gray-1000-h: #161210;
+  --ds-background-100: #FFFFFF;
+  --ds-background-200: #F5F5F6;
+  --ds-shadow-border: 0 0 0 1px #E7E8EA;
+  --ds-shadow-small: 0 2px 6px rgba(22, 18, 16, 0.04);
+  --ds-shadow-medium: 0 4px 16px rgba(22, 18, 16, 0.06);
+  --ds-shadow-large: 0 12px 32px rgba(22, 18, 16, 0.08);
+  --ds-red-300: oklch(94.33% 0.0369 15.01);
+  --ds-red-500: oklch(84.47% 0.1018 17.71);
+  --geist-foreground: #161210;
+  --ds-input-ring: 0 0 0 1px #4734F6, 0 0 0 4px rgba(71, 52, 246, 0.12);
+  --ds-red-900-alpha-160: hsla(358, 66%, 48%, 0.16);
+  --geist-error: #B52D3A;
+}
+
+/* Light-mode refinement: existing geometry and dark-mode styles stay intact. */
+[data-grid-theme="light"] .selection-dock {
+  background: var(--grid-surface);
+  border-color: var(--grid-border);
+  box-shadow: 0 2px 8px rgba(22, 18, 16, 0.025);
+}
+
+[data-grid-theme="light"] .grid-theme-scope :is(.bg-gray-800.rounded-lg, .rounded-lg.border, .rounded-xl.border),
+[data-grid-theme="light"] .charts-overlay > .bg-gray-800,
+[data-grid-theme="light"] .charts-overlay > div > .bg-gray-800 {
+  background: var(--grid-surface);
+  border-color: var(--grid-border);
+  border-radius: 14px;
+  box-shadow: var(--grid-card-shadow);
+}
+
+[data-grid-theme="light"] .grid-form-trigger,
+[data-grid-theme="light"] .grid-form-input,
+[data-grid-theme="light"] .grid-form-menu {
+  background: var(--grid-surface);
+  border-color: var(--grid-border);
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(22, 18, 16, 0.025);
+}
+
+[data-grid-theme="light"] .grid-form-input--compact { border-radius: 6px; }
+[data-grid-theme="light"] .grid-form-menu { box-shadow: 0 8px 28px rgba(22, 18, 16, 0.09); }
+[data-grid-theme="light"] .grid-form-input::placeholder { color: var(--grid-muted); }
+
+[data-grid-theme="light"] .grid-form-trigger:hover:not(:disabled),
+[data-grid-theme="light"] .grid-form-input:hover:not(:disabled) {
+  background: #FAFAFC;
+  border-color: #C9C4F8;
+}
+
+[data-grid-theme="light"] .grid-form-trigger.is-open,
+[data-grid-theme="light"] .grid-form-input:focus,
+[data-grid-theme="light"] .grid-form-trigger:focus-visible {
+  border-color: var(--grid-primary);
+  box-shadow: 0 0 0 3px rgba(71, 52, 246, 0.12);
+}
+
+[data-grid-theme="light"] .grid-form-option:hover,
+[data-grid-theme="light"] .grid-form-option.is-active,
+[data-grid-theme="light"] .grid-form-option.is-selected {
+  background: var(--grid-info-soft);
+  color: var(--grid-primary);
+}
+
+[data-grid-theme="light"] .one-page-nav__item:hover,
+[data-grid-theme="light"] .one-page-nav__item:focus-visible,
+[data-grid-theme="light"] .one-page-nav__item[aria-current="page"] {
+  color: var(--grid-primary);
+  background: var(--grid-info-soft);
+  box-shadow: none;
+}
+[data-grid-theme="light"] .one-page-nav__item::before { background: none; }
+[data-grid-theme="light"] .one-page-nav__item::after { background: var(--grid-primary); }
+
+[data-grid-theme="light"] .dashboard-glass-button {
+  background: var(--grid-surface) !important;
+  border-color: var(--grid-border) !important;
+  border-radius: 8px;
+  color: var(--grid-text) !important;
+  box-shadow: 0 1px 3px rgba(22, 18, 16, 0.04) !important;
+}
+[data-grid-theme="light"] .dashboard-glass-button:hover:not(:disabled) {
+  background: var(--grid-control-hover) !important;
+  border-color: #C9C4F8 !important;
+}
+[data-grid-theme="light"] .dashboard-glass-button--primary {
+  background: var(--grid-primary) !important;
+  border-color: var(--grid-primary) !important;
+  color: #FFFFFF !important;
+}
+[data-grid-theme="light"] .dashboard-glass-button--primary:hover:not(:disabled) {
+  background: var(--grid-primary-hover) !important;
+  border-color: var(--grid-primary-hover) !important;
+}
+[data-grid-theme="light"] .dashboard-glass-button--success {
+  background: #30786B !important;
+  border-color: #30786B !important;
+  color: #FFFFFF !important;
+}
+[data-grid-theme="light"] .dashboard-glass-button--danger {
+  background: var(--grid-danger) !important;
+  border-color: var(--grid-danger) !important;
+  color: #FFFFFF !important;
+}
+[data-grid-theme="light"] .dashboard-glass-button--success:hover:not(:disabled) { background: #276355 !important; }
+[data-grid-theme="light"] .dashboard-glass-button--danger:hover:not(:disabled) { background: #B52D3A !important; }
+
+[data-grid-theme="light"] .grid-theme-scope :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--grid-primary);
+  outline-offset: 3px;
+}
+[data-grid-theme="light"] .grid-theme-scope button:not(.dashboard-glass-button) { box-shadow: none; }
+[data-grid-theme="light"] .grid-theme-scope :is(.text-gray-500, .text-gray-600) { color: var(--grid-muted); }
+[data-grid-theme="light"] .grid-theme-scope :is(button:disabled, input:disabled, select:disabled) { color: var(--grid-muted-2); }
+
+/* Reuse existing selection utilities; status colors retain their meanings. */
+[data-grid-theme="light"] .grid-theme-scope :is(.bg-blue-500, .bg-blue-600, .bg-blue-700) { background-color: var(--grid-primary); }
+[data-grid-theme="light"] .grid-theme-scope [class~="bg-blue-600/30"],
+[data-grid-theme="light"] .grid-theme-scope [class~="bg-blue-900/20"] { background-color: var(--grid-info-soft); color: var(--grid-primary); }
+[data-grid-theme="light"] .grid-theme-scope :is(.text-blue-300, .text-blue-400, .text-cyan-300, .text-cyan-400) { color: var(--grid-primary); }
+[data-grid-theme="light"] .grid-theme-scope :is(.text-green-300, .text-green-400, .text-emerald-300, .text-emerald-400) { color: #30786B; }
+[data-grid-theme="light"] .grid-theme-scope :is(.text-yellow-300, .text-yellow-400, .text-amber-300, .text-amber-400, [class~="text-amber-300/90"], [class~="text-[var(--grid-warning)]"]) { color: var(--grid-warning-text); }
+[data-grid-theme="light"] .grid-theme-scope :is(.text-red-300, .text-red-400, [class~="text-red-400/80"], [class~="text-[var(--grid-danger)]"]) { color: var(--grid-danger-text); }
+[data-grid-theme="light"] .grid-theme-scope :is([class~="bg-amber-500/15"], [class~="bg-amber-900/10"], [class~="bg-amber-900/20"], [class~="bg-yellow-900/20"]) { background-color: var(--grid-warning-soft); }
+[data-grid-theme="light"] .grid-theme-scope :is([class~="border-amber-700/40"], .border-yellow-700) { border-color: #F0D9A8; }
+[data-grid-theme="light"] .grid-theme-scope :is([class~="bg-green-900/20"], [class~="bg-emerald-900/20"]) { background-color: var(--grid-success-soft); }
+[data-grid-theme="light"] .grid-theme-scope :is([class~="bg-red-900/20"], [class~="hover:bg-red-900/30"]:hover) { background-color: var(--grid-danger-soft); }
+
+[data-grid-theme="light"] .grid-theme-scope table { color: var(--grid-text); }
+[data-grid-theme="light"] .grid-theme-scope thead { background: var(--grid-subpanel); color: var(--grid-muted); }
+[data-grid-theme="light"] .grid-theme-scope :is(th, td) { border-color: var(--grid-border); }
+[data-grid-theme="light"] .grid-theme-scope tbody tr:hover { background: #F8F8FC; }
+[data-grid-theme="light"] .grid-theme-scope tbody tr[aria-selected="true"] { background: var(--grid-info-soft); }
+[data-grid-theme="light"] ::selection { background: #E3DFFF; color: var(--grid-text); }
