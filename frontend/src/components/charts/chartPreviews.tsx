@@ -492,6 +492,8 @@ const PREVIEW_MAP: Record<ChartKind, PreviewFn> = {
   acrossTime:         ExceedancePreview,
   acrossDelta:        PeakDemandPreview,
   acrossLodf:         CorrelationScatterPreview,
+  acrossVoltage:      PeakDemandPreview,
+  acrossVoltageDelta: PeakDemandPreview,
   overlay:            OverlayPreview,
   aggTrend:           AggTrendPreview,
   histogram:          HistogramPreview,

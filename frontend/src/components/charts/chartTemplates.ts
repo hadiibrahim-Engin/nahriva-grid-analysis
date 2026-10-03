@@ -63,6 +63,8 @@ export type ChartKind =
   | 'acrossTime'
   | 'acrossDelta'
   | 'acrossLodf'
+  | 'acrossVoltage'
+  | 'acrossVoltageDelta'
   | 'overlay'
   | 'aggTrend'
   | 'histogram'
@@ -189,6 +191,28 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
     kind: 'acrossDelta',
     name: 'Änderung der Auslastung',
     question: 'Welche Betriebsmittel ändern ihre Auslastung durch eine Freischaltung am stärksten (pp gegenüber REF)?',
+    category: 'scenarioEvaluation',
+    measurements: [],
+    arity: 'none',
+    scenarioLevel: true,
+    needsScenarioOptions: true,
+  },
+  {
+    id: 'across-voltage',
+    kind: 'acrossVoltage',
+    name: 'Spannung je Sammelschiene',
+    question: 'Wie verhält sich die Spannung der gewählten Sammelschienen in den Szenarien gegenüber dem Spannungsband?',
+    category: 'scenarioEvaluation',
+    measurements: [],
+    arity: 'none',
+    scenarioLevel: true,
+    needsScenarioOptions: true,
+  },
+  {
+    id: 'across-voltage-delta',
+    kind: 'acrossVoltageDelta',
+    name: 'Spannungsänderung (ΔU)',
+    question: 'Wie stark ändert eine Freischaltung die Spannung der gewählten Sammelschienen gegenüber REF?',
     category: 'scenarioEvaluation',
     measurements: [],
     arity: 'none',
@@ -583,6 +607,34 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
     comingSoon: true,
   },
 ];
+
+/**
+ * Templates that stay registered (saved charts keep working) but are not offered in "Diagramm
+ * hinzufügen". Reasons, all verified against the PowerFactory export, which delivers only loading (L)
+ * and voltage (U) of a short scenario simulation:
+ */
+export const HIDDEN_TEMPLATE_REASONS: Record<string, string> = {
+  // Need P, Q, S or I, which the export does not contain.
+  'season-radar': 'braucht P/Q/S und ein Jahresprofil über zwölf Monate',
+  'power-factor': 'braucht P, Q und S',
+  'pq-quadrant': 'braucht P und Q',
+  'qu-scatter': 'braucht Q',
+  'peak-demand': 'braucht P',
+  'energy-integral': 'braucht P',
+  'losses-efficiency': 'braucht P',
+  'asset-loading': 'braucht S; die Auslastung liegt schon in Prozent vor',
+  'overload-duration': 'braucht S; die Dauerlinie auf der Auslastung leistet dasselbe',
+  // Meaningless for a short simulation.
+  'dst-anomaly': 'Simulationszeiten kennen keine Zeitumstellung',
+  'quality-gap-heatmap': 'Simulationsdaten haben keine Messlücken',
+  'daily-profile': 'ein typischer Tag aus sieben Simulationstagen ist nicht aussagekräftig',
+  'day-hour-heatmap': 'Tag-Stunde-Muster brauchen lange Zeiträume',
+};
+
+/** What the picker offers: no hidden and no not-yet-built templates. */
+export const PICKER_TEMPLATES: ChartTemplate[] = CHART_TEMPLATES.filter(
+  (t) => !t.comingSoon && !(t.id in HIDDEN_TEMPLATE_REASONS),
+);
 
 export function getTemplate(id: string): ChartTemplate | undefined {
   return CHART_TEMPLATES.find((t) => t.id === id);

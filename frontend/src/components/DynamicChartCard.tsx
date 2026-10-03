@@ -239,12 +239,15 @@ function LiveConfigControls({
         )}
 
         {template.needsScenarioOptions && (
-          <ScenarioOptions
-            compact
-            topN={config.topN ?? 12}
-            equipment={config.equipment ?? 'all'}
-            onChange={(next) => patch(next)}
-          />
+          <details className="w-full rounded border border-[var(--grid-border)] bg-[var(--grid-subpanel)] px-2 py-1">
+            <summary className="cursor-pointer text-[10px] text-[var(--grid-text-soft)]">
+              Auswahl: {config.elementMode === 'selected' ? `${config.elementIds?.length ?? 0} gewählt` : `automatisch Top ${config.topN ?? 12}`}
+              {' · '}Szenarien: {config.scenarioIds?.length ? config.scenarioIds.length : 'alle'}
+            </summary>
+            <div className="pt-2">
+              <ScenarioOptions compact kind={template.kind} config={config} onChange={(next) => patch(next)} />
+            </div>
+          </details>
         )}
 
         {template.needsResolution && (

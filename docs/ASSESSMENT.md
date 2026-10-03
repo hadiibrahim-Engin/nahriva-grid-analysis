@@ -23,12 +23,23 @@ Erklärende Texte sind aus; sie lassen sich je Karte über **i** oder für alles
 
 ## Diagramme selbst hinzufügen
 
-Die vier Vergleichsgrafiken (Höchste Auslastung, Überlastdauer, Änderung der Auslastung, LODF und
-Änderung) gibt es auch als Vorlagen unter **Diagramm hinzufügen → Szenarioauswertung**. Sie brauchen
-keine ausgewählten Zeitreihen. Wählbar sind die Anzahl (Top 5 bis 30) und der Typ der Betriebsmittel
-(alle, Leitungen, Transformatoren); beides lässt sich auf der Karte nachträglich ändern. Die Karten
-teilen sich die Daten mit der Zusammenfassung, laden also nichts doppelt, folgen neuen Szenarien von selbst
-und bleiben mit der Ansicht gespeichert. Neue Vorlagen: `frontend/src/components/charts/chartTemplates.ts`.
+Die Vergleichsgrafiken gibt es auch als Vorlagen unter **Diagramm hinzufügen → Szenarioauswertung**:
+Höchste Auslastung, Überlastdauer, Änderung der Auslastung, LODF und Änderung, sowie für Spannungen
+**Spannung je Sammelschiene** und **Spannungsänderung (ΔU)**. Sie brauchen keine ausgewählten Zeitreihen.
+
+- **Auswahl:** *Automatisch* zeigt die auffälligsten N (5 bis 30). *Ausgewählte* zeigt genau die
+  gewählten Betriebsmittel (bzw. Sammelschienen) aus einer durchsuchbaren Liste, je Betriebsmittel eine Gruppe
+  mit einem Balken pro Szenario. Zusätzlich lassen sich die **Szenarien** eingrenzen (Codes S01, S02 … bleiben
+  die der Gesamtliste). Der Typ (alle, Leitungen, Transformatoren) filtert Leitungs- und Trafo-Diagramme.
+- **Spannung:** Balken gehen von der Nennspannung 1,000 p.u. aus nach links und rechts, das Band 0,90 und 1,10
+  ist eingezeichnet; ΔU ist die Änderung gegenüber REF an der Seite, die dem Band näher liegt.
+- Die Karten teilen sich die Daten mit der Zusammenfassung, laden also nichts doppelt, folgen neuen
+  Szenarien von selbst und bleiben mit der Ansicht gespeichert. Auswahl und Optionen lassen sich auf der Karte
+  unter „Auswahl“ ändern.
+- **Ausgeblendete Vorlagen:** Was mit PowerFactory-Daten (nur Auslastung und Spannung, kurze Simulation) nicht
+  funktioniert, wird im Dialog nicht angeboten, bleibt aber registriert, damit gespeicherte Karten weiterlaufen.
+  Liste mit Begründung: `HIDDEN_TEMPLATE_REASONS` in `frontend/src/components/charts/chartTemplates.ts`;
+  Eintrag löschen, um eine Vorlage wieder anzubieten. Neue Vorlagen ebenfalls dort.
 
 ## Definitionen
 

@@ -31,6 +31,12 @@ export interface DynamicChartConfig {
   /** Scenario evaluation charts: how many equipment items to show, and of which kind. */
   topN?: number;
   equipment?: 'all' | 'line' | 'transformer';
+  /** 'selected': show exactly the chosen items (elementIds) instead of the automatic top N. */
+  elementMode?: 'auto' | 'selected';
+  /** Chosen branch or busbar ids (element ids of the saved results). */
+  elementIds?: string[];
+  /** Chosen scenario ids; empty or absent = all scenarios. */
+  scenarioIds?: string[];
   /** Multiple warning/exceedance levels rendered as constant reference lines. */
   thresholdLevels?: number[];
   /** Display names for thresholdLevels, matched by index before sorting. */

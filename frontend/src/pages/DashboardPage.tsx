@@ -60,7 +60,7 @@ import { fallbackGridTopology } from '../api/gridTopology';
 import { applyGridThemeMode, storedThemeMode, type ThemeMode } from '../util/theme';
 import AnimatedButton from '../components/ui/AnimatedButton';
 import OutageManagement from '../components/OutageManagement';
-import { CHART_TEMPLATES } from '../components/charts/chartTemplates';
+import { PICKER_TEMPLATES } from '../components/charts/chartTemplates';
 import { SectionCard } from '../components/across/shared';
 import AcrossScenarios from '../components/across/AcrossScenarios';
 import { openSection, type SummarySection } from '../util/acrossScenarios';
@@ -147,6 +147,9 @@ const REMOVABLE_PANEL_LABELS: Record<string, string> = {
   heatmap: 'Heatmap',
   peakDemand: 'Peak Demand Analysis',
 };
+
+/** Optional views offered under the summary. Peak demand needs active power, which the PowerFactory export does not contain. */
+const OFFERED_PANELS = Object.entries(REMOVABLE_PANEL_LABELS).filter(([id]) => id !== 'peakDemand');
 
 /** Small "x" button on an optional view's header; removes it again. */
 function RemovePanelButton({ onRemove, label }: { onRemove: () => void; label: string }) {
@@ -1699,10 +1702,10 @@ export default function DashboardPage() {
                     </SectionCard>
                     )}
 
-                    {Object.keys(REMOVABLE_PANEL_LABELS).some((id) => !activePanels.has(id)) && (
+                    {OFFERED_PANELS.some(([id]) => !activePanels.has(id)) && (
                       <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
                         <span>Weitere Ansichten hinzufügen:</span>
-                        {Object.entries(REMOVABLE_PANEL_LABELS).filter(([id]) => !activePanels.has(id)).map(([id, label]) => (
+                        {OFFERED_PANELS.filter(([id]) => !activePanels.has(id)).map(([id, label]) => (
                           <button
                             key={id}
                             type="button"
@@ -1747,7 +1750,7 @@ export default function DashboardPage() {
                           <path d="M12 8v8M8 12h8" />
                         </svg>
                         <span className="text-sm font-semibold">Diagramm hinzufügen</span>
-                        <span className="text-xs opacity-60">{CHART_TEMPLATES.filter((t) => !t.comingSoon).length} Analyse-Vorlagen aus {new Set(CHART_TEMPLATES.filter((t) => !t.comingSoon).map((t) => t.category)).size} Kategorien</span>
+                        <span className="text-xs opacity-60">{PICKER_TEMPLATES.length} Analyse-Vorlagen aus {new Set(PICKER_TEMPLATES.map((t) => t.category)).size} Kategorien</span>
                       </button>
 
                     </SectionCard>
