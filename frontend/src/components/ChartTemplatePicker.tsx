@@ -810,12 +810,6 @@ function ConfigPanel(props: ConfigPanelProps) {
                   </div>
                 </>
               )}
-              <div>
-                <label className="mb-1 block text-xs text-[var(--grid-muted)]">Datenumfang</label>
-                <div className="rounded border border-[var(--grid-border)] bg-[var(--grid-subpanel)] px-2 py-1.5 text-sm text-[var(--grid-text-soft)]">
-                  Vollständige Simulation
-                </div>
-              </div>
             </div>
 
             {/* Required-measurement gate: name exactly which physical inputs

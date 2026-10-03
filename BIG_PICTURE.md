@@ -37,7 +37,11 @@ flowchart LR
 | `backend/app/simulation/routes.py` | DashB-API-Verträge auf SQLite abbilden |
 | `backend/app/simulation/data.py` | Rohreihen, explizite Aggregation und Analysen |
 | `frontend/src/pages/DashboardPage.tsx` | Auswahl von Szenario/Betriebsmittel/Messgröße und vollständige Ergebnisreihen |
-| `frontend/src/components/OutageManagement.tsx` | Gespeicherte Szenarien und ihre Ausfallfenster erklären |
+| `frontend/src/components/OutageManagement.tsx` | Kopf des Abschnitts: Projekt, Szenarioanzahl, Datenbankpfad |
+| `frontend/src/components/across/` | Zusammenfassung über alle Szenarien: KPIs, Szenarienübersicht, Diagramme, Heatmap, aufklappbare Tabelle und Szenariodetails |
+| `frontend/src/config/loadingBands.ts` | Zentrale Auslastungsbänder und Schwellen |
+| `backend/app/simulation/across.py` | Lesende Aggregation je Leitung und Szenario |
+| `powerfactory/lodf.py` | LODF aus DC-Lastflüssen vor der ersten Simulation |
 | `scripts/seed_dummy_qds.py` | Kleine synthetische QDS-Datenbank für Mac-Tests erzeugen |
 | `start-demo.command` | Mac-Test per Doppelklick oder Terminal starten |
 
@@ -192,6 +196,13 @@ erDiagram
         string kind
         string payload
     }
+    PF_LODF {
+        string outage_key PK
+        string element_id PK
+        float lodf
+        float p_pre
+        float p_post
+    }
     PF_JOBS ||--o| PF_SCENARIOS : produces
     PF_SCENARIOS ||--|{ PF_SCENARIO_RUNS : contains
     ANALYSIS_RUNS ||--o| PF_SCENARIO_RUNS : linked
@@ -272,7 +283,7 @@ flowchart TD
     Seed --> Exists{Datenbank schon befüllt?}
     Exists -->|Eigene Dummy-Version| Reuse[Vorhandene Testdaten wiederverwenden]
     Exists -->|Fremde Ergebnisse| Abort[Abbrechen, andere Datenbankdatei wählen]
-    Exists -->|Leer| Generate[Drei benannte Szenarien: je REF und OUTAGE]
+    Exists -->|Leer| Generate[Sechs benannte Szenarien: je REF und OUTAGE, dazu synthetische LODF]
     Generate --> Store[672 Zeitpunkte pro Messreihe speichern]
     Store --> Launch[Lokales Dashboard starten]
     Reuse --> Launch

@@ -31,8 +31,10 @@ export default function HeatmapChart({ data }: Props) {
 
   // Heatmap palette: low (cool) → mid (primary) → high (warning) → peak (danger).
   // Picked from the theme tokens so it works in both modes.
+  // Light mode starts from a neutral tint (not blue) and uses a softened primary,
+  // so low cells stay calm on the white surface and the warm end carries the signal.
   const heatmapRamp = theme.isLight
-    ? ['#dbeafe', theme.primary, theme.warning, theme.danger]
+    ? ['#EEF0F6', '#BDB6FA', theme.warning, theme.danger]
     : ['#1e3a5f', theme.primary, theme.warning, theme.danger];
 
   const option = {

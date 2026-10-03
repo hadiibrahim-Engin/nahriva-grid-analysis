@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
-interface Outage { id: string; name: string; equipment_name: string; start: number | null; end: number | null; }
-interface Scenario { id: string; name: string; outage_ids: string[]; runs: { run_id: string; kind: string }[]; }
-interface Overview { catalog: { project: string; study_case: string; outages: Outage[]; dummy_qds_version?: number; } | null; scenarios: Scenario[]; database_path: string; }
-const timeLabel = (value: number | null) => value === null ? '–' : new Date(value * 1000).toLocaleString('de-DE', { timeZone: 'UTC' });
+import { SectionCard } from './across/shared';
+import { isSynthetic, provenancePeriod, resultContexts, type ResultProvenance, type ResultScenario } from '../util/resultProvenance';
+interface Overview { catalog: ResultProvenance | null; scenarios: ResultScenario[]; database_path: string; }
 export default function OutageManagement({ onResultsChanged }: { onResultsChanged: () => void }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState('');
-  const [expanded, setExpanded] = useState(false);
   const callback = useRef(onResultsChanged);
   const scenarioIds = useRef('');
   useEffect(() => { callback.current = onResultsChanged; }, [onResultsChanged]);
@@ -27,17 +25,36 @@ export default function OutageManagement({ onResultsChanged }: { onResultsChange
     return () => { active = false; window.clearInterval(timer); };
   }, []);
   const catalog = overview?.catalog;
-  return <div className="rounded-lg border border-[var(--grid-border)] bg-[var(--grid-surface)] p-4">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><h2 className="text-sm font-semibold text-[var(--grid-text)]">Outage Management</h2><p className="mt-1 text-xs text-[var(--grid-muted)]">{catalog ? `${catalog.project} / ${catalog.study_case} · ${overview?.scenarios.length ?? 0} gespeicherte Freischaltszenarien` : 'Noch keine Ergebnisse. Das PowerFactory-Skript startet die Berechnung und dieses Dashboard.'}</p></div>
-      <button type="button" onClick={() => setExpanded(v => !v)} aria-expanded={expanded} className="grid-form-trigger !w-auto">{expanded ? 'Details ausblenden' : 'Szenariodetails'}</button>
-    </div>
-    {catalog?.dummy_qds_version && <p className="mt-2 text-xs text-amber-400">Dummy QDS · synthetische Testdaten für den Mac-Test.</p>}
+  const contexts = resultContexts(overview?.scenarios ?? [], catalog ?? null);
+  return <SectionCard title="Outage Management">
+    <p className="text-xs text-[var(--grid-muted)]">{contexts.length ? `${overview?.scenarios.length ?? 0} gespeicherte Freischaltszenarien · ${overview?.scenarios.length ? 'Herkunft der gespeicherten Ergebnisse' : 'Synchronisierter Berechnungskontext · noch keine Ergebnisse'}` : 'Noch keine Ergebnisse. Das PowerFactory-Skript startet die Berechnung und dieses Dashboard.'}</p>
+    {contexts.map(({ provenance: p, count, lastResult }, index) => {
+      const synthetic = isSynthetic(p);
+      const fields = [
+        { label: 'Modell / Projekt', value: p.project || 'Nicht erfasst', path: p.project_path },
+        { label: 'Studie / Study Case', value: p.study_case || 'Nicht erfasst', path: p.study_case_path },
+        { label: 'PowerFactory-Version', value: synthetic ? 'Nicht verwendet · synthetische Daten' : p.powerfactory_version || 'Nicht erfasst' },
+        { label: 'Datenquelle', value: synthetic ? 'Dummy QDS · synthetische Testdaten' : p.data_source || 'Nicht erfasst' },
+        { label: 'Simulationszeitraum', value: provenancePeriod(p.period) },
+        ...(p.sample_interval_seconds ? [{ label: 'Zeitauflösung', value: `${p.sample_interval_seconds / 60} Minuten` }] : []),
+        ...(p.qds_command ? [{ label: 'QDS-Berechnung', value: p.qds_command.name, path: p.qds_command.path }] : []),
+        ...(p.operational_scenario ? [{ label: 'Betriebsszenario', value: p.operational_scenario.name, path: p.operational_scenario.path }] : []),
+        ...(p.networks?.length ? [{ label: 'Aktive Netze', value: p.networks.map(grid => grid.name).join(', '), path: p.networks.map(grid => grid.path).join('\n') }] : []),
+        ...(p.grid_name_filter ? [{ label: 'Netzfilter', value: p.grid_name_filter }] : []),
+      ];
+      return <div key={index} className="mt-3 border-t border-[var(--grid-border)] pt-3">
+        {contexts.length > 1 && <p className="mb-2 text-xs font-semibold">Berechnungskontext {index + 1} · {count} Szenarien</p>}
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+          {fields.map(field => <div key={field.label} className="min-w-0">
+            <dt className="text-[11px] text-[var(--grid-muted)]">{field.label}</dt>
+            <dd className="mt-0.5 break-words text-xs font-medium" title={field.path}>{field.value}</dd>
+          </div>)}
+        </dl>
+        {lastResult && <p className="mt-3 text-[11px] text-[var(--grid-muted)]">Letztes gespeichertes Ergebnis: {new Date(lastResult).toLocaleString('de-DE')}</p>}
+        {synthetic && <p className="mt-2 text-xs text-[var(--grid-muted)]">Synthetisches Demo-Modell für den Mac-Test · keine PowerFactory-Berechnung.</p>}
+      </div>;
+    })}
+    {overview?.database_path && <p className="mt-3 break-all text-[11px] text-[var(--grid-muted)]" title="Aktive Ergebnisdatenbank">Datenbank: {overview.database_path}</p>}
     {error && <p role="alert" className="mt-2 text-sm text-red-400">{error}</p>}
-    {expanded && <div className="mt-4 space-y-3 text-xs text-[var(--grid-muted)]">
-      <p className="break-all">Datenbank: {overview?.database_path}</p>
-      {overview?.scenarios.map(scenario => <div key={scenario.id} className="border-t border-[var(--grid-border)] pt-2"><strong className="text-[var(--grid-text)]">{scenario.name}</strong><p>{scenario.runs.map(r => r.kind).join(' / ')} · vollständige Simulationsreihen</p>{catalog?.outages.filter(o => scenario.outage_ids.includes(o.id)).map(o => <p key={o.id}>{o.name} · {o.equipment_name} · {timeLabel(o.start)} – {timeLabel(o.end)} UTC</p>)}</div>)}
-      <p>Oben unter „Szenario“ REF und OUTAGE auswählen und dieselben Betriebsmittel als Zeitreihen hinzufügen.</p>
-    </div>}
-  </div>;
+  </SectionCard>;
 }

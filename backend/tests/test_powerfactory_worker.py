@@ -2,6 +2,8 @@
 
 import importlib.util
 import sqlite3
+import sys
+from types import SimpleNamespace
 from pathlib import Path
 import pytest
 from app.simulation.store import ScenarioStore, catalog_signature
@@ -217,6 +219,37 @@ def test_failed_calculation_restores_state_and_commits_no_scenario(tmp_path):
         assert db.execute("SELECT COUNT(*) FROM pf_scenarios").fetchone()[0] == 0
         assert db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] == 0
         assert db.execute("SELECT status FROM pf_jobs").fetchone()[0] == "failed"
+
+
+def test_result_provenance_is_captured_and_does_not_follow_live_catalog(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "powerfactory", SimpleNamespace(__version__="26.0.3"))
+    app = App()
+    operational = PFObject("Winter peak", "IntScenario")
+    network = PFObject("Transmission model", "ElmNet")
+    app.GetActiveScenario = lambda: operational
+    app.GetCalcRelevantObjects = lambda pattern: [network] if pattern == "*.ElmNet" else []
+    path = tmp_path / "provenance.sqlite3"
+    queue(app, path)
+    worker.execute(app, path)
+    store = ScenarioStore(path)
+    snapshot = store.overview()["scenarios"][0]["provenance"]
+    assert snapshot["powerfactory_version"] == "26.0.3"
+    assert snapshot["project_path"] == app.project.GetFullName()
+    assert snapshot["study_case_path"] == app.study.GetFullName()
+    assert snapshot["operational_scenario"]["name"] == "Winter peak"
+    assert snapshot["networks"][0]["name"] == "Transmission model"
+    assert snapshot["qds_command"]["path"] == app.qds.GetFullName()
+    store.publish_catalog({**store.catalog(), "project": "Other model", "powerfactory_version": "27.0.1"})
+    assert store.overview()["scenarios"][0]["provenance"] == snapshot
+    assert store.overview()["scenarios"][0]["runs"][0]["source"] == "PowerFactory"
+    store.close()
+
+
+def test_missing_native_module_version_is_not_inferred(monkeypatch):
+    monkeypatch.delitem(sys.modules, "powerfactory", raising=False)
+    catalog = worker.discover(App())
+    assert catalog["powerfactory_version"] is None
+    assert catalog["project"] == "Project" and catalog["study_case"] == "Study"
 
 
 def test_stale_study_period_rejected_before_calculation(tmp_path):

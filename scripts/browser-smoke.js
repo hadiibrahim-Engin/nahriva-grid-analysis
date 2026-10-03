@@ -16,7 +16,9 @@ async (page) => {
     await page.goto(new URL(page.url()).origin);
     await page.getByRole('heading', { name: 'Outage Assessment', exact: true }).waitFor();
     const catalog = await (await page.request.get(new URL('/api/simulation/outage-management', page.url()).href)).json();
-    assert(catalog.catalog.dummy_qds_version === 1, 'Browser smoke requires the dummy QDS database');
+    assert([1, 2].includes(catalog.catalog.dummy_qds_version), 'Browser smoke requires the dummy QDS database');
+    await page.getByRole('heading', { name: 'Freigabe-Bewertung der Szenarien', exact: true }).waitFor();
+    assert(await page.locator('#timeseries-panel, #heatmap-panel, #peak-demand-chart-panel').count() === 0, 'Optional views are shown by default');
     assert(await page.getByRole('contentinfo').count() === 0, 'Footer remains');
     assert(await page.getByText('Zeitraum', { exact: true }).count() === 0, 'Date picker remains');
     assert(await page.getByText('Abmelden', { exact: true }).count() === 0, 'Login UI remains');
@@ -41,16 +43,18 @@ async (page) => {
       assert(data.data[0].timestamp.startsWith('2026-01-31'), 'Old simulation timestamp was excluded');
     }
     await page.getByText(/1[.,]344 Punkte/).waitFor();
+    await page.getByRole('button', { name: '+ Zeitreihen-Overlay', exact: true }).click();
     await page.getByRole('link', { name: 'Zeitreihe', exact: true }).click();
     await page.waitForFunction(() => { const top = document.getElementById('timeseries-panel').getBoundingClientRect().top; return top >= 0 && top < 400; });
     await page.locator('#timeseries-panel canvas').first().waitFor();
     await page.screenshot({ path: 'output/playwright/outage-assessment.png' });
     // Scrolling can prefetch the heatmap before its navigation link is clicked.
     const heatmap = heatmapResponses.length ? Promise.resolve() : page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/heatmap') && r.status() === 200);
+    await page.getByRole('button', { name: '+ Heatmap', exact: true }).click();
     await page.getByRole('link', { name: 'Heatmap', exact: true }).click();
     await heatmap;
     assert(errors.length === 0, `Runtime exceptions: ${errors.join('; ')}`);
     await page.locator('#heatmap-panel canvas').first().waitFor();
-    console.log('PASS: Outage Assessment, no login/footer/date filter/logo/query monitor/export buttons, complete REF/OUTAGE rows, original charts and heatmap, no runtime exceptions');
+    console.log('PASS: Outage Assessment, no login/footer/date filter/logo/query monitor/export buttons, summary as the only default view, optional views on demand, complete REF/OUTAGE rows, original charts and heatmap, no runtime exceptions');
   } finally { page.off('pageerror', onError); page.off('response', onResponse); }
 }

@@ -185,3 +185,21 @@
 [data-grid-theme="light"] .grid-theme-scope tbody tr:hover { background: #F8F8FC; }
 [data-grid-theme="light"] .grid-theme-scope tbody tr[aria-selected="true"] { background: var(--grid-info-soft); }
 [data-grid-theme="light"] ::selection { background: #E3DFFF; color: var(--grid-text); }
+
+/* Across-scenarios evaluation: light-mode band hues (defaults for dark live in index.css). */
+[data-grid-theme="light"] .across-scope {
+  --ab-ok: #94A3B8;
+  --ab-high: #F8AF1C;
+  --ab-light: #F08A2E;
+  --ab-clear: #E0505A;
+  --ab-severe: #B52D3A;
+  --ab-pos: #E5784B;
+  --ab-neg: #4A8FD6;
+  --ab-lodf: #4734F6;
+}
+[data-grid-theme="light"] .across-card,
+[data-grid-theme="light"] .ab-kpi { box-shadow: var(--grid-card-shadow); }
+/* Time-of-day heatmap chart (HeatmapChart.tsx) in light mode: neutral → soft primary → warning → danger. */
+
+/* Outage assessment: verdict colour "zulässig" (light); the other verdicts reuse the band hues. */
+[data-grid-theme="light"] .across-scope { --ab-pass: #3B9181; }

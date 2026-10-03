@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import InfoHint from './InfoHint';
+import { SectionCard } from './across/shared';
 import GeneratingLoader from './ui/GeneratingLoader';
 
 interface Props {
@@ -15,21 +15,10 @@ interface Props {
   children: ReactNode;
 }
 
-function Title({ title, hint, className }: { title: string; hint?: string; className: string }) {
-  return (
-    <h2 className={`inline-flex items-center gap-1 ${className}`}>
-      <span>{title}</span>
-      {hint && <InfoHint text={hint} />}
-    </h2>
-  );
-}
-
-
 export default function DataSection({ title, hint, loading, error, isEmpty, children }: Props) {
   if (error) {
     return (
-      <div className="bg-gray-800 rounded-lg p-4 border border-red-800/60">
-        <Title title={title} hint={hint} className="text-sm text-red-400 mb-2" />
+      <SectionCard title={title} hint={hint}>
         <div className="flex items-start gap-3 py-3 px-4 bg-red-900/20 rounded border border-red-800/40">
           <span className="text-red-400 text-xl shrink-0">⚠</span>
           <div>
@@ -38,7 +27,7 @@ export default function DataSection({ title, hint, loading, error, isEmpty, chil
             <div className="text-xs text-red-400/80 mt-1 font-mono whitespace-pre-wrap">{error}</div>
           </div>
         </div>
-      </div>
+      </SectionCard>
     );
   }
 
@@ -63,22 +52,20 @@ export default function DataSection({ title, hint, loading, error, isEmpty, chil
   // -- Initial load (no data yet) -------------------------------------
   if (loading && isEmpty) {
     return (
-      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-        <Title title={title} hint={hint} className="text-sm text-gray-400 mb-3" />
+      <SectionCard title={title} hint={hint}>
         <GeneratingLoader minHeight={200} />
-      </div>
+      </SectionCard>
     );
   }
 
   // -- Empty (loaded, but no rows) ------------------------------------
   if (isEmpty) {
     return (
-      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-        <Title title={title} hint={hint} className="text-sm text-gray-400 mb-2" />
+      <SectionCard title={title} hint={hint}>
         <div className="h-[120px] flex items-center justify-center text-gray-500 text-sm">
           Keine Daten vorhanden
         </div>
-      </div>
+      </SectionCard>
     );
   }
 

@@ -32,10 +32,9 @@ export interface SharedView {
   mt: string;
   series: SharedSeries[];
   charts: DashboardChartConfig[];
-  /** IDs of default (non-removable-by-design) chart panels the user has
-   * explicitly hidden — e.g. 'timeseries', 'heatmap', 'peakDemand'. Absent
-   * or empty means all default panels show. */
-  hiddenPanels?: string[];
+  /** IDs of the optional views the user has added — 'timeseries', 'heatmap',
+   * 'peakDemand'. Absent or empty means only the summary is shown. */
+  panels?: string[];
 }
 
 function toB64Url(s: string): string {

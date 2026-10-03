@@ -1,7 +1,7 @@
 // @refresh reset  ← force full remount on hot reload so stale React state
 // (e.g. resolutions carrying a non-array HMR-preserved value) never leaks into
 // child components.
-import { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense, type PointerEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense, type PointerEvent } from 'react';
 import {
   getFacilities,
   getComponentsByFacility,
@@ -50,18 +50,19 @@ import {
   type SharedView,
 } from '../util/shareView';
 import { useInView } from '../hooks/useInView';
-import InfoHint from '../components/InfoHint';
 import { logError } from '../debug/debugLog';
 import { formatChartNumber } from '../components/charts/format';
 import type { MockStation, MockTopology } from '../components/charts/gridMockData';
 import type { GridTopologyCompat } from '../map/types';
-import HelpPanel from '../components/HelpPanel';
 import CinematicThemeSwitch from '../components/ui/cinematic-theme-switcher';
 import { matchStation, matchAll as matchAllStations, type MatchResult } from '../util/facilityMatcher';
 import { fallbackGridTopology } from '../api/gridTopology';
 import { applyGridThemeMode, storedThemeMode, type ThemeMode } from '../util/theme';
 import AnimatedButton from '../components/ui/AnimatedButton';
 import OutageManagement from '../components/OutageManagement';
+import { SectionCard } from '../components/across/shared';
+import AcrossScenarios from '../components/across/AcrossScenarios';
+import { openSection, type SummarySection } from '../util/acrossScenarios';
 import DatabasePicker from '../components/DatabasePicker';
 import GeneratingLoader from '../components/ui/GeneratingLoader';
 import { useUiConfig } from '../config/uiConfig';
@@ -117,14 +118,13 @@ const MAP_LAYER_OPTIONS: { id: MapLayerMode; label: string }[] = [
 ];
 
 const NAV_SECTIONS = [
-  { id: 'map-selection', label: 'Outage Management' },
-  { id: 'timeseries-panel', label: 'Zeitreihe' },
-  { id: 'heatmap-panel', label: 'Heatmap' },
-  { id: 'peak-demand-chart-panel', label: 'Peak Demand' },
-  { id: 'custom-charts-panel', label: 'Diagramme' },
+  { id: 'map-selection', label: 'Zusammenfassung', panel: null },
+  { id: 'timeseries-panel', label: 'Zeitreihe', panel: 'timeseries' },
+  { id: 'heatmap-panel', label: 'Heatmap', panel: 'heatmap' },
+  { id: 'peak-demand-chart-panel', label: 'Peak Demand', panel: 'peakDemand' },
+  { id: 'custom-charts-panel', label: 'Diagramme', panel: null },
 ] as const;
 
-type NavSectionId = typeof NAV_SECTIONS[number]['id'];
 
 const PEAK_PERIOD_LABELS: Record<PeakDemandPeriod, string> = {
   day: 'Täglich',
@@ -139,16 +139,15 @@ const CHART_HINTS = {
   heatmap: 'Typische Last- oder Spannungsmuster nach Wochentag und Stunde.',
 } as const;
 
-/** Default (always-there) chart panels the user can dismiss individually.
- * Display labels for the remove button and the "hidden panels" restore row. */
+/** Optional views. Only the summary is standard; these appear when the user adds them.
+ * Display labels for the remove button and the "add view" row. */
 const REMOVABLE_PANEL_LABELS: Record<string, string> = {
   timeseries: 'Zeitreihen-Overlay',
   heatmap: 'Heatmap',
   peakDemand: 'Peak Demand Analysis',
 };
 
-/** Small "x" button on a default panel's header — the only way these panels
- * ever disappear, since they're otherwise always rendered. */
+/** Small "x" button on an optional view's header; removes it again. */
 function RemovePanelButton({ onRemove, label }: { onRemove: () => void; label: string }) {
   return (
     <button
@@ -272,27 +271,6 @@ function formatPeakTimestamp(timestamp: string): string {
   });
 }
 
-function ChartTitle({
-  children,
-  hint,
-  className = 'text-sm text-gray-400',
-  level = 2,
-}: {
-  children: ReactNode;
-  hint: string;
-  className?: string;
-  level?: 2 | 3;
-}) {
-  const content = (
-    <>
-      <span>{children}</span>
-      <InfoHint text={hint} />
-    </>
-  );
-  const classes = `inline-flex items-center gap-1 ${className}`;
-  return level === 3 ? <h3 className={classes}>{content}</h3> : <h2 className={classes}>{content}</h2>;
-}
-
 export default function DashboardPage() {
   const uiConfig = useUiConfig();
   const initialShareId = useMemo(() => readShareIdFromUrl(), []);
@@ -353,20 +331,20 @@ export default function DashboardPage() {
   const [dynamicCharts, setDynamicCharts] = useState<DashboardChartConfig[]>(initialView?.charts ?? []);
   const [chartPickerOpen, setChartPickerOpen] = useState(false);
 
-  // Default (always-there) chart panels the user can explicitly dismiss —
-  // never removed automatically, only via the panel's own remove button.
-  const [hiddenPanels, setHiddenPanels] = useState<Set<string>>(
-    () => new Set(initialView?.hiddenPanels ?? []),
+  // Optional views (time series overlay, heatmap, peak demand). None is shown
+  // by default; the user adds them explicitly and removes them again.
+  const [activePanels, setActivePanels] = useState<Set<string>>(
+    () => new Set(initialView?.panels ?? []),
   );
   const hidePanel = useCallback((id: string) => {
-    setHiddenPanels((prev) => new Set(prev).add(id));
-  }, []);
-  const showPanel = useCallback((id: string) => {
-    setHiddenPanels((prev) => {
+    setActivePanels((prev) => {
       const next = new Set(prev);
       next.delete(id);
       return next;
     });
+  }, []);
+  const showPanel = useCallback((id: string) => {
+    setActivePanels((prev) => new Set(prev).add(id));
   }, []);
 
   const addDynamicChart = useCallback((templateId: string, config: DynamicChartConfig) => {
@@ -419,8 +397,8 @@ export default function DashboardPage() {
     mt: selectedMtype,
     series: selectedSeriesList,
     charts: dynamicCharts,
-    hiddenPanels: [...hiddenPanels],
-  }), [selectedFacilityId, selectedComponentId, selectedMtype, selectedSeriesList, dynamicCharts, hiddenPanels]);
+    panels: [...activePanels],
+  }), [selectedFacilityId, selectedComponentId, selectedMtype, selectedSeriesList, dynamicCharts, activePanels]);
 
   // Persist the view locally so a reload (or recovery after a dropped
   // connection) restores it. localStorage has no length limit, so the view
@@ -433,7 +411,7 @@ export default function DashboardPage() {
         || currentView.charts.length > 0
         || !!currentView.fac
         || !!currentView.cmp
-        || !!currentView.hiddenPanels?.length;
+        || !!currentView.panels?.length;
       if (hasContent) {
         saveLocalView(currentView);
       } else {
@@ -467,7 +445,7 @@ export default function DashboardPage() {
         setSelectedComponentId(view.cmp ?? null);
         setSelectedMtype(view.mt ?? '');
         setDynamicCharts(view.charts ?? []);
-        setHiddenPanels(new Set(view.hiddenPanels ?? []));
+        setActivePanels(new Set(view.panels ?? []));
         // Set series last: this triggers the fetch effect, which consumes
         // pendingSnapshotRef set above.
         setSelectedSeriesList(view.series ?? []);
@@ -496,7 +474,19 @@ export default function DashboardPage() {
   const [mapLayerMode, setMapLayerMode] = useState<MapLayerMode>('grid');
   const [selectedStationUuid, setSelectedStationUuid] = useState<string | null>(null);
   const [, setGeoMatchResult] = useState<MatchResult | null>(null);
-  const [activeSectionId, setActiveSectionId] = useState<NavSectionId>('map-selection');
+  const [activeSectionId, setActiveSectionId] = useState<string>('map-selection');
+  // Sections of the summary currently on screen (reported by the summary itself).
+  const [summarySectionList, setSummarySectionList] = useState<SummarySection[]>([]);
+  // One navigation list: the sections of the summary, then the views the user added, then the custom charts.
+  const navItems = useMemo(() => {
+    const summary = summarySectionList.length > 0
+      ? summarySectionList.map((section) => ({ id: section.id, label: section.label, count: section.count, group: 'summary' as const }))
+      : [{ id: 'map-selection', label: 'Zusammenfassung', count: undefined, group: 'summary' as const }];
+    const views = NAV_SECTIONS
+      .filter((section) => section.id !== 'map-selection' && (section.panel === null || activePanels.has(section.panel)))
+      .map((section) => ({ id: section.id, label: section.label, count: undefined, group: 'views' as const }));
+    return [...summary, ...views];
+  }, [summarySectionList, activePanels]);
   useEffect(() => {
     if (!ENABLE_GRID_MAP) return;
     const ric = (window as unknown as {
@@ -572,24 +562,14 @@ export default function DashboardPage() {
       rafId = 0;
       const containerTop = container.getBoundingClientRect().top;
       const focusScroll = container.scrollTop + container.clientHeight * 0.36;
-      let nextId: NavSectionId = 'map-selection';
-      let nearestDistance = Number.POSITIVE_INFINITY;
-
-      NAV_SECTIONS.forEach((section) => {
-        const element = document.getElementById(section.id);
+      // Reading order: summary first (with its sub-sections), then the optional views.
+      const ids = ['map-selection', ...navItems.map((item) => item.id).filter((id) => id !== 'map-selection')];
+      let nextId = navItems[0]?.id ?? 'map-selection';
+      ids.forEach((id) => {
+        const element = document.getElementById(id);
         if (!element) return;
-
         const sectionTop = element.getBoundingClientRect().top - containerTop + container.scrollTop;
-        const distance = Math.abs(sectionTop - focusScroll);
-        if (sectionTop <= focusScroll) {
-          nextId = section.id;
-          return;
-        }
-
-        if (nextId === 'map-selection' && distance < nearestDistance) {
-          nearestDistance = distance;
-          nextId = section.id;
-        }
+        if (sectionTop <= focusScroll) nextId = id;
       });
 
       setActiveSectionId((current) => (current === nextId ? current : nextId));
@@ -609,7 +589,7 @@ export default function DashboardPage() {
       window.removeEventListener('resize', onScroll);
       if (rafId !== 0) cancelAnimationFrame(rafId);
     };
-  }, []);
+  }, [navItems]);
 
   // -- Scrollytelling: dim the sticky map as the user scrolls into the
   //    chart overlay. This updates a CSS variable directly so Leaflet is not
@@ -1156,28 +1136,39 @@ export default function DashboardPage() {
   // be in view at that moment instead of the map. Computing the target
   // scrollTop ourselves and animating via Element.scrollTo() sidesteps it:
   // that's a scroll to a fixed number, not "track this moving element".
-  const scrollToSection = useCallback((id: NavSectionId) => {
+  const scrollToSection = useCallback((id: string) => {
     const container = tabScrollRef.current;
     if (!container) return;
-    if (id === 'map-selection') {
+    if (id === 'map-selection' || id === summarySectionList[0]?.id) {
       // Sticky map + rising chart overlay can make smooth scrolling settle in
       // the chart zone. Jumping to the real top keeps "Karte" deterministic.
       container.scrollTo({ top: 0, behavior: 'auto' });
-      setActiveSectionId('map-selection');
+      setActiveSectionId(id);
       return;
     }
-    const target = document.getElementById(id);
-    if (!target) return;
-    const top = target.getBoundingClientRect().top
-      - container.getBoundingClientRect().top
-      + container.scrollTop;
-    container.scrollTo({ top, behavior: 'smooth' });
-  }, []);
+    // A collapsed summary card opens first, so the target has its final height.
+    openSection(id);
+    const targetTop = () => {
+      const target = document.getElementById(id);
+      return target
+        ? target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 8
+        : null;
+    };
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const top = targetTop();
+      if (top !== null) container.scrollTo({ top, behavior: 'smooth' });
+      // Charts above the target may finish loading while the scroll runs and move it; correct once afterwards.
+      window.setTimeout(() => {
+        const settled = targetTop();
+        if (settled !== null && Math.abs(settled - container.scrollTop) > 12) container.scrollTo({ top: settled, behavior: 'smooth' });
+      }, 700);
+    }));
+  }, [summarySectionList]);
 
   return (
     <>
     <div className="grid-theme-scope dashboard-shell h-screen flex flex-col bg-[var(--grid-bg)] text-[var(--grid-text)] overflow-hidden">
-      <header className="sticky top-0 z-[900] grid grid-cols-1 items-center gap-3 bg-[var(--grid-header)] border-b border-[var(--grid-border)] px-4 py-3 shrink-0 xl:grid-cols-[minmax(180px,1fr)_auto_minmax(260px,1fr)]">
+      <header className="sticky top-0 z-[900] grid grid-cols-1 items-center gap-3 bg-[var(--grid-header)] border-b border-[var(--grid-border)] px-4 py-3 shrink-0 xl:grid-cols-[minmax(180px,auto)_minmax(0,1fr)_auto]">
         <div className="flex min-w-0 items-center gap-2 xl:justify-self-start">
           <DatabasePicker />
           <h1 className="truncate text-base font-bold tracking-tight text-[var(--grid-text)]">{uiConfig.brand.appName}</h1>
@@ -1186,21 +1177,24 @@ export default function DashboardPage() {
         <nav
           ref={navDockRef}
           aria-label="Analyseabschnitte"
-          className="one-page-nav"
+          className={`one-page-nav${navItems.length > 7 ? ' one-page-nav--dense' : ''}`}
           onPointerMove={handleNavDockPointerMove}
           onPointerLeave={resetNavDock}
           onBlur={resetNavDock}
         >
-          {NAV_SECTIONS.map((section) => (
-            <a
-              key={section.id}
-              className="one-page-nav__item"
-              href={`#${section.id}`}
-              onClick={(e) => { e.preventDefault(); scrollToSection(section.id); }}
-              aria-current={activeSectionId === section.id ? 'page' : undefined}
-            >
-              {section.label}
-            </a>
+          {navItems.map((item, index) => (
+            <Fragment key={item.id}>
+              {index > 0 && item.group !== navItems[index - 1].group && <span className="one-page-nav__sep" aria-hidden />}
+              <a
+                className="one-page-nav__item"
+                href={`#${item.id}`}
+                onClick={(e) => { e.preventDefault(); scrollToSection(item.id); }}
+                aria-current={activeSectionId === item.id ? 'page' : undefined}
+              >
+                {item.label}
+                {item.count !== undefined && <span className="one-page-nav__count">{item.count}</span>}
+              </a>
+            </Fragment>
           ))}
         </nav>
 
@@ -1213,7 +1207,8 @@ export default function DashboardPage() {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <div className="selection-dock shrink-0 border-b border-gray-700 bg-gray-800/30 p-3">
+          <details open className="selection-dock shrink-0 border-b border-gray-700 bg-gray-800/30 p-3">
+            <summary className="dashboard-filter-toggle">Filter und Messreihen</summary>
             <div className="flex flex-wrap items-start gap-3">
               <div className="flex items-start gap-1">
                 <SearchableDropdown
@@ -1328,11 +1323,12 @@ export default function DashboardPage() {
               </div>
             )}
 
-          </div>
+          </details>
 
           <div ref={tabScrollRef} className="flex-1 overflow-y-auto">
             <section id="map-selection" className="p-4">
               <OutageManagement onResultsChanged={() => { clearCache(); refreshFacilities(); setRefreshNonce((n) => n + 1); }} />
+              <AcrossScenarios refreshKey={refreshNonce} onSectionsChange={setSummarySectionList} />
             </section>
               <div>
 
@@ -1459,16 +1455,12 @@ export default function DashboardPage() {
 
                   {/* Chart content */}
                   <div className="space-y-4 px-4 pb-16">
-                    {!hiddenPanels.has('timeseries') && (
-                    <section id="timeseries-panel" className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                    {activePanels.has('timeseries') && (
+                    <SectionCard id="timeseries-panel" title="Zeitreihen-Overlay" hint={CHART_HINTS.timeseries} actions={<RemovePanelButton onRemove={() => hidePanel('timeseries')} label={REMOVABLE_PANEL_LABELS.timeseries} />}>
                       <div id="timeseries-overview-panel">
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center">
-                            <ChartTitle hint={CHART_HINTS.timeseries} className="text-sm text-gray-400">
-                              Zeitreihen-Overlay
-                              {loading && <span className="ml-2 text-yellow-400">Laden...</span>}
-                            </ChartTitle>
-                            <RemovePanelButton onRemove={() => hidePanel('timeseries')} label={REMOVABLE_PANEL_LABELS.timeseries} />
+                            {loading && <span className="text-xs text-yellow-400">Laden...</span>}
                           </div>
                           <span className="text-xs text-gray-500">
                             {seriesDataList.reduce((sum, s) => sum + s.data.length, 0).toLocaleString()} Punkte
@@ -1527,17 +1519,15 @@ export default function DashboardPage() {
                           </div>
                         )}
                       </div>
-                    </section>
+                    </SectionCard>
                     )}
 
-                    {!hiddenPanels.has('heatmap') && (
+                    {activePanels.has('heatmap') && (
                     <section id="heatmap-panel" ref={heatmapRef}>
                       <DataSection title="Heatmap" hint={CHART_HINTS.heatmap} loading={analyticsLoading.heatmap} error={heatmapError} isEmpty={false}>
-                        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                        <SectionCard title="Heatmap" hint={CHART_HINTS.heatmap} actions={<RemovePanelButton onRemove={() => hidePanel('heatmap')} label={REMOVABLE_PANEL_LABELS.heatmap} />}>
                           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
                             <div className="flex items-end gap-3">
-                              <ChartTitle hint={CHART_HINTS.heatmap} className="text-sm text-gray-400 mb-1">Heatmap</ChartTitle>
-                              <RemovePanelButton onRemove={() => hidePanel('heatmap')} label={REMOVABLE_PANEL_LABELS.heatmap} />
                               <SearchableDropdown
                                 label=""
                                 items={heatmapCandidates}
@@ -1569,19 +1559,15 @@ export default function DashboardPage() {
                                 : 'Zeitreihe für die Heatmap auswählen'}
                             </div>
                           )}
-                        </div>
+                        </SectionCard>
                       </DataSection>
                     </section>
                     )}
 
-                    {!hiddenPanels.has('peakDemand') && (
-                    <section id="peak-demand-chart-panel" className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                    {activePanels.has('peakDemand') && (
+                    <SectionCard id="peak-demand-chart-panel" title="Peak Demand Analysis" hint={CHART_HINTS.peakDemand} actions={<RemovePanelButton onRemove={() => hidePanel('peakDemand')} label={REMOVABLE_PANEL_LABELS.peakDemand} />}>
                       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                         <div>
-                          <div className="flex items-center">
-                            <ChartTitle level={3} hint={CHART_HINTS.peakDemand} className="text-sm text-gray-400">Peak Demand Analysis</ChartTitle>
-                            <RemovePanelButton onRemove={() => hidePanel('peakDemand')} label={REMOVABLE_PANEL_LABELS.peakDemand} />
-                          </div>
                           {peakDemandRows.length > 0 && selectedPeakDemand && (
                             <div className="mt-1 text-xs text-gray-500">
                               Max. {PEAK_PERIOD_LABELS[peakDemandPeriod].toLowerCase()}: {' '}
@@ -1709,39 +1695,28 @@ export default function DashboardPage() {
                           </div>
                         </div>
                       )}
-                    </section>
+                    </SectionCard>
                     )}
 
-                    {hiddenPanels.size > 0 && (
+                    {Object.keys(REMOVABLE_PANEL_LABELS).some((id) => !activePanels.has(id)) && (
                       <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                        <span>Ausgeblendet:</span>
-                        {[...hiddenPanels].map((id) => (
+                        <span>Weitere Ansichten hinzufügen:</span>
+                        {Object.entries(REMOVABLE_PANEL_LABELS).filter(([id]) => !activePanels.has(id)).map(([id, label]) => (
                           <button
                             key={id}
                             type="button"
                             onClick={() => showPanel(id)}
-                            className="rounded-full border border-gray-600 px-2 py-0.5 transition-colors hover:border-cyan-500 hover:text-cyan-300"
+                            className="rounded-full border border-gray-600 px-2.5 py-0.5 transition-colors hover:border-cyan-500 hover:text-cyan-300"
                           >
-                            {REMOVABLE_PANEL_LABELS[id] ?? id} ↺
+                            + {label}
                           </button>
                         ))}
                       </div>
                     )}
 
-                    <section id="custom-charts-panel" className="custom-charts-panel" aria-label="Eigene Diagramme">
-                      <div className="flex items-center justify-between border-t border-gray-700 pt-3">
-                        <ChartTitle level={3} hint={CHART_HINTS.aggregation} className="text-sm text-gray-400">Eigene Diagramme</ChartTitle>
-                        {dynamicCharts.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={clearAllDynamicCharts}
-                            className="text-xs text-gray-400 transition-colors hover:text-red-400"
-                          >
-                            Alle Diagramme löschen
-                          </button>
-                        )}
-                      </div>
-
+                    <SectionCard id="custom-charts-panel" className="custom-charts-panel" title="Eigene Diagramme" hint={CHART_HINTS.aggregation} actions={dynamicCharts.length > 0 ? (
+                      <button type="button" onClick={clearAllDynamicCharts} className="text-xs text-gray-400 transition-colors hover:text-red-400">Alle Diagramme löschen</button>
+                    ) : undefined}>
                       {dynamicCharts.length > 0 && (
                         <>
                           {dynamicCharts.map((chart) => (
@@ -1774,7 +1749,7 @@ export default function DashboardPage() {
                         <span className="text-xs opacity-60">15 Analyse-Vorlagen aus 7 Kategorien</span>
                       </button>
 
-                    </section>
+                    </SectionCard>
                   </div>
                 </section>
               </div>
@@ -1792,7 +1767,6 @@ export default function DashboardPage() {
       endIso={endIso}
       onGenerate={addDynamicChart}
     />
-    <HelpPanel />
     </>
   );
 }

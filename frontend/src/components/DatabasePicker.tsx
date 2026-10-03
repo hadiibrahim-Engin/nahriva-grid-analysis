@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react';
+import { Database } from 'lucide-react';
 import api, { clearCache } from '../api/client';
 import { clearLocalView } from '../util/shareView';
 import AnimatedButton from './ui/AnimatedButton';
@@ -38,7 +39,10 @@ export default function DatabasePicker() {
   }
 
   return <>
-    <AnimatedButton variant="secondary" onClick={open}>Datenbank hinzufügen</AnimatedButton>
+    <button type="button" className="db-circle" onClick={open} aria-label="Datenbank hinzufügen" aria-haspopup="dialog" title="Datenbank hinzufügen">
+      <Database size={18} strokeWidth={1.9} aria-hidden />
+      <span className="db-circle__plus" aria-hidden>+</span>
+    </button>
     <dialog ref={dialog} aria-labelledby="database-dialog-title"
       onCancel={event => { if (busy) event.preventDefault(); }}
       className="grid-theme-scope fixed inset-0 m-auto w-[min(36rem,calc(100vw-2rem))] rounded-xl border border-[var(--grid-border)] bg-[var(--grid-surface)] p-6 text-[var(--grid-text)] shadow-xl backdrop:bg-black/40">

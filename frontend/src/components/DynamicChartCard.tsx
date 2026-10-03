@@ -13,6 +13,7 @@
  * If a configured source signal has been removed from the dashboard, the card
  * degrades to a "source missing" state instead of crashing.
  */
+import { SectionCard } from './across/shared';
 import { useEffect, useMemo, useState, lazy, Suspense, type ReactNode } from 'react';
 import {
   getTimeseries,
@@ -685,7 +686,6 @@ export default function DynamicChartCard({
     : undefined;
   const subtitle = [
     ARITY_LABELS[template.arity],
-    'Vollständige Simulation',
     resolutionLabel ? `Auflösung ${resolutionLabel}` : null,
   ].filter(Boolean).join(' · ');
   const sourceSummary = presentSources.map((s) => seriesLabel(s)).join(', ');
@@ -1196,26 +1196,12 @@ interface CardShellProps {
 
 function CardShell({ id, title, subtitle, sourceSummary, onRemove, children }: CardShellProps) {
   return (
-    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium text-gray-200">{title}</div>
-          <div className="mt-0.5 text-xs text-gray-500">{subtitle}</div>
-          {sourceSummary && (
-            <div className="mt-0.5 truncate text-xs text-gray-500" title={sourceSummary}>{sourceSummary}</div>
-          )}
-        </div>
-        <button
-          onClick={() => onRemove(id)}
-          className="shrink-0 text-xs text-gray-400 transition-colors hover:text-red-400"
-          title="Diagramm entfernen"
-          aria-label="Diagramm entfernen"
-        >
-          ✕
-        </button>
-      </div>
+    <SectionCard title={title} hint={subtitle} actions={
+      <button type="button" onClick={() => onRemove(id)} className="shrink-0 text-xs text-gray-400 transition-colors hover:text-red-400" title="Diagramm entfernen" aria-label="Diagramm entfernen">✕</button>
+    }>
+      {sourceSummary && <p className="mb-2 truncate text-xs text-gray-500" title={sourceSummary}>{sourceSummary}</p>}
       {children}
-    </div>
+    </SectionCard>
   );
 }
 

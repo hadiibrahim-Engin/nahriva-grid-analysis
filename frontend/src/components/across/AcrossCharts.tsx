@@ -1,0 +1,311 @@
+import { useMemo } from 'react';
+import * as echarts from 'echarts/core';
+import { BarChart, ScatterChart } from 'echarts/charts';
+import { GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
+import ReactECharts from '../charts/ReactECharts';
+import { useChartTheme } from '../../hooks/useChartTheme';
+import { ANALYSIS, BAND_ORDER, LOADING_LIMITS, LOADING_BANDS, bandOf, type BandId } from '../../config/loadingBands';
+import { escapeHtml, readAcrossColors, withAlpha } from '../../util/acrossColors';
+import {
+  fmtHours,
+  fmtLodf,
+  fmtNum,
+  fmtPct,
+  fmtPp,
+  fmtShare,
+  type LineStats,
+  type ScenarioStats,
+} from '../../util/acrossScenarios';
+import { SectionCard } from './shared';
+
+echarts.use([BarChart, ScatterChart, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent, CanvasRenderer]);
+
+const TOP = 12;
+const ROW = 28;
+
+interface Props {
+  lines: LineStats[];
+  scenarios: ScenarioStats[];
+  periodHours: number;
+  hasLodf: boolean;
+}
+
+function useAcrossTheme() {
+  const theme = useChartTheme();
+  const colors = useMemo(() => readAcrossColors(theme.isLight), [theme.isLight]);
+  return { theme, colors };
+}
+
+const common = (theme: ReturnType<typeof useChartTheme>) => ({
+  backgroundColor: 'transparent',
+  textStyle: { color: theme.mutedText, fontSize: 11 },
+  tooltip: {
+    backgroundColor: theme.tooltipBg,
+    borderColor: theme.tooltipBorder,
+    textStyle: { color: theme.text, fontSize: 12 },
+    extraCssText: 'max-width: 340px; white-space: normal;',
+  },
+});
+
+const yCategory = (theme: ReturnType<typeof useChartTheme>, names: string[], edge = false) => ({
+  type: 'category' as const,
+  inverse: true,
+  data: names,
+  axisTick: { show: false },
+  axisLine: { lineStyle: { color: theme.axis }, ...(edge ? { onZero: false } : {}) },
+  axisLabel: { color: theme.text, fontSize: 11, width: 150, overflow: 'truncate' as const },
+});
+
+const xValue = (theme: ReturnType<typeof useChartTheme>, unit: string, extra: object = {}) => ({
+  type: 'value' as const,
+  axisLabel: { color: theme.mutedText, fontSize: 10, formatter: `{value}${unit}` },
+  axisLine: { show: false },
+  splitLine: { lineStyle: { color: theme.grid } },
+  ...extra,
+});
+
+const scenarioName = (scenarios: ScenarioStats[], id: string | null) => {
+  const s = scenarios.find((x) => x.scenario.id === id);
+  return s ? `${s.code} · ${s.scenario.name}` : '–';
+};
+
+/** Base → maximum loading per line on top of the loading bands. */
+function LoadingRangeChart({ lines, scenarios }: { lines: LineStats[]; scenarios: ScenarioStats[] }) {
+  const { theme, colors } = useAcrossTheme();
+  const rows = useMemo(() => [...lines].filter((s) => s.max !== null).sort((a, b) => b.priority - a.priority).slice(0, TOP), [lines]);
+  const option = useMemo(() => {
+    const names = rows.map((r) => r.line.name);
+    const max = Math.ceil(Math.max(LOADING_LIMITS.severe + 10, ...rows.map((r) => (r.max ?? 0) + 8)) / 10) * 10;
+    const bounds = [0, LOADING_LIMITS.warning, LOADING_LIMITS.overload, LOADING_LIMITS.clear, LOADING_LIMITS.severe, max];
+    const alpha: Record<BandId, number> = { ok: 0.06, high: 0.16, light: 0.2, clear: 0.24, severe: 0.28 };
+    return {
+      ...common(theme),
+      tooltip: {
+        ...common(theme).tooltip,
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: { dataIndex: number }[]) => {
+          const r = rows[params[0]?.dataIndex ?? 0];
+          if (!r) return '';
+          return [
+            `<strong>${escapeHtml(r.line.name)}</strong>`,
+            `Base (REF-Maximum): ${fmtPct(r.base)}`,
+            `Max Loading: <strong>${fmtPct(r.max)}</strong> · ${escapeHtml(scenarioName(scenarios, r.maxScenarioId))}`,
+            `Min Loading: ${fmtPct(r.min)}`,
+            `Szenarien &gt; 100 %: ${r.n100}`,
+          ].join('<br/>');
+        },
+      },
+      grid: { left: 8, right: 64, top: 8, bottom: 24, containLabel: true },
+      xAxis: xValue(theme, ' %', { min: 0, max }),
+      yAxis: yCategory(theme, names),
+      series: [
+        {
+          type: 'bar', stack: 'range', silent: true, barWidth: 6, itemStyle: { color: 'transparent' },
+          data: rows.map((r) => Math.min(r.base ?? r.max ?? 0, r.max ?? 0)),
+          markArea: {
+            silent: true,
+            data: BAND_ORDER.map((id, i) => [
+              { xAxis: bounds[i], itemStyle: { color: withAlpha(colors.bands[id], alpha[id]) } },
+              { xAxis: bounds[i + 1] },
+            ]),
+          },
+          markLine: {
+            silent: true, symbol: 'none', label: { show: false },
+            lineStyle: { color: colors.bands.severe, type: 'dashed', width: 1 },
+            data: [{ xAxis: LOADING_LIMITS.overload }],
+          },
+        },
+        {
+          type: 'bar', stack: 'range', barWidth: 6,
+          data: rows.map((r) => ({
+            value: Math.abs((r.max ?? 0) - (r.base ?? r.max ?? 0)),
+            itemStyle: { color: colors.bands[bandOf(r.max ?? 0).id], borderRadius: 3 },
+          })),
+        },
+        {
+          type: 'scatter', name: 'Base', symbol: 'circle', symbolSize: 9, z: 4,
+          itemStyle: { color: theme.isLight ? '#ffffff' : '#0b0f14', borderColor: theme.mutedText, borderWidth: 2 },
+          data: rows.map((r) => ({ value: [r.base ?? r.max ?? 0, r.line.name] })),
+        },
+        {
+          type: 'scatter', name: 'Max', symbol: 'circle', symbolSize: 12, z: 5,
+          label: { show: true, position: 'right', color: theme.text, fontSize: 11, fontWeight: 600, formatter: (p: { value: number[] }) => fmtNum(p.value[0]) },
+          data: rows.map((r) => ({ value: [r.max ?? 0, r.line.name], itemStyle: { color: colors.bands[bandOf(r.max ?? 0).id] } })),
+        },
+      ],
+    };
+  }, [rows, theme, colors, scenarios]);
+  if (rows.length === 0) return <div className="ab-empty">Keine Auslastungswerte vorhanden.</div>;
+  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: rows.length * ROW + 40 }} />;
+}
+
+/** Time above the limits, as share of the simulation period (worst scenario per line). */
+function OverloadTimeChart({ lines, scenarios, periodHours }: { lines: LineStats[]; scenarios: ScenarioStats[]; periodHours: number }) {
+  const { theme, colors } = useAcrossTheme();
+  const rows = useMemo(() => [...lines].filter((s) => s.overloadHours > 0).sort((a, b) => b.overloadHours - a.overloadHours).slice(0, TOP), [lines]);
+  const option = useMemo(() => {
+    const names = rows.map((r) => r.line.name);
+    const pct = (h: number) => (periodHours > 0 ? (h / periodHours) * 100 : 0);
+    const seg = (pick: (r: LineStats) => number, id: BandId) => ({
+      type: 'bar' as const, stack: 'time', barWidth: 12, name: LOADING_BANDS.find((b) => b.id === id)!.range.replace('%', '').trim() + ' %',
+      itemStyle: { color: colors.bands[id] }, data: rows.map((r) => pct(pick(r))),
+    });
+    return {
+      ...common(theme),
+      legend: { top: 0, right: 0, itemWidth: 10, itemHeight: 10, textStyle: { color: theme.mutedText, fontSize: 11 } },
+      tooltip: {
+        ...common(theme).tooltip,
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: { dataIndex: number }[]) => {
+          const r = rows[params[0]?.dataIndex ?? 0];
+          if (!r) return '';
+          const [a, b, c] = r.overloadHoursBands;
+          return [
+            `<strong>${escapeHtml(r.line.name)}</strong> · ${escapeHtml(scenarioName(scenarios, r.overloadScenarioId))}`,
+            `Overload Rate: <strong>${fmtShare(r.overloadShare)}</strong> des Simulationszeitraums`,
+            `&gt; 100 %: ${fmtHours(a)} · &gt; 110 %: ${fmtHours(b)} · &gt; 120 %: ${fmtHours(c)}`,
+            `Simulationszeitraum: ${fmtHours(periodHours)}`,
+          ].join('<br/>');
+        },
+      },
+      grid: { left: 8, right: 96, top: 28, bottom: 22, containLabel: true },
+      xAxis: xValue(theme, ' %', { min: 0 }),
+      yAxis: yCategory(theme, names),
+      series: [
+        seg((r) => r.overloadHoursBands[0] - r.overloadHoursBands[1], 'light'),
+        seg((r) => r.overloadHoursBands[1] - r.overloadHoursBands[2], 'clear'),
+        seg((r) => r.overloadHoursBands[2], 'severe'),
+        {
+          type: 'scatter', symbolSize: 0, silent: true, tooltip: { show: false },
+          label: { show: true, position: 'right', color: theme.text, fontSize: 11, fontWeight: 600, formatter: (p: { dataIndex: number }) => `${fmtShare(rows[p.dataIndex].overloadShare)} · ${fmtHours(rows[p.dataIndex].overloadHours)}` },
+          data: rows.map((r) => ({ value: [pct(r.overloadHours), r.line.name] })),
+        },
+      ],
+    };
+  }, [rows, theme, colors, scenarios, periodHours]);
+  if (rows.length === 0) return <div className="ab-empty">Keine Leitung überschreitet 100 % im Simulationszeitraum.</div>;
+  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: rows.length * ROW + 64 }} />;
+}
+
+/** Largest changes of loading against REF in the same window, both directions. */
+function DeltaChart({ lines, scenarios }: { lines: LineStats[]; scenarios: ScenarioStats[] }) {
+  const { theme, colors } = useAcrossTheme();
+  const rows = useMemo(() => [...lines].filter((s) => s.maxDelta !== null).sort((a, b) => Math.abs(b.maxDelta ?? 0) - Math.abs(a.maxDelta ?? 0)).slice(0, TOP), [lines]);
+  const option = useMemo(() => {
+    const names = rows.map((r) => r.line.name);
+    const limit = Math.max(10, ...rows.map((r) => Math.abs(r.maxDelta ?? 0))) * 1.25;
+    return {
+      ...common(theme),
+      tooltip: {
+        ...common(theme).tooltip,
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: { dataIndex: number }[]) => {
+          const r = rows[params[0]?.dataIndex ?? 0];
+          if (!r) return '';
+          return [
+            `<strong>${escapeHtml(r.line.name)}</strong> · ${escapeHtml(scenarioName(scenarios, r.maxDeltaScenarioId))}`,
+            `Δ Loading: <strong>${fmtPp(r.maxDelta)}</strong> gegenüber REF im selben Fenster`,
+            `Max Loading: ${fmtPct(r.max)}`,
+            `Spanne zwischen Szenarien: ${fmtPp(r.spread)}`,
+          ].join('<br/>');
+        },
+      },
+      grid: { left: 8, right: 56, top: 8, bottom: 24, containLabel: true },
+      xAxis: xValue(theme, '', { min: -limit, max: limit, axisLabel: { color: theme.mutedText, fontSize: 10, formatter: (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}` }, name: 'pp', nameLocation: 'end', nameTextStyle: { color: theme.mutedText } }),
+      yAxis: yCategory(theme, names, true),
+      series: [{
+        type: 'bar', barWidth: 12,
+        markLine: { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: theme.mutedText, width: 1 }, data: [{ xAxis: 0 }] },
+        label: { show: true, color: theme.text, fontSize: 11, fontWeight: 600, position: 'outside', formatter: (p: { value: number }) => fmtPp(p.value) },
+        data: rows.map((r) => ({
+          value: r.maxDelta,
+          itemStyle: { color: (r.maxDelta ?? 0) >= 0 ? colors.pos : colors.neg, borderRadius: (r.maxDelta ?? 0) >= 0 ? [0, 3, 3, 0] : [3, 0, 0, 3] },
+          label: { position: (r.maxDelta ?? 0) >= 0 ? 'right' : 'left' },
+        })),
+      }],
+    };
+  }, [rows, theme, colors, scenarios]);
+  if (rows.length === 0) return <div className="ab-empty">Keine Änderungen berechnet.</div>;
+  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: rows.length * ROW + 40 }} />;
+}
+
+/** Every line × scenario as a point: |LODF| against the change of loading, coloured by band. */
+function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; scenarios: ScenarioStats[]; hasLodf: boolean }) {
+  const { theme, colors } = useAcrossTheme();
+  const points = useMemo(() => {
+    const result: { x: number; y: number; value: number; line: string; scenario: string; band: BandId }[] = [];
+    for (const s of lines) {
+      for (const sc of scenarios) {
+        const cell = s.line.cells[sc.scenario.id];
+        if (!cell || cell.outaged || cell.lodf === null || cell.delta === null || cell.value === null) continue;
+        result.push({ x: Math.abs(cell.lodf), y: cell.delta, value: cell.value, line: s.line.name, scenario: `${sc.code} · ${sc.scenario.name}`, band: bandOf(cell.value).id });
+      }
+    }
+    return result;
+  }, [lines, scenarios]);
+  const option = useMemo(() => {
+    const xMax = Math.max(0.5, ...points.map((p) => p.x)) * 1.1;
+    const ys = points.map((p) => p.y);
+    const yMax = Math.max(20, ...ys) * 1.15;
+    const yMin = Math.min(0, ...ys) * 1.15;
+    const labelled = new Set([...points.keys()].sort((a, b) => points[b].x * Math.abs(points[b].y) - points[a].x * Math.abs(points[a].y)).slice(0, 5));
+    return {
+      ...common(theme),
+      tooltip: {
+        ...common(theme).tooltip,
+        trigger: 'item',
+        formatter: (p: { dataIndex: number }) => {
+          const d = points[p.dataIndex];
+          return [
+            `<strong>${escapeHtml(d.line)}</strong>`, escapeHtml(d.scenario),
+            `|LODF|: <strong>${fmtLodf(d.x)}</strong>`, `Δ Loading: <strong>${fmtPp(d.y)}</strong>`, `Loading: ${fmtPct(d.value)}`,
+          ].join('<br/>');
+        },
+      },
+      grid: { left: 8, right: 16, top: 30, bottom: 36, containLabel: true },
+      xAxis: xValue(theme, '', { min: 0, max: xMax, name: '|LODF|', nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: theme.mutedText }, axisLabel: { color: theme.mutedText, fontSize: 10, formatter: (v: number) => fmtLodf(v) } }),
+      yAxis: xValue(theme, '', { min: yMin, max: yMax, name: 'Δ Loading (pp)', nameTextStyle: { color: theme.mutedText, align: 'left' }, axisLabel: { color: theme.mutedText, fontSize: 10, formatter: (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}` } }),
+      series: [{
+        type: 'scatter', symbolSize: (_: unknown, p: { dataIndex: number }) => (points[p.dataIndex].value > LOADING_LIMITS.overload ? 13 : 8),
+        markArea: {
+          silent: true,
+          itemStyle: { color: withAlpha(colors.lodf, 0.09) },
+          label: { show: true, position: 'insideBottomRight', color: theme.mutedText, fontSize: 10, formatter: 'hoher LODF + große Änderung' },
+          data: [[{ xAxis: ANALYSIS.lodfNotable, yAxis: ANALYSIS.deltaStrongPp / 2 }, { xAxis: xMax, yAxis: yMax }]],
+        },
+        markLine: { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: theme.mutedText, width: 1 }, data: [{ yAxis: 0 }] },
+        data: points.map((p, i) => ({
+          value: [p.x, p.y],
+          itemStyle: { color: colors.bands[p.band], opacity: 0.9, borderColor: theme.isLight ? '#ffffff' : '#0b0f14', borderWidth: 1 },
+          label: { show: labelled.has(i), position: 'top', color: theme.text, fontSize: 10, formatter: p.line },
+        })),
+      }],
+    };
+  }, [points, theme, colors]);
+  if (!hasLodf) return <div className="ab-empty">LODF wurde noch nicht berechnet. Das PowerFactory-Skript schreibt es vor der ersten Simulation in die Datenbank.</div>;
+  if (points.length === 0) return <div className="ab-empty">Keine Punkte mit LODF und Änderung vorhanden.</div>;
+  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: 360 }} />;
+}
+
+export default function AcrossCharts({ lines, scenarios, periodHours, hasLodf }: Props) {
+  return (
+    <div className="ab-charts">
+      <SectionCard title="Höchste Auslastung je Betriebsmittel" hint="Base (REF) → Maximum über alle Szenarien auf den Auslastungsbereichen. Die auffälligsten Betriebsmittel.">
+        <LoadingRangeChart lines={lines} scenarios={scenarios} />
+      </SectionCard>
+      <SectionCard title="Überlastdauer (Overload Rate)" hint="Zeit über 100 % im ungünstigsten Szenario, bezogen auf den Simulationszeitraum.">
+        <OverloadTimeChart lines={lines} scenarios={scenarios} periodHours={periodHours} />
+      </SectionCard>
+      <SectionCard title="Änderung der Auslastung" hint="Größte Änderung gegenüber REF im selben Ausfallfenster in Prozentpunkten (pp): links Entlastung, rechts Mehrbelastung.">
+        <DeltaChart lines={lines} scenarios={scenarios} />
+      </SectionCard>
+      <SectionCard title="LODF und Änderung der Auslastung" hint="Jeder Punkt ist eine Leitung in einem Szenario. Oben rechts: hoher |LODF| mit großer Mehrbelastung. Farbe = Auslastungsbereich.">
+        <LodfChart lines={lines} scenarios={scenarios} hasLodf={hasLodf} />
+      </SectionCard>
+    </div>
+  );
+}

@@ -14,8 +14,8 @@ def test_dummy_qds_is_small_complete_and_idempotent(tmp_path):
     create_dummy_database(path)
     create_dummy_database(path)
     store = ScenarioStore(str(path))
-    assert len(store.overview()["scenarios"]) == 3
-    assert store.db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] == 6
+    assert len(store.overview()["scenarios"]) == 8
+    assert store.db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] == 16
     assert (
         store.db.execute(
             "SELECT COUNT(*) FROM analysis_samples WHERE run_id=(SELECT id FROM analysis_runs LIMIT 1) AND element_id='line-nord' AND metric_id='loading'"
@@ -26,6 +26,11 @@ def test_dummy_qds_is_small_complete_and_idempotent(tmp_path):
         store.db.execute("SELECT DISTINCT source FROM analysis_runs").fetchone()[0]
         == "Dummy QDS (synthetic)"
     )
+    assert store.db.execute("SELECT COUNT(*) FROM pf_lodf").fetchone()[0] > 0
+    provenance = store.overview()["scenarios"][0]["provenance"]
+    assert provenance["data_source"] == "synthetic"
+    assert provenance["powerfactory_version"] is None
+    assert provenance["sample_interval_seconds"] == 900
     # Treat an existing imported/real catalog as authoritative.
     store.publish_catalog({**store.catalog(), "dummy_qds_version": None})
     store.close()

@@ -21,10 +21,16 @@ def catalog_signature(catalog):
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
+def outage_key(outage_ids):
+    """Stable identity of an outage combination, independent of scenario name or run."""
+    return ",".join(sorted(outage_ids))
+
+
 class ScenarioStore:
     def __init__(self, path):
         Path(path).resolve().parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, timeout=30)
+        # One store per request or per script run; FastAPI may close it from another worker thread.
+        self.db = sqlite3.connect(path, timeout=30, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -49,6 +55,10 @@ class ScenarioStore:
                 run_id TEXT NOT NULL REFERENCES analysis_runs(id), kind TEXT NOT NULL,
                 PRIMARY KEY(scenario_id, run_id)
             );
+            CREATE TABLE IF NOT EXISTS pf_scenario_provenance (
+                scenario_id TEXT PRIMARY KEY REFERENCES pf_scenarios(id),
+                payload TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS ui_shares (
                 id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
             );
@@ -56,6 +66,11 @@ class ScenarioStore:
                 run_id TEXT NOT NULL, element_id TEXT NOT NULL, metric_id TEXT NOT NULL,
                 lower REAL, upper REAL, PRIMARY KEY(run_id,element_id,metric_id),
                 FOREIGN KEY(run_id,element_id) REFERENCES analysis_elements(run_id,id)
+            );
+            CREATE TABLE IF NOT EXISTS pf_lodf (
+                outage_key TEXT NOT NULL, element_id TEXT NOT NULL,
+                lodf REAL NOT NULL, p_pre REAL, p_post REAL, computed_at TEXT NOT NULL,
+                PRIMARY KEY(outage_key, element_id)
             );
         """)
 
@@ -75,6 +90,22 @@ class ScenarioStore:
             self.db.execute(
                 "INSERT INTO pf_catalog VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
                 (json.dumps(catalog), now()),
+            )
+
+    def save_lodf(self, rows):
+        """Replace the stored LODF values of each outage combination in `rows`.
+
+        Each row is (outage_key, element_id, lodf, p_pre, p_post). The values are
+        computed once before any simulation and are independent of result runs.
+        """
+        rows = list(rows)
+        stamp = now()
+        with self.db:
+            for key in {row[0] for row in rows}:
+                self.db.execute("DELETE FROM pf_lodf WHERE outage_key=?", (key,))
+            self.db.executemany(
+                "INSERT INTO pf_lodf VALUES(?,?,?,?,?,?)",
+                [(*row, stamp) for row in rows],
             )
 
     def enqueue(self, kind, payload):
@@ -140,6 +171,10 @@ class ScenarioStore:
                     now(),
                 ),
             )
+            self.db.execute(
+                "INSERT INTO pf_scenario_provenance VALUES(?,?)",
+                (job["id"], json.dumps({k: v for k, v in catalog.items() if k not in ("outages", "updated_at")})),
+            )
             for run in runs:
                 run_id = job["id"] + "-" + run["kind"]
                 self.db.execute(
@@ -187,14 +222,18 @@ class ScenarioStore:
         ]
         scenarios = []
         for row in self.db.execute(
-            "SELECT * FROM pf_scenarios ORDER BY created_at DESC"
+            "SELECT s.*, p.payload AS provenance_json FROM pf_scenarios s "
+            "LEFT JOIN pf_scenario_provenance p ON p.scenario_id=s.id ORDER BY s.created_at DESC"
         ):
             scenario = dict(row)
+            provenance = scenario.pop("provenance_json")
+            scenario["provenance"] = json.loads(provenance) if provenance else None
             scenario["outage_ids"] = json.loads(scenario.pop("outages"))
             scenario["runs"] = [
                 dict(r)
                 for r in self.db.execute(
-                    "SELECT run_id,kind FROM pf_scenario_runs WHERE scenario_id=?",
+                    "SELECT r.run_id,r.kind,a.source FROM pf_scenario_runs r "
+                    "JOIN analysis_runs a ON a.id=r.run_id WHERE r.scenario_id=?",
                     (row["id"],),
                 )
             ]

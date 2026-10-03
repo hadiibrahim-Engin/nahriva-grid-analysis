@@ -16,7 +16,8 @@ GRID_NAME_FILTER = ''
 sys.path.insert(0, str(PROJECT_DIR / 'backend'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gridlens_engine as engine
-from app.simulation.store import ScenarioStore, catalog_signature
+import lodf
+from app.simulation.store import ScenarioStore, catalog_signature, outage_key
 
 
 def identifier(path):
@@ -30,6 +31,21 @@ def discover(app):
     if project is None or study_case is None or qds is None:
         raise RuntimeError('Activate a project and a Study Case with configured ComStatsim first.')
     period = engine.qds_period(qds)
+    # Native module reports the running PF build; never infer it from this script's target year.
+    version = getattr(sys.modules.get('powerfactory'), '__version__', None)
+    version = version.strip() if isinstance(version, str) and version.strip() else None
+    try:
+        operational_scenario = app.GetActiveScenario()
+        scenario = ({'name': engine.object_name(operational_scenario),
+                     'path': engine.object_key(operational_scenario)} if operational_scenario else None)
+    except Exception:
+        scenario = None
+    try:
+        networks = sorted(
+            [{'name': engine.object_name(grid), 'path': engine.object_key(grid)}
+             for grid in app.GetCalcRelevantObjects('*.ElmNet')], key=lambda grid: grid['path'])
+    except Exception:
+        networks = None
     outages = []
     for obj in engine._find_project_outages(app):
         record = engine._outage_record(obj)
@@ -44,7 +60,34 @@ def discover(app):
                         'in_period': readable and engine.window_overlaps_period(record['window'], period) is True})
     return {'project': engine.object_name(project), 'project_path': engine.object_key(project),
             'study_case': engine.object_name(study_case), 'study_case_path': engine.object_key(study_case),
-            'period': list(period), 'grid_name_filter': GRID_NAME_FILTER, 'outages': outages}
+            'period': list(period), 'grid_name_filter': GRID_NAME_FILTER, 'outages': outages,
+            'data_source': 'PowerFactory', 'powerfactory_version': version,
+            'operational_scenario': scenario, 'networks': networks,
+            'qds_command': {'name': engine.object_name(qds), 'path': engine.object_key(qds)},
+            'captured_at': datetime.now(timezone.utc).isoformat()}
+
+
+def compute_lodf(app, catalog, plan):
+    """LODF for every planned scenario, calculated before any simulation.
+
+    Returns rows for ScenarioStore.save_lodf. Failures are reported and yield no
+    rows so the assessment itself still runs; the dashboard then shows no LODF.
+    """
+    engine.GRID_NAME_FILTER = GRID_NAME_FILTER
+    by_id = {identifier(engine.object_key(o)): o for o in engine._find_project_outages(app)}
+    scenarios = [
+        {'key': outage_key(selection['outage_ids']),
+         'equipment': list({engine.object_key(b): b for i in selection['outage_ids']
+                            if i in by_id for b in lodf.outage_equipment(by_id[i])}.values())}
+        for selection in plan
+    ]
+    project_path = catalog['project_path']
+    try:
+        return lodf.calculate(app, scenarios,
+                              lambda branch: identifier(project_path + '|' + engine.object_key(branch)))
+    except lodf.LodfError as exc:
+        app.PrintPlain('[Outage Assessment][WARN] ' + str(exc))
+        return []
 
 
 def serialize_result(result, project_path, period):

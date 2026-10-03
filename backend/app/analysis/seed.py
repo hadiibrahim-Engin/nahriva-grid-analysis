@@ -6,7 +6,7 @@ from app.analysis.models import Element, Metric, Run, RunBundle, Sample
 
 METRICS = [
     Metric(id="loading", name="Auslastung", unit="%", upper=100),
-    Metric(id="voltage", name="Spannung", unit="p.u.", lower=0.95, upper=1.05),
+    Metric(id="voltage", name="Spannung", unit="p.u.", lower=0.9, upper=1.1),
     Metric(id="p", name="Wirkleistung P", unit="MW"),
     Metric(id="q", name="Blindleistung Q", unit="Mvar"),
     Metric(id="current", name="Strom", unit="A"),

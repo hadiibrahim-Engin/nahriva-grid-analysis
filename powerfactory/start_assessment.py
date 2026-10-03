@@ -60,6 +60,15 @@ def run_assessment(app, database_path, definitions=None):
     """Validate all selections first; persist each successfully restored REF/OUTAGE pair."""
     catalog = worker.discover(app)
     plan = scenario_plan(catalog, definitions)
+    # LODF depends only on topology: calculate it once, before any simulation.
+    app.PrintPlain("[Outage Assessment] Berechne LODF")
+    rows = worker.compute_lodf(app, catalog, plan)
+    if rows:
+        store = worker.ScenarioStore(str(database_path))
+        try:
+            store.save_lodf(rows)
+        finally:
+            store.close()
     for selection in plan:
         current = worker.discover(app)
         store = worker.ScenarioStore(str(database_path))

@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, ConfigDict
 from app.analysis.bootstrap import get_repository, select_database
-from app.simulation import data, settings
+from app.simulation import across, data, settings
 from app.simulation.store import ScenarioStore, catalog_signature, now
 
 router = APIRouter(prefix="/api/simulation", tags=["PowerFactory scenarios"])
@@ -61,6 +61,27 @@ def overview(db=Depends(store)):
         "database_path": settings.ANALYSIS_DB_PATH,
         "mode": settings.ANALYSIS_MODE,
     }
+
+
+@router.get("/across-scenarios")
+def across_scenarios(
+    over: list[float] = Query(list(across.DEFAULT_LIMITS), min_length=1, max_length=5),
+    db=Depends(store),
+):
+    return across.across_scenarios(db, tuple(over))
+
+
+@router.get("/across-scenarios/{scenario_id}/profile")
+def scenario_profile(
+    scenario_id: str,
+    top: int = Query(5, ge=1, le=10),
+    points: int = Query(240, ge=20, le=1000),
+    db=Depends(store),
+):
+    result = across.scenario_profile(db, scenario_id, top, points)
+    if result is None:
+        raise HTTPException(404, "Szenario nicht gefunden.")
+    return result
 
 
 @router.post("/outage-management/sync", status_code=202)
