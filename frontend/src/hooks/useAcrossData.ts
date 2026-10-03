@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 import { committedPrefix, mergeCells, type AcrossIndex, type CellsPayload } from '../util/acrossLoad';
 import type { AcrossData } from '../util/acrossScenarios';
@@ -20,14 +20,17 @@ const fetchCells = (id: string): Promise<CellsPayload> => {
   return pending;
 };
 
-// When one user of the hook sees a new scenario in the index, the others look again.
+// When one user of the hook sees a new scenario in the index, the OTHERS look again (not itself).
 let knownIds = '';
-const listeners = new Set<() => void>();
-const announce = (ids: string) => {
+const listeners = new Map<object, () => void>();
+const announce = (ids: string, self: object) => {
   if (ids === knownIds) return;
   knownIds = ids;
-  listeners.forEach((listener) => listener());
+  listeners.forEach((listener, owner) => { if (owner !== self) listener(); });
 };
+
+/** Scenarios arriving close together are shown in one step: each step merges and evaluates everything. */
+const BATCH_MS = 120;
 
 export interface AcrossLoad {
   data: AcrossData | null;
@@ -50,11 +53,12 @@ export function useAcrossData(refreshKey: number): AcrossLoad {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [peerTick, setPeerTick] = useState(0);
+  const self = useRef({});
 
   useEffect(() => {
-    const listener = () => setPeerTick((tick) => tick + 1);
-    listeners.add(listener);
-    return () => { listeners.delete(listener); };
+    const owner = self.current;
+    listeners.set(owner, () => setPeerTick((tick) => tick + 1));
+    return () => { listeners.delete(owner); };
   }, []);
 
   useEffect(() => {
@@ -67,23 +71,37 @@ export function useAcrossData(refreshKey: number): AcrossLoad {
         setIndex(idx);
         setError('');
         const ids = idx.scenarios.map((scenario) => scenario.id);
-        announce(ids.join(','));
+        announce(ids.join(','), self.current);
         let next = 0;
+        let buffer: Record<string, CellsPayload | null> = {};
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const flush = () => {
+          timer = undefined;
+          const batch = buffer;
+          buffer = {};
+          if (active && Object.keys(batch).length > 0) setParts((previous) => ({ ...previous, ...batch }));
+        };
+        const arrived = (id: string, value: CellsPayload | null) => {
+          buffer[id] = value;
+          if (timer === undefined) timer = setTimeout(flush, BATCH_MS);
+        };
         const worker = async () => {
           while (active) {
             const i = next++;
             if (i >= ids.length) return;
             try {
               const data = await fetchCells(ids[i]);
-              if (active) setParts((previous) => ({ ...previous, [ids[i]]: data }));
+              if (active) arrived(ids[i], data);
             } catch {
-              if (active) setParts((previous) => ({ ...previous, [ids[i]]: null }));
+              if (active) arrived(ids[i], null);
             }
           }
         };
         await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
+        if (timer !== undefined) clearTimeout(timer);
+        flush();
       } catch {
-        if (active) setError('Die Auswertung über alle Szenarien konnte nicht geladen werden.');
+        if (active) setError('The evaluation across all scenarios could not be loaded.');
       } finally {
         if (active) setLoading(false);
       }

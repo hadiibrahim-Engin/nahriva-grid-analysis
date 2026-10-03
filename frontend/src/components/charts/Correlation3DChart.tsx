@@ -29,8 +29,8 @@ type ViewPreset = keyof typeof VIEW_PRESETS;
 echarts.use([Scatter3DChart, Grid3DComponent, TooltipComponent, VisualMapComponent, CanvasRenderer]);
 
 const MTYPE_LABELS: Record<string, string> = {
-  P: 'Wirkleistung', Q: 'Blindleistung', S: 'Scheinleistung',
-  U: 'Spannung', I: 'Strom', loading: 'Auslastung',
+  P: 'Active power', Q: 'Reactive power', S: 'Apparent power',
+  U: 'Voltage', I: 'Current', loading: 'Loading',
 };
 
 type CorrelationData3D = CorrelationScatterData3 & {
@@ -68,10 +68,10 @@ export default function Correlation3DChart({ data, ...yScale }: Props & YAxisSca
   const visualMax = zMin === zMax ? zMax + 1 : zMax;
 
   const direction = Math.abs(data.correlation) > 0.7
-    ? 'Starke'
+    ? 'Strong'
     : Math.abs(data.correlation) > 0.4
-      ? 'Mittlere'
-      : 'Schwache';
+      ? 'Moderate'
+      : 'Weak';
   const method = data.method ?? 'pearson';
   const methodSymbol = CORRELATION_METHOD_SYMBOLS[method];
 
@@ -98,7 +98,7 @@ export default function Correlation3DChart({ data, ...yScale }: Props & YAxisSca
       orient: 'horizontal' as const,
       left: 'center' as const,
       top: 0,
-      text: [`${labelZ} (${data.unit_z}) hoch`, 'niedrig'],
+      text: [`${labelZ} (${data.unit_z}) high`, 'low'],
       textStyle: { color: theme.mutedText },
       inRange: { color: [theme.primary, theme.warning] },
     },
@@ -160,16 +160,16 @@ export default function Correlation3DChart({ data, ...yScale }: Props & YAxisSca
     <div className="relative">
       <div className="absolute left-3 top-2 z-10 flex overflow-hidden rounded border border-gray-600 text-xs">
         <button type="button" onClick={() => applyView('standard')} className="px-2 py-1 bg-gray-700 text-gray-300 transition-colors hover:bg-gray-600 hover:text-white">
-          Zurücksetzen
+          Reset
         </button>
         <button type="button" onClick={() => applyView('top')} className="px-2 py-1 bg-gray-700 text-gray-300 transition-colors hover:bg-gray-600 hover:text-white">
-          Von oben
+          From above
         </button>
         <button type="button" onClick={() => applyView('front')} className="px-2 py-1 bg-gray-700 text-gray-300 transition-colors hover:bg-gray-600 hover:text-white">
-          Von vorne
+          From the front
         </button>
         <button type="button" onClick={() => applyView('side')} className="px-2 py-1 bg-gray-700 text-gray-300 transition-colors hover:bg-gray-600 hover:text-white">
-          Seitlich
+          From the side
         </button>
       </div>
       <div
@@ -177,7 +177,7 @@ export default function Correlation3DChart({ data, ...yScale }: Props & YAxisSca
         style={{ color: theme.mutedText }}
       >
         <span className="font-semibold" style={{ color: theme.text }}>{methodSymbol} = {data.correlation.toFixed(2)}</span>
-        <span className="ml-1">({direction.toLowerCase()} X/Y-Korrelation, {CORRELATION_METHOD_LABELS[method]})</span>
+        <span className="ml-1">({direction.toLowerCase()} X/Y correlation, {CORRELATION_METHOD_LABELS[method]})</span>
       </div>
       <ReactECharts
         ref={chartRef}

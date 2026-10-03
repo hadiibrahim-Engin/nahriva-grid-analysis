@@ -1,121 +1,130 @@
-# Freischaltbewertung und Auswertung über alle Szenarien
+# Outage assessment and evaluation across all scenarios
 
-Alles hier arbeitet **nur lesend** auf der SQLite-Datei. Berechnung und Speicherung der
-Ergebnisse bleiben unverändert; neu ist allein die LODF-Tabelle `pf_lodf`.
+Everything here works **read-only** on the SQLite file. Calculation and storage of the results are
+unchanged; the only addition is the LODF table `pf_lodf`.
 
-## Lesereihenfolge
+## Reading order
 
-Die Navigation und die Seite folgen dem Weg einer Bewertung:
+The navigation and the page follow the path of an assessment:
 
-| Abschnitt | Frage |
+| Section | Question |
 |---|---|
-| Kennzahlen | Wie viele Szenarien sind zulässig, bedingt, nicht zulässig? Wo liegen die Extremwerte? |
-| Bewertung | Urteil je Szenario mit Begründung, Freischaltung, Zeitachse, Verteilung |
-| Verlauf, Szenariodetails | Wann und wie lange ist das gewählte Szenario kritisch? |
-| Spannung | Welche Sammelschiene verlässt das Band? |
-| Matrix | Welches Betriebsmittel ist in welchem Szenario wie belastet? |
-| Grafiken, Radar | Vergleich über alle Szenarien (Auslastung, Dauer, Änderung, LODF) |
-| Detailtabelle | Jede Zahl, sortierbar |
+| Key figures | How many scenarios are permissible, conditional, not permissible? Where are the extremes? |
+| Assessment | Verdict per scenario with reasons, outage, timeline, distribution |
+| Profile, scenario details | When and for how long is the chosen scenario critical? |
+| Voltage | Which busbar leaves the band? |
+| Matrix | Which equipment is loaded how much in which scenario? |
+| Charts, radar | Comparison across all scenarios (loading, duration, change, LODF) |
+| Detail table | Every number, sortable |
 
-Schwere Abschnitte laden erst, wenn sie nahe ins Bild kommen (siehe „Große Datenbanken“).
-Erklärende Texte sind aus; sie lassen sich je Karte über **i** oder für alles über
-**Erläuterungen** einblenden.
+Heavy sections load only when they come close to the viewport (see "Large databases").
+Explanations are off by default; open them per card with **i** or for everything with
+**Explanations**.
 
-## Diagramme selbst hinzufügen
+## Adding charts
 
-Die Vergleichsgrafiken gibt es auch als Vorlagen unter **Diagramm hinzufügen → Szenarioauswertung**:
-Höchste Auslastung, Überlastdauer, Änderung der Auslastung, LODF und Änderung, sowie für Spannungen
-**Spannung je Sammelschiene** und **Spannungsänderung (ΔU)**. Sie brauchen keine ausgewählten Zeitreihen.
+**Add chart** offers the charts that make sense for the two exported signals, loading (L) and
+voltage (U):
 
-- **Auswahl:** *Automatisch* zeigt die auffälligsten N (5 bis 30). *Ausgewählte* zeigt genau die
-  gewählten Betriebsmittel (bzw. Sammelschienen) aus einer durchsuchbaren Liste, je Betriebsmittel eine Gruppe
-  mit einem Balken pro Szenario. Zusätzlich lassen sich die **Szenarien** eingrenzen (Codes S01, S02 … bleiben
-  die der Gesamtliste). Der Typ (alle, Leitungen, Transformatoren) filtert Leitungs- und Trafo-Diagramme.
-- **Spannung:** Balken gehen von der Nennspannung 1,000 p.u. aus nach links und rechts, das Band 0,90 und 1,10
-  ist eingezeichnet; ΔU ist die Änderung gegenüber REF an der Seite, die dem Band näher liegt.
-- Die Karten teilen sich die Daten mit der Zusammenfassung, laden also nichts doppelt, folgen neuen
-  Szenarien von selbst und bleiben mit der Ansicht gespeichert. Auswahl und Optionen lassen sich auf der Karte
-  unter „Auswahl“ ändern.
-- **Ausgeblendete Vorlagen:** Was mit PowerFactory-Daten (nur Auslastung und Spannung, kurze Simulation) nicht
-  funktioniert, wird im Dialog nicht angeboten, bleibt aber registriert, damit gespeicherte Karten weiterlaufen.
-  Liste mit Begründung: `HIDDEN_TEMPLATE_REASONS` in `frontend/src/components/charts/chartTemplates.ts`;
-  Eintrag löschen, um eine Vorlage wieder anzubieten. Neue Vorlagen ebenfalls dort.
+- **Scenario evaluation** (no selected signals needed): highest loading, overload duration, change of
+  loading, LODF and change, **voltage per busbar** and **voltage change (ΔU)**.
+- **Time series, distribution, limits:** time series overlay, aggregated trend, rolling mean, anomaly
+  score, histogram, boxplot, duration curve, threshold exceedance, multi-level threshold lines,
+  voltage compliance.
+- **Correlation:** correlation scatter (Pearson, Spearman, Kendall), colour-coded scatter, 3D scatter
+  and correlation matrix.
 
-## Definitionen
+Options of the scenario evaluation charts:
 
-- **Szenariowert:** maximale OUTAGE-Auslastung im Ausfallfenster des Szenarios.
-- **Base:** maximale REF-Auslastung über den gesamten Zeitraum.
-- **Δ Loading:** Szenariowert minus REF im selben Fenster, in Prozentpunkten (pp).
-- **Overload Rate:** Zeit über 100 % im ungünstigsten Szenario, bezogen auf den
-  **Simulationszeitraum** (nicht auf die Zahl der Szenarien).
-- **Excess:** `max(Loading − 100 %, 0)` in pp; Summe, Maximum und Mittel stehen in der Tabelle.
-- **Verursachung** gegenüber REF im selben Fenster: *verursacht* (REF ≤ 100 %, mit Freischaltung
-  darüber), *verschärft* (schon darüber, mindestens 2 pp höher), *Vorbelastung* (unverändert).
-- Ein im Szenario freigeschaltetes Betriebsmittel wird dort nicht bewertet („AUS“).
+- **Selection:** *Automatic* shows the most conspicuous N (5 to 30). *Selected* shows exactly the chosen
+  equipment (or busbars) from a searchable list, one group per equipment item with one bar per
+  scenario. The **scenarios** can be narrowed as well (codes S01, S02 … stay those of the full list).
+  The type (all, lines, transformers) filters line and transformer charts.
+- **Voltage:** bars start at the nominal voltage 1.000 p.u. and go left and right, the band 0.90 and
+  1.10 is drawn; ΔU is the change against REF on the side closer to the band.
+- The cards share their data with the summary, load nothing twice, follow new scenarios by themselves
+  and are saved with the view.
 
-## Freigabe-Bewertung
+All templates are registered in `frontend/src/components/charts/chartTemplates.ts`.
 
-Bewertet werden alle Betriebsmittel: Leitungen und Transformatoren nach Auslastung,
-Sammelschienen nach Spannung.
+## Definitions
 
-| Urteil | Kriterium |
+- **Scenario value:** maximum OUTAGE loading in the outage window of the scenario.
+- **Base:** maximum REF loading over the whole period.
+- **Δ loading:** scenario value minus REF in the same window, in percentage points (pp).
+- **Overload rate:** time above 100 % in the worst scenario, relative to the **simulation period**
+  (not to the number of scenarios).
+- **Excess:** `max(loading − 100 %, 0)` in pp; sum, maximum and mean are in the table.
+- **Cause** against REF in the same window: *caused* (REF ≤ 100 %, above with the outage),
+  *aggravated* (already above, at least 2 pp higher), *pre-existing* (unchanged).
+- Equipment switched off in a scenario is not assessed there ("OFF").
+
+## Assessment
+
+All equipment is assessed: lines and transformers by loading, busbars by voltage.
+
+| Verdict | Criterion |
 |---|---|
-| Nicht zulässig | Überlastung oder Spannungsverletzung durch die Freischaltung verursacht oder verschärft |
-| Bedingt zulässig | keine neue Verletzung, aber Vorbelastung > 100 %, Reserve < 5 pp, Warnbereich ≥ 80 % neu erreicht oder Spannung näher als 0,02 p.u. an der Grenze |
-| Zulässig | sonst, mit höchster Auslastung und Reserve |
+| Not permissible | overload or voltage violation caused or aggravated by the outage |
+| Conditionally permissible | no new violation, but pre-existing load > 100 %, reserve < 5 pp, warning range ≥ 80 % newly reached or voltage closer than 0.02 p.u. to a limit |
+| Permissible | otherwise, with highest loading and reserve |
 
-Das Urteil ist eine Entscheidungshilfe nach diesen Kriterien, keine Freigabe. Der Typfilter
-(Alle / Leitungen / Transformatoren) schränkt nur Matrix, Grafiken, Radar und Tabelle ein.
+The verdict is a decision aid according to these criteria, not an approval. The type filter
+(All / Lines / Transformers) only narrows matrix, charts, radar and table.
 
-**Spannung:** Das Band ist zentral **0,90 bis 1,10 p.u.** und gilt für alle in p.u. gespeicherten
-Ergebnisse. Ergebnisse in kV werden gegen die mit ihnen gespeicherten Grenzen beurteilt; ohne
-Grenzen wird keine Verletzung abgeleitet.
+**Voltage:** the band is central, **0.90 to 1.10 p.u.**, and applies to all results stored in p.u.
+Results in kV are judged against the limits stored with them; without limits no violation is derived.
 
 ## LODF
 
-`powerfactory/lodf.py` rechnet **vor der ersten Simulation** DC-Lastflüsse (`ComLdf`,
-`iopt_net=2`): je Szenario werden dessen Ausfallobjekte gemeinsam abgeschaltet und
-`LODF = ΔP_Betriebsmittel / ΣP_ausgefallen,vorher` bestimmt (bei mehreren Ausfällen mit Beträgen
-normiert; angezeigt wird |LODF|). Die Werte stehen in `pf_lodf`, getrennt von den Ergebnisläufen.
-Schlägt der Lastfluss fehl, gibt es eine Warnung, die Szenarien laufen trotzdem, und das
-Dashboard zeigt „nicht berechnet“. Auf der VM zu prüfen: Variablen `m:P:bus1` / `m:P:bushv` und
-die Zuordnung der Ausfallobjekte zu Betriebsmitteln.
+`powerfactory/lodf.py` calculates DC load flows (`ComLdf`, `iopt_net=2`) **before the first
+simulation**: per scenario its outage objects are switched off together and
+`LODF = ΔP_equipment / ΣP_outaged,before` is determined (normalised with magnitudes for several
+outages; |LODF| is shown). The values are stored in `pf_lodf`, separate from the result runs. If the
+load flow fails there is a warning, the scenarios still run, and the dashboard shows "not calculated".
+To verify on the PowerFactory PC: the variables `m:P:bus1` / `m:P:bushv` and the assignment of outage
+objects to equipment.
 
-## Große Datenbanken
+## Large databases
 
-Der Server liest nur, was gefragt wird, und das Frontend fragt nur, was sichtbar wird.
+The server reads only what is asked for, and the frontend asks only for what becomes visible.
 
-1. `GET /across-scenarios/index` liefert Szenarien und Freischaltungen **ohne Samples zu lesen**.
-2. Danach holt das Frontend `GET /across-scenarios/{id}/cells` Szenario für Szenario
-   (3 gleichzeitig). Die Szenarien erscheinen in fester Reihenfolge, die Codes S01, S02 … bleiben
-   stabil, die ersten Urteile stehen vor dem Ende. Ein Fortschrittsbalken zeigt den Stand.
-3. Je Szenario genügen zwei gruppierte SQL-Durchläufe über die Lastreihen (REF und OUTAGE) plus
-   wenige für die Spannung. Das Ergebnis wird im Server zwischengespeichert; gespeicherte Szenarien
-   ändern sich nie, ein Auffrischen lädt daher nur neue Szenarien nach.
-4. Abschnitte unterhalb der Bewertung (Verlauf, Details, Spannung, Matrix, Grafiken, Radar,
-   Tabelle) hängen sich erst ein, wenn sie nahe ins Bild kommen oder die Navigation sie anspringt.
-   Erst dann werden ihr Code und ihre Daten geladen. `GET .../{id}/profile` reduziert eine
-   Zeitreihe auf höchstens 300 Punkte (Maximum je Bucket, Spitzen bleiben erhalten).
-5. Matrix und Tabelle zeigen zunächst die auffälligsten Betriebsmittel und blättern weiter.
+1. `GET /across-scenarios/index` returns scenarios and outages **without reading samples**.
+2. The frontend then fetches `GET /across-scenarios/{id}/cells` scenario by scenario (3 at a time). The
+   scenarios appear in a fixed order, the codes S01, S02 … stay stable, and the first verdicts are
+   there before the end. A progress bar shows the state.
+3. Per scenario two grouped SQL passes over the loading series (REF and OUTAGE) plus a few for voltage
+   are enough. The result is cached in the server; saved scenarios never change, so a refresh only
+   loads new scenarios.
+4. Sections below the assessment (profile, details, voltage, matrix, charts, radar, table) mount only
+   when they come close to the viewport or the navigation jumps to them. Only then are their code and
+   data loaded. `GET .../{id}/profile` reduces a time series to at most 300 points (maximum per
+   bucket, peaks are kept).
+5. Matrix and table first show the most conspicuous equipment and page on.
 
-Nicht gemessen: das Verhalten bei Millionen Zeilen je Lauf auf der echten VM. Die Aufteilung ist
-dafür vorbereitet; Zeiten bitte dort prüfen.
+Not measured: behaviour with millions of rows per run on the real PC. The split is prepared for it;
+please check timings there.
 
-## API (lesend)
+## API (read-only)
 
-| Pfad | Inhalt |
+| Path | Content |
 |---|---|
-| `GET /api/simulation/across-scenarios/index` | Szenarien, Freischaltungen, Zeitraum |
-| `GET /api/simulation/across-scenarios/{id}/cells` | reduzierte Werte eines Szenarios (zwischengespeichert) |
-| `GET /api/simulation/across-scenarios/{id}/profile` | Belastungsverlauf der kritischsten Betriebsmittel |
-| `GET /api/simulation/across-scenarios` | alles zusammen (Index plus alle Szenarien) |
+| `GET /api/simulation/across-scenarios/index` | scenarios, outages, period |
+| `GET /api/simulation/across-scenarios/{id}/cells` | reduced values of one scenario (cached) |
+| `GET /api/simulation/across-scenarios/{id}/profile` | loading profile of the most critical equipment |
+| `GET /api/simulation/across-scenarios` | everything together (index plus all scenarios) |
+| `GET /api/simulation/outage-management` | catalog, jobs and saved scenarios |
+| `GET /api/simulation/facilities`, `.../components`, `.../timeseries/...`, `.../analytics/...` | series and analyses for the signal charts |
 
-## Wo anpassen
+The API has no write endpoints except switching the database (`POST /api/simulation/database`, only
+while the server is not exposed to the network).
 
-| Was | Datei |
+## Where to customise
+
+| What | File |
 |---|---|
-| Auslastungsbänder, Schwellen für Muster, Gewichte der Auffälligkeit | `frontend/src/config/loadingBands.ts` |
-| Kriterien der Bewertung, Spannungsband, Reserve | `frontend/src/config/assessment.ts` |
-| Logik der Bewertung | `frontend/src/util/freischaltung.ts` |
-| Laden in Teilen | `frontend/src/hooks/useAcrossData.ts`, `frontend/src/util/acrossLoad.ts` |
-| Aggregation, Cache | `backend/app/simulation/across.py` |
+| Loading bands, thresholds for patterns, weights of conspicuousness | `frontend/src/config/loadingBands.ts` |
+| Assessment criteria, voltage band, reserve | `frontend/src/config/assessment.ts` |
+| Assessment logic | `frontend/src/util/outageAssessment.ts` |
+| Loading in parts | `frontend/src/hooks/useAcrossData.ts`, `frontend/src/util/acrossLoad.ts` |
+| Aggregation, cache | `backend/app/simulation/across.py` |

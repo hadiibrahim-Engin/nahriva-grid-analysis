@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAcrossData } from '../../hooks/useAcrossData';
 import { SUMMARY_IDS, analyse, compareScenarioCriticality, summarySections, type SummarySection } from '../../util/acrossScenarios';
-import { assessScenario, compareVerdict, equipmentKind, type EquipmentKind } from '../../util/freischaltung';
+import { assessScenario, compareVerdict, equipmentKind, filterByEquipment, type EquipmentKind } from '../../util/outageAssessment';
 import ErrorBoundary from '../ErrorBoundary';
 import EquipmentFilter, { type EquipmentFilterValue } from './EquipmentFilter';
 import AcrossKpis from './AcrossKpis';
@@ -51,9 +51,9 @@ export default function AcrossScenarios({ refreshKey, onSectionsChange }: {
   // ... the comparison parts (matrix, charts, radar, table) follow the equipment filter.
   const analysis = useMemo(() => {
     if (!data) return null;
-    const lines = kind === 'all' ? data.lines : data.lines.filter((line) => equipmentKind(line.type) === kind);
-    return analyse({ ...data, lines });
-  }, [data, kind]);
+    if (kind === 'all') return full; // the usual case: nothing to filter, nothing to compute twice
+    return analyse({ ...data, lines: filterByEquipment(data.lines, kind) });
+  }, [data, kind, full]);
   const kindCounts = useMemo(() => {
     const counts: Record<EquipmentKind, number> = { line: 0, transformer: 0, other: 0 };
     for (const line of data?.lines ?? []) counts[equipmentKind(line.type)] += 1;
@@ -83,74 +83,74 @@ export default function AcrossScenarios({ refreshKey, onSectionsChange }: {
   if (error && !data) return <p role="alert" className="mt-4 text-sm text-[var(--grid-danger)]">{error}</p>;
   if (!analysis || !full || full.scenarios.length === 0) {
     if (loading || (data && total > 0 && shown === 0 && failed < total)) {
-      return <p className="mt-4 text-sm text-[var(--grid-muted)]" aria-busy>Szenarien werden geladen …</p>;
+      return <p className="mt-4 text-sm text-[var(--grid-muted)]" aria-busy>Loading scenarios …</p>;
     }
-    return <p className="mt-4 text-sm text-[var(--grid-muted)]">Noch keine berechneten Szenarien.</p>;
+    return <p className="mt-4 text-sm text-[var(--grid-muted)]">No calculated scenarios yet.</p>;
   }
   const periodHours = data!.period_hours;
   return (
     <HelpContext.Provider value={help}>
-      <div className="across-scope mt-4 grid gap-3" aria-label="Across-Scenarios-Auswertung">
+      <div className="across-scope mt-4 grid gap-3" aria-label="Across-scenarios evaluation">
         <div className="ab-toolbar">
           {loading && shown < total ? (
             <div className="ab-progress" role="status" aria-live="polite">
               <span className="ab-progress__bar" aria-hidden><span style={{ width: `${(shown / Math.max(total, 1)) * 100}%` }} /></span>
-              Szenarien {shown} / {total}
+              scenarios {shown} / {total}
             </div>
           ) : failed > 0 ? (
-            <span className="ab-progress" role="status">{failed} von {total} Szenarien konnten nicht geladen werden.</span>
+            <span className="ab-progress" role="status">{failed} of {total} scenarios could not be loaded.</span>
           ) : <span />}
-          <button type="button" className="ab-chip" aria-pressed={help} onClick={toggleHelp} title="Erläuterungen zu allen Abschnitten ein- oder ausblenden">Erläuterungen</button>
+          <button type="button" className="ab-chip" aria-pressed={help} onClick={toggleHelp} title="Show or hide the explanations of all sections">Explanations</button>
         </div>
         {/* 1 · Result first: key figures and the verdict per scenario, always over all equipment */}
-        <SectionCard id={SUMMARY_IDS.kpis} title="Kennzahlen" summary={`${full.scenarios.length} Szenarien · ${full.lines.length} Betriebsmittel${buses.length ? ` · ${buses.length} Sammelschienen` : ''}`}>
+        <SectionCard id={SUMMARY_IDS.kpis} title="Key figures" summary={`${full.scenarios.length} scenarios · ${full.lines.length} Equipment${buses.length ? ` · ${buses.length} Busbars` : ''}`}>
           <AcrossKpis kpis={full.kpis} scenarios={full.scenarios} assessments={assessments} />
         </SectionCard>
         <ScenarioOverview scenarios={full.scenarios} assessments={assessments} selectedId={selectedId} onSelect={setSelected} periodHours={periodHours} period={data!.period} />
         {/* 2 · The chosen scenario in detail: when is it critical, what does it contain */}
         {selectedScenario && (
-          <LazySection id={SUMMARY_IDS.profile} label="Belastungsverlauf" minHeight={160}>
-            <ErrorBoundary label="Belastungsverlauf">
-              <Suspense fallback={<div className="ab-empty" aria-busy>Verlauf wird geladen …</div>}>
+          <LazySection id={SUMMARY_IDS.profile} label="Loading profile" minHeight={160}>
+            <ErrorBoundary label="Loading profile">
+              <Suspense fallback={<div className="ab-empty" aria-busy>Loading profile …</div>}>
                 <ScenarioProfile scenarioId={selectedScenario.scenario.id} label={`${selectedScenario.code} ${selectedScenario.scenario.name}`} refreshKey={refreshKey} />
               </Suspense>
             </ErrorBoundary>
           </LazySection>
         )}
-        <LazySection id={SUMMARY_IDS.details} label="Szenariodetails" minHeight={64}>
+        <LazySection id={SUMMARY_IDS.details} label="Scenario details" minHeight={64}>
           <ScenarioDetails scenarios={full.scenarios} selectedId={selectedId} onSelect={setSelected} />
         </LazySection>
         {/* 3 · Voltage, then loading of all equipment across the scenarios */}
         {buses.length > 0 && (
-          <LazySection id={SUMMARY_IDS.voltage} label="Spannungshaltung" minHeight={120}>
+          <LazySection id={SUMMARY_IDS.voltage} label="Voltage" minHeight={120}>
             <VoltageMatrix buses={buses} scenarios={full.scenarios} selectedId={selectedId} onSelect={setSelected} />
           </LazySection>
         )}
-        <LazySection id={SUMMARY_IDS.heatmap} label="Betriebsmittel × Szenario" minHeight={200}>
+        <LazySection id={SUMMARY_IDS.heatmap} label="Equipment × scenario" minHeight={200}>
           <div className="grid gap-3">
             <EquipmentFilter value={kind} onChange={setKind} counts={kindCounts} />
             <LineScenarioHeatmap lines={analysis.lines} scenarios={analysis.scenarios} selectedId={selectedId} onSelect={setSelected} />
           </div>
         </LazySection>
         {/* 4 · Comparison across the scenarios */}
-        <LazySection id={SUMMARY_IDS.charts} label="Grafiken" minHeight={200}>
+        <LazySection id={SUMMARY_IDS.charts} label="Comparison" minHeight={200}>
           <div id={SUMMARY_IDS.charts}>
-            <ErrorBoundary label="Auswertungsdiagramme">
-              <Suspense fallback={<div className="ab-empty" aria-busy>Diagramme werden geladen …</div>}>
+            <ErrorBoundary label="Evaluation charts">
+              <Suspense fallback={<div className="ab-empty" aria-busy>Loading charts …</div>}>
                 <AcrossCharts lines={analysis.lines} scenarios={analysis.scenarios} periodHours={periodHours} hasLodf={data!.has_lodf} />
               </Suspense>
             </ErrorBoundary>
           </div>
         </LazySection>
-        <LazySection id={SUMMARY_IDS.radar} label="Szenariovergleich · Radar" minHeight={120}>
-          <ErrorBoundary label="Szenario-Radarplot">
-            <Suspense fallback={<div className="ab-empty" aria-busy>Radarplot wird geladen …</div>}>
+        <LazySection id={SUMMARY_IDS.radar} label="Scenario comparison · radar" minHeight={120}>
+          <ErrorBoundary label="Scenario radar plot">
+            <Suspense fallback={<div className="ab-empty" aria-busy>Loading radar plot …</div>}>
               <ScenarioRadar scenarios={analysis.scenarios} selectedId={selectedId} onSelect={setSelected} />
             </Suspense>
           </ErrorBoundary>
         </LazySection>
         {/* 5 · Reference: every number */}
-        <LazySection id={SUMMARY_IDS.table} label="Detailtabelle" minHeight={64}>
+        <LazySection id={SUMMARY_IDS.table} label="Detail table" minHeight={64}>
           <LineSummaryTable lines={analysis.lines} scenarios={analysis.scenarios} hasLodf={data!.has_lodf} periodHours={periodHours} />
         </LazySection>
       </div>

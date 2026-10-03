@@ -48,17 +48,17 @@ export default function ExceedanceChart({ data, ...yScale }: Props & YAxisScaleP
         const duration = h > 0 ? `${h}h ${m}m` : `${m}m`;
         return [
           `<strong>${day.day}</strong>`,
-          `${params[0]?.marker ?? ''} Dauer: ${duration}`,
+          `${params[0]?.marker ?? ''} Duration: ${duration}`,
           `${params[1]?.marker ?? ''} Max: ${formatChartNumber(day.max_value)} ${data.unit}`,
-          `Mittel: ${formatChartNumber(day.mean_value)} ${data.unit}`,
-          `Schwellwert: ${formatChartNumber(data.threshold)} ${data.unit}`,
+          `Mean: ${formatChartNumber(day.mean_value)} ${data.unit}`,
+          `Threshold: ${formatChartNumber(data.threshold)} ${data.unit}`,
         ].join('<br/>');
       },
     },
     legend: {
       top: 0,
       textStyle: { color: theme.mutedText },
-      data: ['Dauer über Schwellwert', 'Maximalwert'],
+      data: ['Duration above threshold', 'Maximum value'],
     },
     grid: { left: 56, right: DATA_ZOOM_Y_GRID_RIGHT, top: 48, bottom: chartDays.length > 6 ? 66 : 44, containLabel: true },
     xAxis: {
@@ -70,7 +70,7 @@ export default function ExceedanceChart({ data, ...yScale }: Props & YAxisScaleP
     yAxis: [
       {
         ...scaledValueAxis(yScale),
-        name: 'Dauer (min)',
+        name: 'Duration (min)',
         nameTextStyle: { color: theme.mutedText },
         axisLabel: { color: theme.mutedText, formatter: formatChartNumber },
         axisLine: { lineStyle: { color: theme.axis } },
@@ -123,7 +123,7 @@ export default function ExceedanceChart({ data, ...yScale }: Props & YAxisScaleP
         ],
     series: [
       {
-        name: 'Dauer über Schwellwert',
+        name: 'Duration above threshold',
         type: 'bar',
         barMaxWidth: 34,
         itemStyle: {
@@ -133,7 +133,7 @@ export default function ExceedanceChart({ data, ...yScale }: Props & YAxisScaleP
         data: chartDays.map((d) => d.minutes_above),
       },
       {
-        name: 'Maximalwert',
+        name: 'Maximum value',
         type: 'line',
         yAxisIndex: 1,
         symbolSize: 7,
@@ -158,15 +158,15 @@ export default function ExceedanceChart({ data, ...yScale }: Props & YAxisScaleP
           <div className="text-2xl font-bold text-yellow-400">
             {hours > 0 ? `${hours}h ${mins}m` : `${mins}m`}
           </div>
-          <div className="text-xs text-gray-400">Gesamtdauer &gt; {formatChartNumber(data.threshold)} {data.unit}</div>
+          <div className="text-xs text-gray-400">Total duration &gt; {formatChartNumber(data.threshold)} {data.unit}</div>
         </div>
         <div className="bg-gray-700/50 rounded-lg p-3 text-center">
           <div className="text-2xl font-bold text-red-400">{formatChartPercent(data.total_pct)}</div>
-          <div className="text-xs text-gray-400">Anteil der Gesamtzeit</div>
+          <div className="text-xs text-gray-400">Share of the total time</div>
         </div>
         <div className="bg-gray-700/50 rounded-lg p-3 text-center">
           <div className="text-2xl font-bold text-blue-400">{data.top_days.length}</div>
-          <div className="text-xs text-gray-400">Betroffene Tage</div>
+          <div className="text-xs text-gray-400">Affected days</div>
         </div>
       </div>
 
@@ -182,7 +182,7 @@ export default function ExceedanceChart({ data, ...yScale }: Props & YAxisScaleP
         </div>
       ) : (
         <div className="rounded-lg border border-[var(--grid-border)] bg-[var(--grid-surface-soft)] px-3 py-6 text-center text-sm text-[var(--grid-muted)]">
-          Keine Überschreitungen über {formatChartNumber(data.threshold)} {data.unit} im gewählten Zeitraum.
+          No exceedances above {formatChartNumber(data.threshold)} {data.unit} in the selected period.
         </div>
       )}
 
@@ -194,9 +194,9 @@ export default function ExceedanceChart({ data, ...yScale }: Props & YAxisScaleP
               <tr className="border-b border-[var(--grid-border)] text-[var(--grid-muted)]">
                 <th className="text-left py-1.5 px-2">#</th>
                 <th className="text-left py-1.5 px-2">Tag</th>
-                <th className="text-right py-1.5 px-2">Dauer</th>
+                <th className="text-right py-1.5 px-2">Duration</th>
                 <th className="text-right py-1.5 px-2">Max</th>
-                <th className="text-right py-1.5 px-2">Mittel</th>
+                <th className="text-right py-1.5 px-2">Mean</th>
               </tr>
             </thead>
             <tbody>

@@ -1,12 +1,15 @@
 """Verify built Outage Assessment against an isolated dummy QDS SQLite database."""
 
 import json
+import sys
 import tempfile
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import urlopen
-from dashboard_launcher import launch_dashboard
-from seed_dummy_qds import create_dummy_database, STEPS
+from dashboard_launcher import ROOT, launch_dashboard
+
+sys.path.insert(0, str(ROOT / "backend"))
+from tests.qds_fixture import create_dummy_database, STEPS  # noqa: E402
 
 
 def main():
@@ -24,12 +27,12 @@ def main():
                 )
             with urlopen(base + "/api/simulation/facilities") as response:
                 runs = json.load(response)
-            assert len(runs) == 6
+            assert len(runs) == 16
             with urlopen(
                 base + "/api/simulation/facilities/" + runs[0]["id"] + "/components"
             ) as response:
                 component = next(
-                    e for e in json.load(response) if e["name"] == "Leitung Nord–West"
+                    e for e in json.load(response) if e["name"] == "Line North–West"
                 )
             with urlopen(
                 base + "/api/simulation/timeseries/raw/" + component["id"] + "/L"
@@ -38,13 +41,6 @@ def main():
             assert len(series["data"]) == STEPS and series["data"][0][
                 "timestamp"
             ].startswith("2026-01-31")
-            with urlopen(
-                base
-                + "/api/analysis/export.csv?run_id="
-                + runs[0]["id"]
-                + "&metric_id=loading&element_ids=line-nord"
-            ) as response:
-                assert len(response.read().decode().splitlines()) == STEPS + 1
             for route in ("/api/simulation/auth/login", "/api/auth/login"):
                 try:
                     urlopen(base + route)
@@ -53,7 +49,7 @@ def main():
                 else:
                     raise AssertionError("Login route still exists")
             print(
-                "PASS: SPA, local launcher, isolated named QDS scenarios, complete raw rows without dates, CSV, no login"
+                "PASS: SPA, local launcher, isolated named QDS scenarios, complete raw rows without dates, no login"
             )
         finally:
             dashboard["process"].terminate()

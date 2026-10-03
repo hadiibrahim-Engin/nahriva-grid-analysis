@@ -96,7 +96,7 @@ export default function TimeseriesChart({
   yAxisMin,
   yAxisMax,
   yAxisLog = false,
-  exportBaseName = 'Zeitreihe',
+  exportBaseName = 'Time series',
 }: Props) {
   const theme = useChartTheme();
 
@@ -279,7 +279,7 @@ export default function TimeseriesChart({
 
     return {
       unitWarning: tooManyUnits
-        ? `Hinweis: ${distinctUnits.length} verschiedene Einheiten (${distinctUnits.join(', ')}) teilen sich eine Achse — kleine Reihen können unsichtbar wirken.`
+        ? `Note: ${distinctUnits.length} different units (${distinctUnits.join(', ')}) share one axis — small series can look invisible.`
         : null,
       chartKey,
       option: {
@@ -297,9 +297,9 @@ export default function TimeseriesChart({
             ));
             if (sortedThresholds.length > 0) {
               lines.push(
-                '<span style="opacity:.72">Schwellen</span>',
+                '<span style="opacity:.72">Thresholds</span>',
                 ...sortedThresholds.map((level, index) => {
-                  const label = thresholdEntries[index]?.name ?? 'Schwelle';
+                  const label = thresholdEntries[index]?.name ?? 'Threshold';
                   const color = thresholdColor(index);
                   return `<span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:${color};margin-right:5px"></span>${label}: ${formatChartNumber(level)}`;
                 }),
@@ -398,7 +398,7 @@ export default function TimeseriesChart({
   if (!option) {
     return (
       <div className="h-[400px] flex items-center justify-center text-gray-500">
-        Keine Daten ausgewählt
+        No data selected
       </div>
     );
   }

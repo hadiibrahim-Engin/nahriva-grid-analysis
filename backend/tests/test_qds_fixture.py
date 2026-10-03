@@ -1,12 +1,11 @@
-"""The Mac fixture is persistent, complete, and never overwrites a real dataset."""
+"""The synthetic QDS fixture is complete, repeatable and never overwrites a real dataset."""
 
 from pathlib import Path
 import sys
 import pytest
 from app.simulation.store import ScenarioStore
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from seed_dummy_qds import create_dummy_database, STEPS
+from tests.qds_fixture import create_dummy_database, STEPS
 
 
 def test_dummy_qds_is_small_complete_and_idempotent(tmp_path):
@@ -18,7 +17,7 @@ def test_dummy_qds_is_small_complete_and_idempotent(tmp_path):
     assert store.db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] == 16
     assert (
         store.db.execute(
-            "SELECT COUNT(*) FROM analysis_samples WHERE run_id=(SELECT id FROM analysis_runs LIMIT 1) AND element_id='line-nord' AND metric_id='loading'"
+            "SELECT COUNT(*) FROM analysis_samples WHERE run_id=(SELECT id FROM analysis_runs LIMIT 1) AND element_id='line-north' AND metric_id='loading'"
         ).fetchone()[0]
         == STEPS
     )
@@ -34,5 +33,5 @@ def test_dummy_qds_is_small_complete_and_idempotent(tmp_path):
     # Treat an existing imported/real catalog as authoritative.
     store.publish_catalog({**store.catalog(), "dummy_qds_version": None})
     store.close()
-    with pytest.raises(ValueError, match="andere Ergebnisse"):
+    with pytest.raises(ValueError, match="other results"):
         create_dummy_database(path)

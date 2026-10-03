@@ -6,7 +6,6 @@ import math
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from statistics import fmean, pstdev, median
-from app.analysis.service import percentile
 from app.core.errors import (
     InvalidRequestError,
     ResourceNotFoundError,
@@ -22,6 +21,16 @@ METRIC_CODES = {
     "current": "I",
     "losses": "LOSS",
 }
+
+
+def percentile(values, probability):
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    lo = math.floor(position)
+    hi = math.ceil(position)
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (position - lo)
 
 
 def component_id(run_id, element_id):
@@ -41,11 +50,11 @@ def resolve(repo, identifier):
             raise ValueError()
     except (ValueError, TypeError, UnicodeError):
         raise InvalidRequestError(
-            "Ungültige Szenario-/Betriebsmittelkennung."
+            "Invalid scenario or equipment identifier."
         ) from None
     element = next((e for e in repo.elements(run_id) if e["id"] == element_id), None)
     if element is None:
-        raise ResourceNotFoundError("Betriebsmittel im Szenario nicht gefunden.")
+        raise ResourceNotFoundError("Equipment not found in the scenario.")
     return run_id, element
 
 
@@ -53,7 +62,7 @@ def parse_time(value):
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        raise InvalidRequestError("Ungültiger Zeitstempel.") from None
+        raise InvalidRequestError("Invalid timestamp.") from None
     return (
         parsed.replace(tzinfo=timezone.utc)
         if parsed.tzinfo is None
@@ -69,12 +78,12 @@ def dataset(repo, identifier, code, start=None, end=None):
     )
     if metric is None:
         raise ResourceNotFoundError(
-            "Diese Messgröße ist im Szenario nicht gespeichert."
+            "This measurement is not stored in the scenario."
         )
     begin = parse_time(start) if start else None
     finish = parse_time(end) if end else None
     if begin and finish and begin > finish:
-        raise InvalidRequestError("Der Beginn muss vor dem Ende liegen.")
+        raise InvalidRequestError("The start must be before the end.")
     conditions = ["run_id=?", "element_id=?", "metric_id=?"]
     params = [run_id, element["id"], metric["id"]]
     if begin:
@@ -129,7 +138,7 @@ def timeseries(
     if bucket is not None:
         if bucket <= 0 or method not in ("AVG", "MIN", "MAX", "SUM"):
             raise InvalidRequestError(
-                "Ungültiges Aggregationsintervall oder Verfahren."
+                "Invalid aggregation interval or method."
             )
         groups = defaultdict(list)
         for point in points:
@@ -176,15 +185,6 @@ def metric_analytics(
 ):
     base, points, rows = dataset(repo, identifier, code, start, end)
     values = [p["value"] for p in points]
-    if kind == "stats":
-        return {
-            **base,
-            "count": len(values),
-            "mean": fmean(values) if values else None,
-            "min": min(values) if values else None,
-            "max": max(values) if values else None,
-            "std_dev": pstdev(values) if values else None,
-        }
     if kind == "duration-curve":
         return {
             **base,
@@ -195,53 +195,25 @@ def metric_analytics(
             if values
             else [],
         }
-    if kind in ("heatmap", "daily-profile", "boxplot"):
-        groups = defaultdict(list)
+    if kind == "boxplot":
         if group_by not in ("hour", "weekday", "month", "weekday_weekend"):
-            raise InvalidRequestError("Ungültige Boxplot-Gruppierung.")
+            raise InvalidRequestError("Invalid boxplot grouping.")
+        groups = defaultdict(list)
         for point in points:
             time = parse_time(point["timestamp"])
-            if kind == "heatmap":
-                key = (time.weekday(), time.hour)
-            elif kind == "daily-profile":
-                key = (time.weekday() >= 5, time.hour)
-            else:
-                key = {
-                    "hour": time.hour,
-                    "weekday": time.weekday(),
-                    "month": time.month,
-                    "weekday_weekend": int(time.weekday() >= 5),
-                }[group_by]
+            key = {
+                "hour": time.hour,
+                "weekday": time.weekday(),
+                "month": time.month,
+                "weekday_weekend": int(time.weekday() >= 5),
+            }[group_by]
             groups[key].append(point["value"])
-        if kind == "heatmap":
-            return {
-                **base,
-                "data": [
-                    {"day_of_week": key[0], "hour": key[1], "value": fmean(v)}
-                    for key, v in sorted(groups.items())
-                ],
-            }
-        if kind == "daily-profile":
-            return {
-                **base,
-                **{
-                    label: [
-                        {"hour": hour, "value": fmean(v), "std_dev": pstdev(v)}
-                        for (is_weekend, hour), v in sorted(groups.items())
-                        if is_weekend == weekend
-                    ]
-                    for label, weekend in [
-                        ("weekday_avg", False),
-                        ("weekend_avg", True),
-                    ]
-                },
-            }
         return {
             **base,
             "group_by": group_by,
             "items": [
                 {
-                    "label": ("Wochenende" if key else "Werktag")
+                    "label": ("Weekend" if key else "Weekday")
                     if group_by == "weekday_weekend"
                     else str(key),
                     "min": min(v),
@@ -285,7 +257,7 @@ def metric_analytics(
                 key=lambda row: -row["minutes_above"],
             )[:10],
         }
-    raise ResourceNotFoundError("Diagrammtyp nicht unterstützt.")
+    raise ResourceNotFoundError("Chart type not supported.")
 
 
 def pearson(left, right):
@@ -309,9 +281,6 @@ def component_analytics(
     start=None,
     end=None,
     types=None,
-    type_x="P",
-    type_y="Q",
-    lag_minutes=0,
 ):
     run_id, element = resolve(repo, identifier)
     available = repo._all(
@@ -324,183 +293,27 @@ def component_analytics(
         return dataset(repo, identifier, code, start, end)[1] if code in codes else []
 
     base = {"component_name": element["name"]}
-    if kind == "dst-events":
-        # Simulation timestamps are UTC and have no DST gaps or duplicate hours.
-        return {**base, "events": []}
-    if kind == "voltage-band":
-        groups = defaultdict(list)
-        for p in series("U"):
-            t = parse_time(p["timestamp"])
-            groups[t.weekday() >= 5, t.hour].append(p["value"])
-        return {
-            **base,
-            "unit": codes.get("U", ""),
-            **{
-                name: [
-                    {
-                        "timestamp": f"2000-01-03T{hour:02}:00:00+00:00",
-                        "min": min(v),
-                        "mean": fmean(v),
-                        "max": max(v),
-                    }
-                    for (is_weekend, hour), v in sorted(groups.items())
-                    if is_weekend == weekend
-                ]
-                for name, weekend in [("weekday", False), ("weekend", True)]
-            },
-        }
-    if kind in ("correlation", "correlation-matrix"):
-        selected = types.split(",") if types else [type_x, type_y]
+    if kind == "correlation-matrix":
+        selected = types.split(",") if types else ["P", "Q"]
         if any(code not in codes for code in selected):
             raise ResourceNotFoundError(
-                "Benötigte Messgrößen sind im Ergebnis nicht vorhanden."
+                "The required measurements are not in the results."
             )
         lookup = {
             code: {p["timestamp"]: p["value"] for p in series(code)}
             for code in selected
         }
-        if kind == "correlation-matrix":
-            matrix = []
-            for a in selected:
-                row = []
-                for b in selected:
-                    keys = sorted(lookup[a].keys() & lookup[b].keys())
-                    row.append(
-                        pearson(
-                            [lookup[a][k] for k in keys], [lookup[b][k] for k in keys]
-                        )
-                    )
-                matrix.append(row)
-            return {
-                **base,
-                "types": selected,
-                "units": [codes[c] for c in selected],
-                "matrix": matrix,
-            }
-        shifted = {
-            (parse_time(t) - timedelta(minutes=lag_minutes)).isoformat(): v
-            for t, v in lookup[type_y].items()
-        }
-        keys = sorted(lookup[type_x].keys() & shifted.keys())
-        xs = [lookup[type_x][k] for k in keys]
-        ys = [shifted[k] for k in keys]
+        matrix = []
+        for a in selected:
+            row = []
+            for b in selected:
+                keys = sorted(lookup[a].keys() & lookup[b].keys())
+                row.append(pearson([lookup[a][k] for k in keys], [lookup[b][k] for k in keys]))
+            matrix.append(row)
         return {
             **base,
-            "type_x": type_x,
-            "type_y": type_y,
-            "unit_x": codes[type_x],
-            "unit_y": codes[type_y],
-            "correlation": pearson(xs, ys),
-            "lag_minutes": lag_minutes,
-            "interpretation": "Vergleich zeitlich identischer Simulationsergebnisse.",
-            "data": [{"x": x, "y": y} for x, y in zip(xs, ys)],
+            "types": selected,
+            "units": [codes[c] for c in selected],
+            "matrix": matrix,
         }
-    if kind == "power-factor":
-        p = {r["timestamp"]: r["value"] for r in series("P")}
-        q = {r["timestamp"]: r["value"] for r in series("Q")}
-        s = {r["timestamp"]: r["value"] for r in series("S")}
-        data = []
-        for t in sorted(p.keys() & q.keys()):
-            apparent = s.get(t, math.hypot(p[t], q[t]))
-            data.append(
-                {
-                    "timestamp": t,
-                    "p": p[t],
-                    "q": q[t],
-                    "s": apparent,
-                    "cos_phi": p[t] / apparent if apparent else None,
-                    "tan_phi": q[t] / p[t] if p[t] else None,
-                }
-            )
-        bins = [i / 20 for i in range(21)]
-        counts = [0] * 20
-        for r in data:
-            if r["cos_phi"] is not None:
-                counts[min(19, int(abs(r["cos_phi"]) * 20))] += 1
-        return {
-            **base,
-            "data": data,
-            "histogram_bins": bins,
-            "histogram_counts": counts,
-        }
-    if kind == "season-radar":
-        selected = types.split(",") if types else list(codes)
-        output = []
-        for code in selected:
-            groups = defaultdict(list)
-            for p in series(code):
-                groups[parse_time(p["timestamp"]).month].append(p["value"])
-            if any(not groups[m] for m in range(1, 13)):
-                raise ResourceNotFoundError(
-                    "Das Jahresprofil benötigt Simulationsergebnisse für alle zwölf Monate."
-                )
-            output.append(
-                {
-                    "measurement_type": code,
-                    "unit": codes.get(code, ""),
-                    "monthly_medians": [median(groups[m]) for m in range(1, 13)],
-                }
-            )
-        return {
-            **base,
-            "months": [
-                "Jan",
-                "Feb",
-                "Mär",
-                "Apr",
-                "Mai",
-                "Jun",
-                "Jul",
-                "Aug",
-                "Sep",
-                "Okt",
-                "Nov",
-                "Dez",
-            ],
-            "series": output,
-        }
-    if kind == "quality":
-        daily = []
-        gaps = []
-        for code in codes:
-            _, _, rows = dataset(repo, identifier, code, start, end)
-            step = native_step(rows)
-            grouped = defaultdict(list)
-            for r in rows:
-                grouped[r["timestamp"][:10]].append(r)
-            for day, items in sorted(grouped.items()):
-                valid = [
-                    r
-                    for r in items
-                    if r["value"] is not None and r["status"] != "failed"
-                ]
-                span = (
-                    parse_time(items[-1]["timestamp"])
-                    - parse_time(items[0]["timestamp"])
-                ).total_seconds()
-                expected = round(span / step) + 1 if step else len(items)
-                daily.append(
-                    {
-                        "day": day,
-                        "measurement_type": code,
-                        "count": len(valid),
-                        "expected": expected,
-                        "missing_pct": max(0, 1 - len(valid) / expected) * 100
-                        if expected
-                        else 0,
-                    }
-                )
-                hours = defaultdict(int)
-                for r in valid:
-                    hours[parse_time(r["timestamp"]).hour] += 1
-                gaps.extend(
-                    {"day": day, "hour": h, "measurement_type": code, "count": hours[h]}
-                    for h in range(24)
-                )
-        return {
-            **base,
-            "measurement_types": list(codes),
-            "daily_counts": daily,
-            "gap_heatmap": gaps,
-        }
-    raise ResourceNotFoundError("Diagrammtyp nicht unterstützt.")
+    raise ResourceNotFoundError("Chart type not supported.")

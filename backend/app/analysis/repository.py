@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 from threading import RLock
 from app.analysis.models import RunBundle
-from app.core.errors import InvalidRequestError, ResourceNotFoundError
+from app.core.errors import ResourceNotFoundError
 
 
 class AnalysisRepository:
@@ -79,7 +79,7 @@ class AnalysisRepository:
     def run(self, run_id):
         rows = [r for r in self.runs() if r["id"] == run_id]
         if not rows:
-            raise ResourceNotFoundError("Simulation Run nicht gefunden.")
+            raise ResourceNotFoundError("Simulation run not found.")
         return rows[0]
 
     def elements(self, run_id):
@@ -95,32 +95,3 @@ class AnalysisRepository:
             "SELECT id,name,unit,lower,upper FROM analysis_metrics WHERE run_id=? ORDER BY id",
             (run_id,),
         )
-
-    def samples(self, run_id, metric_id, ids, start=None, end=None):
-        if not ids:
-            return []
-        if len(ids) > 500:
-            raise InvalidRequestError(
-                "Maximal 500 Elemente pro Analyse; Elementfilter eingrenzen."
-            )
-        where = [
-            "run_id=?",
-            "metric_id=?",
-            f"element_id IN ({','.join('?' for _ in ids)})",
-        ]
-        params = [run_id, metric_id, *ids]
-        for op, value in ((">=", start), ("<=", end)):
-            if value:
-                where.append(f"timestamp {op} ?")
-                params.append(value.isoformat())
-        rows = self._all(
-            "SELECT timestamp,element_id,value,status FROM analysis_samples WHERE "
-            + " AND ".join(where)
-            + " ORDER BY timestamp,element_id LIMIT 100001",
-            params,
-        )
-        if len(rows) > 100000:
-            raise InvalidRequestError(
-                "Mehr als 100.000 Messpunkte. Zeitraum oder Elementauswahl eingrenzen; keine stille Verdichtung."
-            )
-        return rows

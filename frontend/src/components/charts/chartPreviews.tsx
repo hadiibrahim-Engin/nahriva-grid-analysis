@@ -116,33 +116,6 @@ function HistogramPreview() {
   );
 }
 
-function HeatmapPreview() {
-  // 7 cols (days) × 6 rows (time blocks)
-  const cw = 22; const ch = 8; const gx = 2; const gy = 2;
-  const ox = 7; const oy = 5;
-  const heat = [
-    [0.15,0.20,0.30,0.40,0.30,0.15,0.08],
-    [0.40,0.55,0.65,0.75,0.65,0.40,0.20],
-    [0.85,0.90,0.80,0.90,0.85,0.60,0.30],
-    [0.70,0.80,0.95,1.00,0.90,0.70,0.40],
-    [0.45,0.60,0.70,0.80,0.60,0.40,0.20],
-    [0.15,0.20,0.30,0.45,0.25,0.15,0.08],
-  ];
-  return (
-    <C>
-      {heat.map((row, ri) =>
-        row.map((v, ci) => (
-          <rect key={`${ri}-${ci}`}
-            x={ox + ci * (cw + gx)} y={oy + ri * (ch + gy)}
-            width={cw} height={ch} rx="1.5"
-            fill={P} fillOpacity={0.08 + v * 0.87}
-          />
-        ))
-      )}
-    </C>
-  );
-}
-
 function DurationCurvePreview() {
   const pts = '5,10 18,14 30,18 45,24 60,31 75,38 90,44 108,50 125,54 145,57 162,60 175,61';
   return (
@@ -160,26 +133,7 @@ function DurationCurvePreview() {
   );
 }
 
-function DailyProfilePreview() {
-  // 24-hour profiles — Weekday peaks harder at midday; weekend peaks later + lower
-  const weekday =
-    '5,52 12,48 19,40 26,30 33,22 40,16 47,14 54,13 61,14 68,16 75,18 82,20 '+
-    '89,18 96,16 103,18 110,22 117,28 124,34 131,40 138,44 145,47 152,50 159,51 175,52';
-  const weekend =
-    '5,56 12,54 19,52 26,50 33,46 40,42 47,38 54,34 61,31 68,30 75,30 82,32 '+
-    '89,34 96,36 103,38 110,40 117,42 124,46 131,50 138,53 145,55 152,56 159,57 175,57';
-  return (
-    <C>
-      <GridLines ys={[18, 38, 56]} />
-      {/* Weekend (amber) */}
-      <polyline points={weekend} stroke={AMBER} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      {/* Weekday (primary) */}
-      <polyline points={weekday} stroke={P} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </C>
-  );
-}
-
-function PeakDemandPreview() {
+function BarsPreview() {
   // 8 periods; index 3 is the highlighted peak
   const heights = [38, 45, 52, 62, 56, 48, 42, 35];
   const bw = 15; const gap = 5; const ox = 10; const bot = 62;
@@ -314,29 +268,6 @@ function BoxplotPreview() {
   );
 }
 
-function PowerFactorPreview() {
-  // cos φ oscillating just below a reference line (pf = 1)
-  const line =
-    '5,28 16,24 27,20 38,24 49,30 60,26 71,22 82,26 93,30 104,26 115,22 126,26 137,30 148,26 159,22 170,26';
-  return (
-    <C>
-      <GridLines ys={[18, 36, 54]} />
-      {/* Reference cos φ = 1 */}
-      <line x1="5" y1="18" x2="175" y2="18"
-        stroke={AMBER} strokeWidth="1.3" strokeDasharray="5 3" strokeOpacity="0.85" />
-      {/* Reactive-loss band */}
-      <path
-        d={'M 5,28 16,24 27,20 38,24 49,30 60,26 71,22 82,26 93,30 104,26 115,22 126,26 137,30 148,26 159,22 170,26 L170,18 5,18 Z'}
-        fill={AMBER} fillOpacity="0.10"
-      />
-      {/* cos φ line */}
-      <polyline points={line} stroke={P} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      {/* Area under pf line */}
-      <path d={`M ${line} L170,62 L5,62 Z`} fill={P} fillOpacity={PF} />
-    </C>
-  );
-}
-
 function ExceedancePreview() {
   const pts = '5,57 25,52 45,42 65,32 85,20 105,26 125,36 145,46 165,54 175,57';
   const thresh = 33;
@@ -359,176 +290,38 @@ function ExceedancePreview() {
   );
 }
 
-function QualityPreview() {
-  // Day-hour heatmap with scattered grey "missing" cells
-  const cw = 22; const ch = 8; const gx = 2; const gy = 2;
-  const ox = 7; const oy = 5;
-  // 1 = data present, 0 = missing
-  const grid = [
-    [1, 1, 0, 1, 1, 1, 1],
-    [1, 1, 1, 0, 1, 1, 0],
-    [0, 1, 1, 1, 1, 0, 1],
-    [1, 1, 1, 0, 1, 1, 1],
-    [1, 0, 1, 1, 0, 1, 1],
-    [1, 1, 1, 1, 1, 1, 0],
-  ];
-  return (
-    <C>
-      {grid.map((row, ri) =>
-        row.map((v, ci) => (
-          <rect key={`${ri}-${ci}`}
-            x={ox + ci * (cw + gx)} y={oy + ri * (ch + gy)}
-            width={cw} height={ch} rx="1.5"
-            fill={v ? P : MUTED} fillOpacity={v ? 0.65 : 0.10}
-          />
-        ))
-      )}
-    </C>
-  );
-}
-
-function DstPreview() {
-  // 24 hour bars; bar 2 is missing (spring gap), bar 3 is amber (flagged)
-  const rawH = [
-    12, 10, /* gap */ 0, 18, 24, 32, 40, 44, 46, 44, 42, 40,
-    38, 36, 34, 32, 34, 38, 42, 40, 34, 26, 20, 14,
-  ];
-  const bw = 5; const gap = 1.5; const ox = 7; const bot = 60;
-  return (
-    <C>
-      <GridLines ys={[20, 40, 58]} />
-      {rawH.map((h, i) => {
-        if (h === 0) return null;
-        const isGap   = i === 3;  // hour that's flagged amber
-        const isMiss  = i === 2;  // hour that's absent (spring forward)
-        return (
-          <rect key={i}
-            x={ox + i * (bw + gap)} y={bot - h} width={bw} height={h}
-            rx="0.8"
-            fill={isGap || isMiss ? AMBER : P}
-            fillOpacity={isGap || isMiss ? 0.85 : 0.70}
-          />
-        );
-      })}
-      {/* Gap annotation line */}
-      <line
-        x1={ox + 2 * (bw + gap) + bw / 2} y1="14"
-        x2={ox + 2 * (bw + gap) + bw / 2} y2={bot}
-        stroke={RED} strokeWidth="0.9" strokeDasharray="2 2" strokeOpacity="0.7"
-      />
-    </C>
-  );
-}
-
-function SeasonRadarPreview() {
-  const cx = 90; const cy = 32; const r = 26;
-  const n = 12;
-  // Monthly values — higher in summer, lower in winter
-  const vals = [0.48, 0.42, 0.52, 0.66, 0.78, 0.90, 1.00, 0.94, 0.80, 0.64, 0.50, 0.44];
-  const angles = Array.from({ length: n }, (_, i) => (i / n) * Math.PI * 2 - Math.PI / 2);
-
-  const toXY = (i: number, scale = 1) => ({
-    x: cx + Math.cos(angles[i]) * r * scale,
-    y: cy + Math.sin(angles[i]) * r * scale,
-  });
-
-  const outerRing = angles.map((a) => `${cx + Math.cos(a) * r},${cy + Math.sin(a) * r}`).join(' ');
-  const midRing   = angles.map((a) => `${cx + Math.cos(a) * r * 0.6},${cy + Math.sin(a) * r * 0.6}`).join(' ');
-  const dataPath  = vals.map((v, i) => {
-    const { x, y } = toXY(i, v);
-    return `${x},${y}`;
-  }).join(' ');
-
-  return (
-    <C>
-      {/* Background rings */}
-      <polygon points={outerRing} fill="none" stroke={MUTED} strokeOpacity="0.12" strokeWidth="0.8" />
-      <polygon points={midRing}   fill="none" stroke={MUTED} strokeOpacity="0.10" strokeWidth="0.7" />
-      {/* Spokes */}
-      {angles.map((a, i) => (
-        <line key={i}
-          x1={cx} y1={cy}
-          x2={cx + Math.cos(a) * r} y2={cy + Math.sin(a) * r}
-          stroke={MUTED} strokeOpacity="0.10" strokeWidth="0.6"
-        />
-      ))}
-      {/* Data polygon */}
-      <polygon points={dataPath} fill={P} fillOpacity="0.22" stroke={P} strokeWidth="1.6" strokeLinejoin="round" />
-      {/* Data point dots */}
-      {vals.map((v, i) => {
-        const { x, y } = toXY(i, v);
-        return <circle key={i} cx={x} cy={y} r="1.8" fill={P} />;
-      })}
-    </C>
-  );
-}
-
-function ComingSoonPreview() {
-  return (
-    <C>
-      {/* Muted placeholder bars */}
-      {([28, 42, 36, 52, 30, 44] as number[]).map((h, i) => (
-        <rect key={i}
-          x={12 + i * 28} y={62 - h} width={18} height={h}
-          rx="2" fill={MUTED} fillOpacity="0.08"
-        />
-      ))}
-      {/* Lock icon */}
-      <rect x="74" y="20" width="32" height="24" rx="4"
-        fill={MUTED} fillOpacity="0.10" stroke={MUTED} strokeOpacity="0.18" strokeWidth="1" />
-      <path d="M80,20 C80,12 100,12 100,20"
-        fill="none" stroke={MUTED} strokeOpacity="0.18" strokeWidth="1.8" strokeLinecap="round" />
-      <circle cx="90" cy="32" r="3" fill={MUTED} fillOpacity="0.22" />
-    </C>
-  );
-}
-
 // -- Registry ------------------------------------------------------------------
 
 type PreviewFn = () => React.JSX.Element;
 
 const PREVIEW_MAP: Record<ChartKind, PreviewFn> = {
-  acrossLoading:      PeakDemandPreview,
+  acrossLoading:      BarsPreview,
   acrossTime:         ExceedancePreview,
-  acrossDelta:        PeakDemandPreview,
+  acrossDelta:        BarsPreview,
   acrossLodf:         CorrelationScatterPreview,
-  acrossVoltage:      PeakDemandPreview,
-  acrossVoltageDelta: PeakDemandPreview,
+  acrossVoltage:      BarsPreview,
+  acrossVoltageDelta: BarsPreview,
   overlay:            OverlayPreview,
   aggTrend:           AggTrendPreview,
   histogram:          HistogramPreview,
-  heatmap:            HeatmapPreview,
   durationCurve:      DurationCurvePreview,
-  dailyProfile:       DailyProfilePreview,
-  peakDemand:         PeakDemandPreview,
   correlationScatter: CorrelationScatterPreview,
   correlationScatter3: CorrelationScatterPreview,
   correlationScatter3d: CorrelationScatter3DPreview,
   correlationMatrix:  CorrelationMatrixPreview,
   boxplot:            BoxplotPreview,
-  powerFactor:        PowerFactorPreview,
   exceedance:         ExceedancePreview,
-  quality:            QualityPreview,
-  dst:                DstPreview,
-  seasonRadar:        SeasonRadarPreview,
-  // Client-side derived charts — reuse the visually-closest existing preview.
-  pqQuadrant:         CorrelationScatterPreview,
-  quScatter:          CorrelationScatterPreview,
-  energyIntegral:     AggTrendPreview,
-  lossesEfficiency:   OverlayPreview,
-  assetLoading:       AggTrendPreview,
-  overloadDuration:   DurationCurvePreview,
+  // Client-side derived charts reuse the visually closest preview.
   rollingEnvelope:    AggTrendPreview,
   thresholdBands:     ExceedancePreview,
   anomalyScore:       ExceedancePreview,
   voltageCompliance:  ExceedancePreview,
-  comingSoon:         ComingSoonPreview,
 };
 
 // -- Public component ----------------------------------------------------------
 
 export function ChartPreview({ kind }: { kind: ChartKind }) {
-  const Render = PREVIEW_MAP[kind] ?? ComingSoonPreview;
+  const Render = PREVIEW_MAP[kind];
   return (
     <div
       className="mb-2.5 w-full overflow-hidden rounded-md"

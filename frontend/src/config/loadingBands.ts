@@ -8,13 +8,13 @@ export type BandId = 'ok' | 'high' | 'light' | 'clear' | 'severe';
 
 /** Upper limits in % loading. A value is classified by the first limit it does not exceed. */
 export const LOADING_LIMITS = {
-  /** below: unkritisch */
+  /** below: uncritical */
   warning: 80,
-  /** up to and including: Warnbereich; above: Überlastung */
+  /** up to and including: warning range; above: overload */
   overload: 100,
-  /** up to and including: leichte Überlastung */
+  /** up to and including: light overload */
   clear: 110,
-  /** up to and including: deutliche Überlastung; above: starke Überlastung */
+  /** up to and including: clear overload; above: strong overload */
   severe: 120,
 } as const;
 
@@ -27,11 +27,11 @@ export interface LoadingBand {
 
 const L = LOADING_LIMITS;
 export const LOADING_BANDS: readonly LoadingBand[] = [
-  { id: 'ok', label: 'Unkritisch', range: `< ${L.warning} %` },
-  { id: 'high', label: 'Hohe Auslastung', range: `${L.warning}–${L.overload} %` },
-  { id: 'light', label: 'Leichte Überlastung', range: `${L.overload}–${L.clear} %` },
-  { id: 'clear', label: 'Deutliche Überlastung', range: `${L.clear}–${L.severe} %` },
-  { id: 'severe', label: 'Starke Überlastung', range: `> ${L.severe} %` },
+  { id: 'ok', label: 'Uncritical', range: `< ${L.warning} %` },
+  { id: 'high', label: 'High loading', range: `${L.warning}–${L.overload} %` },
+  { id: 'light', label: 'Light overload', range: `${L.overload}–${L.clear} %` },
+  { id: 'clear', label: 'Clear overload', range: `${L.clear}–${L.severe} %` },
+  { id: 'severe', label: 'Strong overload', range: `> ${L.severe} %` },
 ];
 
 export const BAND_ORDER: readonly BandId[] = LOADING_BANDS.map((band) => band.id);
@@ -71,7 +71,7 @@ export const ANALYSIS = {
   spreadIndependentPp: 5,
   /** Lines shown in the heatmap before the user asks for more. */
   heatmapDefaultRows: 12,
-  /** Weights of the "Auffälligkeit" ranking used for heatmap selection and default table order. */
+  /** Weights of the "conspicuousness" ranking used for heatmap selection and default table order. */
   priorityWeights: {
     maxExcess: 3,
     sumExcess: 1,

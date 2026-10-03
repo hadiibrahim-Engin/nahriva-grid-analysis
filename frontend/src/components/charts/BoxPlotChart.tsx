@@ -67,7 +67,7 @@ export default function BoxPlotChart({ data, ...yScale }: Props & YAxisScaleProp
     signals: [data.component_name],
   });
   if (data.items.length === 0) {
-    return <div className="h-[350px] flex items-center justify-center text-gray-500">Keine Daten</div>;
+    return <div className="h-[350px] flex items-center justify-center text-gray-500">No data</div>;
   }
 
   const categories = data.items.map((item) => item.label);

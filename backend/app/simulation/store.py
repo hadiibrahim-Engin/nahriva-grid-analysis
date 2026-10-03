@@ -60,9 +60,6 @@ class ScenarioStore:
                 scenario_id TEXT PRIMARY KEY REFERENCES pf_scenarios(id),
                 payload TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS ui_shares (
-                id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS pf_element_limits (
                 run_id TEXT NOT NULL, element_id TEXT NOT NULL, metric_id TEXT NOT NULL,
                 lower REAL, upper REAL, PRIMARY KEY(run_id,element_id,metric_id),
@@ -116,7 +113,7 @@ class ScenarioStore:
             if self.db.execute(
                 "SELECT 1 FROM pf_jobs WHERE status IN ('queued','running')"
             ).fetchone():
-                raise ValueError("Es ist bereits ein PowerFactory-Auftrag offen.")
+                raise ValueError("A PowerFactory job is already open.")
             self.db.execute(
                 "INSERT INTO pf_jobs(id,kind,payload,status,created_at) VALUES(?,?,?,'queued',?)",
                 (job_id, kind, json.dumps(payload), now()),

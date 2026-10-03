@@ -13,19 +13,9 @@ _lock = RLock()
 
 def get_repository():
     with _lock:
-        path = (
-            ":memory:"
-            if settings.ANALYSIS_MODE == "demo"
-            else str(Path(settings.ANALYSIS_DB_PATH).expanduser().resolve())
-        )
+        path = str(Path(settings.ANALYSIS_DB_PATH).expanduser().resolve())
         if path not in _repositories:
-            repo = AnalysisRepository(path)
-            if path == ":memory:":
-                from app.analysis.seed import demo_bundles
-
-                for bundle in demo_bundles():
-                    repo.import_bundle(bundle)
-            _repositories[path] = repo
+            _repositories[path] = AnalysisRepository(path)
         return _repositories[path]
 
 
@@ -34,7 +24,7 @@ def select_database(value):
     path = Path(value).expanduser()
     if not path.is_absolute() or not path.is_file():
         raise ValueError(
-            "Bitte den absoluten Pfad einer vorhandenen Ergebnisdatenbank angeben."
+            "Please enter the absolute path of an existing results database."
         )
     path = path.resolve()
     try:
@@ -59,15 +49,15 @@ def select_database(value):
             }
             if not required.issubset(tables):
                 raise ValueError(
-                    "Die Datei ist keine Outage-Assessment-Ergebnisdatenbank."
+                    "The file is not an Outage Assessment results database."
                 )
             if (
                 db.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
                 != 1
             ):
-                raise ValueError("Die Datenbankversion wird nicht unterstützt.")
+                raise ValueError("The database version is not supported.")
             if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-                raise ValueError("Die SQLite-Datenbank ist beschädigt.")
+                raise ValueError("The SQLite database is corrupt.")
             db.execute(
                 "SELECT run_id, element_id, metric_id, timestamp, value, status FROM analysis_samples LIMIT 0"
             )
@@ -81,7 +71,7 @@ def select_database(value):
             settings.ANALYSIS_MODE = "sqlite"
     except (sqlite3.Error, OSError, RuntimeError) as exc:
         raise ValueError(
-            "Die Ergebnisdatenbank konnte nicht geöffnet werden: " + str(exc)
+            "The results database could not be opened: " + str(exc)
         ) from exc
     return str(path)
 

@@ -22,8 +22,8 @@ import appconfig  # noqa: E402
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--db", type=Path, help="Ergebnisdatenbank (sonst aus der Konfiguration)")
-    parser.add_argument("--host", help="0.0.0.0 = im Netz erreichbar, 127.0.0.1 = nur dieser PC")
+    parser.add_argument("--db", type=Path, help="results database (otherwise from the configuration)")
+    parser.add_argument("--host", help="0.0.0.0 = reachable from the network (firewall rule needed), 127.0.0.1 = this PC only")
     parser.add_argument("--port", type=int)
     args = parser.parse_args(argv)
 
@@ -47,12 +47,12 @@ def main(argv=None):
 
     ScenarioStore(str(database)).close()
     if not (ROOT / "frontend/dist/index.html").is_file():
-        raise SystemExit("Frontend-Build fehlt (frontend/dist). Das Release-Paket enthält ihn bereits.")
+        raise SystemExit("Frontend build is missing (frontend/dist). The release package already contains it.")
 
     import uvicorn
 
     logging.getLogger("outage-assessment").info(
-        "Dashboard auf %s:%s, Datenbank %s, %s", host, port, database, "Nur-Lese-Betrieb im Netz" if production else "nur dieser PC"
+        "Dashboard on %s:%s, database %s, %s", host, port, database, "read-only in the network" if production else "this PC only"
     )
     uvicorn.run("app.main:app", host=host, port=port, log_config=None, access_log=False)
 

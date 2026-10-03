@@ -70,7 +70,7 @@ export function mergeCells(index: AcrossIndex, parts: Record<string, CellsPayloa
       bus.cells[scenario.id] = item.cell;
     }
   }
-  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'de');
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'en');
   return {
     scenarios,
     lines: [...lines.values()].sort(byName),

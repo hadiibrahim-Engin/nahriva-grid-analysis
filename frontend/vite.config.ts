@@ -26,12 +26,6 @@ export default defineConfig(({ mode }) => {
           codeSplitting: {
             groups: [
               {
-                name: "map-vendor",
-                test: /node_modules[\\/](maplibre-gl)[\\/]/,
-                priority: 40,
-                maxSize: 500_000,
-              },
-              {
                 name: "echarts-vendor",
                 test: /node_modules[\\/](echarts|zrender)[\\/]/,
                 priority: 30,

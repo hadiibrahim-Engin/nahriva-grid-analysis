@@ -5,7 +5,7 @@
  * before rendering and capping the visible list. For lists in the
  * tens-of-thousands range, swap the inner list for react-window.
  *
- * Used by the dashboard for Anlage, Betriebsmittel, Messgröße, and the
+ * Used by the dashboard for scenario, equipment, measurement, and the
  * histogram series selector. The contract is intentionally narrow
  * (id/label/onChange) so the component is easy to repurpose.
  */
@@ -46,12 +46,12 @@ export default function SearchableDropdown<T>({
   searchOf,
   value,
   onChange,
-  placeholder = '- Auswahl -',
+  placeholder = '- Selection -',
   disabled = false,
   loading = false,
-  loadingLabel = 'Lädt…',
+  loadingLabel = 'Loading…',
   maxVisible = 200,
-  emptyHint = 'Keine Treffer',
+  emptyHint = 'No matches',
   allowReset = true,
   className = '',
 }: Props<T>) {
@@ -190,9 +190,9 @@ export default function SearchableDropdown<T>({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
-                placeholder="Suchen…"
+                placeholder="Search…"
                 className="grid-form-input"
-                aria-label={`${label} Suche`}
+                aria-label={`${label} search`}
                 role="combobox"
                 aria-expanded="true"
                 aria-controls={listboxId}
@@ -207,7 +207,7 @@ export default function SearchableDropdown<T>({
                   onClick={() => { onChange(null); setOpen(false); setQuery(''); }}
                   className="grid-form-option grid-form-option--reset"
                 >
-                  Auswahl zurücksetzen
+                  Reset selection
                 </button>
               )}
               {visible.length === 0 ? (
@@ -231,7 +231,7 @@ export default function SearchableDropdown<T>({
               )}
               {overflow > 0 && (
                 <div className="px-2 py-1 text-[11px] text-gray-500 border-t border-gray-700/60">
-                  {overflow.toLocaleString()} weitere – grenze die Suche ein
+                  {overflow.toLocaleString()} more – narrow down the search
                 </div>
               )}
             </div>

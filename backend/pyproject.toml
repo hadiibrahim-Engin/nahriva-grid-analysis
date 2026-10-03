@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nahriva-grid-analysis-backend"
 version = "1.0.0"
-description = "Nahriva Grid Analysis — PowerFactory planned-outage scenarios and simulation results"
+description = "Outage Assessment — PowerFactory planned-outage scenarios and simulation results"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.12,<1",

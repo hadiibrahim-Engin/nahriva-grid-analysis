@@ -42,8 +42,12 @@ def branches(app):
     found = []
     for class_name in FLOW_ATTRIBUTES:
         for item in engine._as_objects(app.GetCalcRelevantObjects("*." + class_name)):
-            if engine.element_in_scope(item):
-                found.append(item)
+            if not engine.element_in_scope(item):
+                continue
+            known, state = engine._read_setting(item, "outserv")
+            if known and engine.finite_number(state) == 1:
+                continue  # already out of service in the study case: no flow, nothing to compare
+            found.append(item)
     return found
 
 
@@ -117,10 +121,12 @@ def calculate(app, scenarios, element_id):
                 if not found or engine.finite_number(state) not in (0, 1):
                     raise LodfError("Cannot read outserv of " + engine.object_name(branch))
                 switched.append((branch, state))
-            for branch, _state in switched:
-                if not engine._set_scalar_attribute(branch, "outserv", 1):
-                    raise LodfError("Could not switch off " + engine.object_name(branch))
             try:
+                # Switching off sits inside the block that restores: if the second branch refuses,
+                # the first one is put back as well.
+                for branch, _state in switched:
+                    if not engine._set_scalar_attribute(branch, "outserv", 1):
+                        raise LodfError("Could not switch off " + engine.object_name(branch))
                 after = _flows(ldf, [b for b in monitored if b not in equipment])
             finally:
                 for branch, state in switched:

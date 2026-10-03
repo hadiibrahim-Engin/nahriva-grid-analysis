@@ -4,12 +4,12 @@ import { SUMMARY_IDS, fmtLodf, fmtPct, fmtPp, type ScenarioStats } from '../../u
 import { ScenarioTag, SectionCard } from './shared';
 
 const time = (value: number | null) =>
-  value === null ? '–' : new Date(value * 1000).toLocaleString('de-DE', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' });
+  value === null ? '–' : new Date(value * 1000).toLocaleString('en-GB', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' });
 
 const duration = (start: number | null, end: number | null) => {
   if (start === null || end === null || end < start) return '–';
   const hours = (end - start) / 3600;
-  return hours >= 48 ? `${(hours / 24).toLocaleString('de-DE', { maximumFractionDigits: 1 })} Tage` : `${hours.toLocaleString('de-DE', { maximumFractionDigits: 1 })} h`;
+  return hours >= 48 ? `${(hours / 24).toLocaleString('en-GB', { maximumFractionDigits: 1 })} days` : `${hours.toLocaleString('en-GB', { maximumFractionDigits: 1 })} h`;
 };
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -33,11 +33,11 @@ export default function ScenarioDetails({ scenarios, selectedId, onSelect }: Pro
       collapsible
       defaultOpen={false}
       id={SUMMARY_IDS.details}
-      title="Szenariodetails"
-      summary={`${current.code} · ${scenario.name} – Kennzahlen und Freischaltungen. Zum Aufklappen klicken.`}
-      hint="Kennzahlen des gewählten Szenarios über alle Leitungen in Betrieb."
+      title="Scenario details"
+      summary={`${current.code} · ${scenario.name} – key figures and outages. Click to expand.`}
+      hint="Key figures of the chosen scenario over all lines in service."
       actions={
-        <div className="ab-chips" role="group" aria-label="Szenario wählen">
+        <div className="ab-chips" role="group" aria-label="Choose scenario">
           {scenarios.map((s) => (
             <button key={s.scenario.id} type="button" className="ab-chip" aria-pressed={s.scenario.id === current.scenario.id} title={s.scenario.name} onClick={() => onSelect(s.scenario.id)}>
               {s.code}
@@ -47,14 +47,14 @@ export default function ScenarioDetails({ scenarios, selectedId, onSelect }: Pro
       }
     >
       <div className="grid gap-5 lg:grid-cols-2">
-        <table className="ab-kv" aria-label="Kennzahlen des Szenarios">
+        <table className="ab-kv" aria-label="Scenario key figures">
           <tbody>
-            <Row label="Szenario"><ScenarioTag code={current.code} scenario={scenario} /> <span className="ab-kv__sub">{scenario.name}</span></Row>
-            <Row label="Freigeschaltetes Element">{equipment.length > 0 ? equipment.join(', ') : '–'}</Row>
+            <Row label="Scenario"><ScenarioTag code={current.code} scenario={scenario} /> <span className="ab-kv__sub">{scenario.name}</span></Row>
+            <Row label="Switched-off element">{equipment.length > 0 ? equipment.join(', ') : '–'}</Row>
             <Row label="Max Loading">
               {current.maxValue === null ? '–' : <strong className={`ab-text--${maxBand}`}>{fmtPct(current.maxValue)}</strong>}
             </Row>
-            <Row label="Kritischste Leitung">{current.maxLine?.name ?? '–'}</Row>
+            <Row label="Most critical line">{current.maxLine?.name ?? '–'}</Row>
             <Row label="Lines > 100 %">{current.n100}</Row>
             <Row label="Lines > 110 %">{current.n110}</Row>
             <Row label="Lines > 120 %">{current.n120}</Row>
@@ -62,19 +62,19 @@ export default function ScenarioDetails({ scenarios, selectedId, onSelect }: Pro
               {current.maxDelta === null ? '–' : <>{fmtPp(current.maxDelta)}<span className="ab-kv__sub">{current.maxDeltaLine?.name}</span></>}
             </Row>
             <Row label="Max |LODF|">
-              {current.maxAbsLodf === null ? <span className="ab-kv__sub" style={{ marginLeft: 0 }}>nicht berechnet</span> : <>{fmtLodf(current.maxAbsLodf)}<span className="ab-kv__sub">{current.maxLodfLine?.name}</span></>}
+              {current.maxAbsLodf === null ? <span className="ab-kv__sub" style={{ marginLeft: 0 }}>not calculated</span> : <>{fmtLodf(current.maxAbsLodf)}<span className="ab-kv__sub">{current.maxLodfLine?.name}</span></>}
             </Row>
-            <Row label="Leitungen in Betrieb">{current.total}</Row>
+            <Row label="Lines in service">{current.total}</Row>
           </tbody>
         </table>
         <div className="min-w-0">
           <div className="ab-scroll">
-            <table className="ab-table" aria-label="Freischaltungen des Szenarios">
+            <table className="ab-table" aria-label="Outages of the scenario">
               <thead>
-                <tr><th scope="col">Ausfall</th><th scope="col">Betriebsmittel</th><th scope="col">Beginn (UTC)</th><th scope="col">Ende (UTC)</th><th scope="col">Dauer</th></tr>
+                <tr><th scope="col">Outage</th><th scope="col">Equipment</th><th scope="col">Start (UTC)</th><th scope="col">End (UTC)</th><th scope="col">Duration</th></tr>
               </thead>
               <tbody>
-                {scenario.outages.length === 0 && <tr><td colSpan={5}>Keine Ausfalldaten gespeichert.</td></tr>}
+                {scenario.outages.length === 0 && <tr><td colSpan={5}>No outage data saved.</td></tr>}
                 {scenario.outages.map((o) => (
                   <tr key={o.id}>
                     <td>{o.name}</td>

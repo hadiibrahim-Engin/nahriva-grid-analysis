@@ -22,8 +22,8 @@ import { useChartTheme } from '../../hooks/useChartTheme';
 echarts.use([ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, CanvasRenderer]);
 
 const MTYPE_LABELS: Record<string, string> = {
-  P: 'Wirkleistung', Q: 'Blindleistung', S: 'Scheinleistung',
-  U: 'Spannung', I: 'Strom', loading: 'Auslastung',
+  P: 'Active power', Q: 'Reactive power', S: 'Apparent power',
+  U: 'Voltage', I: 'Current', loading: 'Loading',
 };
 
 type CorrelationDataWithLabels = (CorrelationScatterData | CorrelationScatterData3) & {
@@ -49,10 +49,10 @@ export default function CorrelationChart({ data, ...yScale }: Props & YAxisScale
   const zValues = withZ ? data.data.map((p) => p.z) : [];
 
   const direction = Math.abs(data.correlation) > 0.7
-    ? 'Starke'
+    ? 'Strong'
     : Math.abs(data.correlation) > 0.4
-      ? 'Mittlere'
-      : 'Schwache';
+      ? 'Moderate'
+      : 'Weak';
   const method = data.method ?? 'pearson';
   const methodSymbol = CORRELATION_METHOD_SYMBOLS[method];
 
@@ -81,7 +81,7 @@ export default function CorrelationChart({ data, ...yScale }: Props & YAxisScale
             orient: 'horizontal' as const,
             left: 'center' as const,
             top: 0,
-            text: [`${labelZ} (${data.unit_z}) hoch`, 'niedrig'],
+            text: [`${labelZ} (${data.unit_z}) high`, 'low'],
             textStyle: { color: theme.mutedText },
             inRange: { color: [theme.primary, theme.warning] },
           },
@@ -163,7 +163,7 @@ export default function CorrelationChart({ data, ...yScale }: Props & YAxisScale
         style={{ color: theme.mutedText }}
       >
         <span className="font-semibold" style={{ color: theme.text }}>{methodSymbol} = {data.correlation.toFixed(2)}</span>
-        <span className="ml-1">({direction.toLowerCase()} Korrelation, {CORRELATION_METHOD_LABELS[method]})</span>
+        <span className="ml-1">({direction.toLowerCase()} correlation, {CORRELATION_METHOD_LABELS[method]})</span>
       </div>
       <ReactECharts
         echarts={echarts}

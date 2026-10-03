@@ -1,9 +1,10 @@
 /**
- * Outage (Freischaltung) assessment: which violations the outage causes, and a
+ * Outage (Outage) assessment: which violations the outage causes, and a
  * verdict per scenario. Pure functions on the read-only across-scenarios payload.
  */
 import { LOADING_LIMITS } from '../config/loadingBands.ts';
 import { ASSESSMENT, type Verdict } from '../config/assessment.ts';
+import { formatVoltage, isPerUnit } from './voltage.ts';
 import type { AcrossBus, AcrossBusCell, AcrossCell, AcrossLine, AcrossScenario } from './acrossScenarios.ts';
 
 // -- Equipment kinds -----------------------------------------------------------
@@ -14,17 +15,32 @@ export const equipmentKind = (type: string): EquipmentKind =>
   type === 'line' ? 'line' : type === 'transformer' ? 'transformer' : 'other';
 
 export const EQUIPMENT_LABEL: Record<EquipmentKind, string> = {
-  line: 'Leitung',
-  transformer: 'Transformator',
-  other: 'Betriebsmittel',
+  line: 'Line',
+  transformer: 'Transformer',
+  other: 'Equipment',
 };
 export const EQUIPMENT_PLURAL: Record<EquipmentKind, string> = {
-  line: 'Leitungen',
-  transformer: 'Transformatoren',
-  other: 'Sonstige',
+  line: 'Lines',
+  transformer: 'Transformers',
+  other: 'Other',
 };
+/** Tooltip text for a name cell: 'Transformer: Transformer North T1'. */
+export const equipmentTitle = (type: string, name: string): string => `${EQUIPMENT_LABEL[equipmentKind(type)]}: ${name}`;
+
 /** One-letter marker next to a name; lines (the common case) get none. */
 export const EQUIPMENT_MARK: Record<EquipmentKind, string> = { line: '', transformer: 'T', other: '·' };
+
+/** In how many scenarios a branch is overloaded by the outage (caused or aggravated) and in how many it already was. */
+export function causeCounts(line: AcrossLine, scenarioIds: readonly string[]): { caused: number; preexisting: number } {
+  let caused = 0;
+  let preexisting = 0;
+  for (const id of scenarioIds) {
+    const cause = causeOf(line.cells[id]);
+    if (cause === 'caused' || cause === 'aggravated') caused += 1;
+    else if (cause === 'preexisting') preexisting += 1;
+  }
+  return { caused, preexisting };
+}
 
 /** Branch equipment of the chosen kind; 'all' keeps everything. */
 export function filterByEquipment<T extends { type: string }>(items: readonly T[], kind: 'all' | EquipmentKind): T[] {
@@ -36,9 +52,9 @@ export function filterByEquipment<T extends { type: string }>(items: readonly T[
 export type Cause = 'caused' | 'aggravated' | 'preexisting';
 
 export const CAUSE_LABEL: Record<Cause, string> = {
-  caused: 'durch Freischaltung verursacht',
-  aggravated: 'durch Freischaltung verschärft',
-  preexisting: 'Vorbelastung, unverändert',
+  caused: 'caused by the outage',
+  aggravated: 'aggravated by the outage',
+  preexisting: 'Pre-existing load, unchanged',
 };
 
 /** Overload (> 100 %) of a branch: new because of the outage, worse because of it, or already there in REF. */
@@ -59,8 +75,6 @@ export interface VoltageResult {
   /** Smallest distance to a limit in p.u.; negative when the band is left. */
   margin: number | null;
 }
-
-const isPerUnit = (unit: string | null | undefined): boolean => /^p\.?u\.?$/i.test((unit ?? '').trim());
 
 /** Band a busbar is judged against: the configured p.u. band, or the limits stored with kV results. */
 export function busBand(bus: AcrossBus): [number | null, number | null] | null {
@@ -109,9 +123,7 @@ export interface Assessment {
   worst: { name: string; value: number; reserve: number } | null;
 }
 
-const pct = (v: number) => `${v.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
-const volt = (v: number, unit: string | null | undefined) =>
-  `${v.toLocaleString('de-DE', isPerUnit(unit) ? { minimumFractionDigits: 3, maximumFractionDigits: 3 } : { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
+const pct = (v: number) => `${v.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 export function assessScenario(
@@ -178,21 +190,21 @@ export function assessScenario(
   }
 
   const reasons: string[] = [];
-  if (caused > 0) reasons.push(`${plural(caused, 'Betriebsmittel', 'Betriebsmittel')} durch Freischaltung über 100 %${worstCaused ? ` (max. ${worstCaused.name} ${pct(worstCaused.value)})` : ''}`);
-  if (aggravated > 0) reasons.push(`${plural(aggravated, 'bestehende Überlastung', 'bestehende Überlastungen')} verschärft`);
-  if (voltageCaused > 0) reasons.push(`Spannungsband verlassen: ${plural(voltageCaused, 'Sammelschiene', 'Sammelschienen')}${voltageWorst ? ` (${voltageWorst.name} ${volt(voltageWorst.range[0], voltageWorst.unit)}–${volt(voltageWorst.range[1], voltageWorst.unit)} ${voltageWorst.unit})` : ''}`);
-  if (preexisting > 0) reasons.push(`Vorbelastung über 100 % unverändert: ${preexisting}`);
-  if (voltagePre > 0) reasons.push(`Spannungsverletzung bereits in REF: ${voltagePre}`);
-  if (lowReserve > 0) reasons.push(`${plural(lowReserve, 'Betriebsmittel', 'Betriebsmittel')} mit Reserve < ${ASSESSMENT.thermalReservePp} pp${lowReserveWorst ? ` (max. ${lowReserveWorst.name} ${pct(lowReserveWorst.value)})` : ''}`);
-  if (pushed > 0) reasons.push(`${plural(pushed, 'Betriebsmittel', 'Betriebsmittel')} in den Warnbereich (≥ 80 %) gebracht`);
-  if (voltageNear > 0) reasons.push(`Spannung nahe der Grenze: ${plural(voltageNear, 'Sammelschiene', 'Sammelschienen')}`);
+  if (caused > 0) reasons.push(`${plural(caused, 'equipment item', 'equipment items')} above 100 % because of the outage${worstCaused ? ` (max. ${worstCaused.name} ${pct(worstCaused.value)})` : ''}`);
+  if (aggravated > 0) reasons.push(`${plural(aggravated, 'existing overload', 'existing overloads')} aggravated`);
+  if (voltageCaused > 0) reasons.push(`Voltage band left: ${plural(voltageCaused, 'busbar', 'busbars')}${voltageWorst ? ` (${voltageWorst.name} ${formatVoltage(voltageWorst.range[0], voltageWorst.unit)}–${formatVoltage(voltageWorst.range[1], voltageWorst.unit)} ${voltageWorst.unit})` : ''}`);
+  if (preexisting > 0) reasons.push(`Pre-existing load above 100 % unchanged: ${preexisting}`);
+  if (voltagePre > 0) reasons.push(`Voltage violation already in REF: ${voltagePre}`);
+  if (lowReserve > 0) reasons.push(`${plural(lowReserve, 'equipment item', 'equipment items')} with reserve < ${ASSESSMENT.thermalReservePp} pp${lowReserveWorst ? ` (max. ${lowReserveWorst.name} ${pct(lowReserveWorst.value)})` : ''}`);
+  if (pushed > 0) reasons.push(`${plural(pushed, 'equipment item', 'equipment items')} pushed into the warning range (≥ 80 %)`);
+  if (voltageNear > 0) reasons.push(`Voltage near the limit: ${plural(voltageNear, 'busbar', 'busbars')}`);
 
   let verdict: Verdict;
   if (caused + aggravated + voltageCaused > 0) verdict = 'not-permissible';
   else if (preexisting + pushed + lowReserve + voltagePre + voltageNear > 0) verdict = 'conditional';
   else verdict = 'permissible';
   if (verdict === 'permissible' && worst) {
-    reasons.push(`Höchste Auslastung ${pct(worst.value)} (${worst.name}), Reserve ${worst.reserve.toLocaleString('de-DE', { maximumFractionDigits: 1 })} pp`);
+    reasons.push(`Highest loading ${pct(worst.value)} (${worst.name}), reserve ${worst.reserve.toLocaleString('en-GB', { maximumFractionDigits: 1 })} pp`);
   }
   return {
     verdict, reasons, caused, aggravated, preexisting, pushedIntoWarning: pushed, lowReserve,

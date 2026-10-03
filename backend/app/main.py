@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
 from app.analysis.bootstrap import initialize_analysis, get_repository, close_repositories
-from app.analysis.routes import router as analysis_router
 from app.simulation.routes import router as simulation_router
 from app.simulation.store import ScenarioStore
 from app.simulation import settings
@@ -37,7 +36,6 @@ if settings.CORS_ORIGINS:
         allow_headers=["Content-Type"],
     )
 app.include_router(simulation_router)
-app.include_router(analysis_router)
 
 
 @app.middleware("http")

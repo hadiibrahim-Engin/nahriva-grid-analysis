@@ -11,7 +11,7 @@ import {
   type ScenarioStats,
   SUMMARY_IDS,
 } from '../../util/acrossScenarios';
-import { compareVerdict, type Assessment } from '../../util/freischaltung';
+import { compareVerdict, type Assessment } from '../../util/outageAssessment';
 import { BandLegend, ScenarioTag, SectionCard } from './shared';
 import VerdictBadge from './VerdictBadge';
 
@@ -26,9 +26,9 @@ interface Props {
 }
 
 const dayLabel = (epoch: number) =>
-  new Date(epoch * 1000).toLocaleDateString('de-DE', { timeZone: 'UTC', day: '2-digit', month: '2-digit' });
+  new Date(epoch * 1000).toLocaleDateString('en-GB', { timeZone: 'UTC', day: '2-digit', month: '2-digit' });
 const stamp = (epoch: number | null) =>
-  epoch === null ? '–' : new Date(epoch * 1000).toLocaleString('de-DE', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' }) + ' UTC';
+  epoch === null ? '–' : new Date(epoch * 1000).toLocaleString('en-GB', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' }) + ' UTC';
 
 /**
  * One row per scenario: what is switched off, when (timeline over the simulation
@@ -65,31 +65,31 @@ export default function ScenarioOverview({ scenarios, assessments, selectedId, o
   return (
     <SectionCard
       id={SUMMARY_IDS.overview}
-      title="Freigabe-Bewertung der Szenarien"
-      hint={`Freigabe-Bewertung je Szenario mit Begründung, was freigeschaltet ist und wann (Simulationszeitraum ${Number.isFinite(periodHours) ? fmtPeriod(periodHours) : 'nicht bekannt'}), und wie sich die Betriebsmittel auf die Auslastungsbereiche verteilen. Zeile wählen für Verlauf und Details.`}
+      title="Scenario assessment"
+      hint={`Assessment per scenario with reasons, what is switched off and when (simulation period ${Number.isFinite(periodHours) ? fmtPeriod(periodHours) : 'unknown'}), and how the equipment is distributed over the loading bands. Select a row for the profile and details.`}
       actions={
         <label className="ab-toggle">
-          Sortierung
+          Sort order
           <select className="ab-control" value={order} onChange={(e) => setOrder(e.target.value as 'critical' | 'original')}>
-            <option value="critical">Kritischste zuerst</option>
-            <option value="original">Reihenfolge</option>
+            <option value="critical">Most critical first</option>
+            <option value="original">Original order</option>
           </select>
         </label>
       }
     >
       <div className="mb-2"><BandLegend /></div>
       <div className="ab-scroll ab-table-wide">
-        <table className="ab-table ab-scenario-table" aria-label="Szenarien mit Freischaltungen und Kennzahlen">
+        <table className="ab-table ab-scenario-table" aria-label="Scenarios with outages and key figures">
         <colgroup><col style={{ width: '24%' }} /><col style={{ width: '28%' }} /><col style={{ width: '24%' }} /><col style={{ width: '24%' }} /></colgroup>
         <thead><tr>
-          <th scope="col">Szenario · enthält</th>
-          <th scope="col"><span className="block mb-2">Ausfallfenster (UTC)</span><div className="ab-axis">
+          <th scope="col">Scenario · contains</th>
+          <th scope="col"><span className="block mb-2">Outage window (UTC)</span><div className="ab-axis">
             {axis.seconds > 0 && axis.ticks.map((d) => (
               <span key={d} style={{ left: `${((d * 86400) / axis.seconds) * 100}%` }}>{dayLabel(axis.start + d * 86400)}</span>
             ))}
           </div></th>
-          <th scope="col">Betriebsmittel je Auslastung</th>
-          <th scope="col">Bewertung und Kennzahlen</th>
+          <th scope="col">Equipment per loading</th>
+          <th scope="col">Assessment and key figures</th>
         </tr></thead><tbody>
         {rows.map((s) => {
           const band = s.maxValue === null ? 'ok' : bandOf(s.maxValue).id;
@@ -101,13 +101,13 @@ export default function ScenarioOverview({ scenarios, assessments, selectedId, o
                 <button type="button" className="ab-scenario-select" aria-pressed={selectedId === s.scenario.id} onClick={() => onSelect(s.scenario.id)}>
                 <span className="ab-ov__title" title={s.scenario.name}><ScenarioTag code={s.code} scenario={s.scenario} /><span>{s.scenario.name}</span></span>
                 <span className="ab-ov__contents">
-                  {equipment.length === 0 && <span className="ab-sub">keine Freischaltung gespeichert</span>}
-                  {equipment.map((name) => <span key={name} className="ab-tag" title={`Freigeschaltet: ${name}`}>{name}</span>)}
+                  {equipment.length === 0 && <span className="ab-sub">no outage saved</span>}
+                  {equipment.map((name) => <span key={name} className="ab-tag" title={`Switched off: ${name}`}>{name}</span>)}
                 </span>
                 </button>
               </td>
               <td><span className="ab-timeline" style={{ '--day': dayWidth, '--c': bandVar(band) } as CSSProperties} role="img"
-                aria-label={`Ausfallfenster ${s.scenario.outages.map((o) => `${o.equipment_name ?? o.name}: ${stamp(o.start)} bis ${stamp(o.end)}`).join('; ')}`}>
+                aria-label={`Outage window ${s.scenario.outages.map((o) => `${o.equipment_name ?? o.name}: ${stamp(o.start)} to ${stamp(o.end)}`).join('; ')}`}>
                 {axis.seconds > 0 && s.scenario.outages.map((o) => o.start === null || o.end === null ? null : (
                   <span
                     key={o.id}
@@ -129,16 +129,16 @@ export default function ScenarioOverview({ scenarios, assessments, selectedId, o
                   const meta = LOADING_BANDS.find((b) => b.id === id)!;
                   return (
                     <span key={id} className={`ab-stack__seg ab-fill--${id} ab-ink--${id}`} style={{ width: `${pct}%` }}
-                      title={`${meta.label} (${meta.range}): ${count} von ${s.total} Betriebsmitteln`}>
+                      title={`${meta.label} (${meta.range}): ${count} of ${s.total} equipment items`}>
                       {pct >= 8 ? count : ''}
                     </span>
                   );
                 })}
               </span></td>
               <td title={[
-                s.longestOverloadHours > 0 ? `Längste Überlastung ${fmtHours(s.longestOverloadHours)} (${fmtShare(periodHours > 0 ? s.longestOverloadHours / periodHours : 0)} des Zeitraums)` : 'keine Überlastung',
+                s.longestOverloadHours > 0 ? `Longest overload ${fmtHours(s.longestOverloadHours)} (${fmtShare(periodHours > 0 ? s.longestOverloadHours / periodHours : 0)} of the period)` : 'no overload',
                 `Max Δ ${fmtPp(s.maxDelta)} · |LODF| ${fmtLodf(s.maxAbsLodf)}`,
-                `wirkt auf ${s.affected} Betriebsmittel (≥ ${ANALYSIS.affectedDeltaPp} pp)`,
+                `affects ${s.affected} equipment items (≥ ${ANALYSIS.affectedDeltaPp} pp)`,
               ].join('\n')}><span className="ab-ov__facts">
                 {assess && <span><VerdictBadge verdict={assess.verdict} /></span>}
                 {assess?.reasons.slice(0, 2).map((reason) => <span key={reason} className="ab-ov__reason">{reason}</span>)}

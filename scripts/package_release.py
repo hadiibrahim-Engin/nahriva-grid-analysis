@@ -1,10 +1,11 @@
-"""Build one ZIP for the PowerFactory PC: backend, ready-made frontend, scripts, installer, docs.
+"""Build one ZIP for the PowerFactory PC: backend, ready-made frontend, scripts, setup script, docs.
 
     python scripts/package_release.py                  -> release/outage-assessment-<version>.zip
     python scripts/package_release.py --wheelhouse     -> additionally release/wheelhouse (Windows packages for offline PCs)
 
-Build the frontend first (cd frontend; npm ci; npm run build). The PowerFactory PC then needs only Python 3.12+
-and, unless a wheelhouse is used, internet access during the installation.
+`setup.ps1 -Package` builds the frontend and then this ZIP in one go. The PowerFactory PC then needs only
+Python 3.12+ (or internet access, so that setup.ps1 can fetch it) and, unless a wheelhouse is used, internet
+access during the setup.
 """
 
 import argparse
@@ -25,6 +26,8 @@ INCLUDE = [
     "scripts/dashboard_launcher.py",
     "scripts/serve.py",
     "deploy",
+    "setup.ps1",
+    "setup.cmd",
     "docs",
     "README.md",
     "BIG_PICTURE.md",
@@ -56,7 +59,7 @@ def files(root=ROOT):
 
 def build(root=ROOT, out_dir=None):
     if not (root / "frontend/dist/index.html").is_file():
-        raise SystemExit("frontend/dist fehlt. Zuerst bauen: cd frontend && npm ci && npm run build")
+        raise SystemExit("frontend/dist is missing. Build it first: cd frontend && npm ci && npm run build")
     out_dir = Path(out_dir or root / "release")
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / f"outage-assessment-{version(root)}.zip"
@@ -79,8 +82,8 @@ def wheelhouse(root=ROOT, out_dir=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--wheelhouse", action="store_true", help="Pakete für Rechner ohne Internet mitliefern")
+    parser.add_argument("--wheelhouse", action="store_true", help="include packages for PCs without internet access")
     args = parser.parse_args()
-    print("Paket:", build())
+    print("Package:", build())
     if args.wheelhouse:
         print("Wheelhouse:", wheelhouse())

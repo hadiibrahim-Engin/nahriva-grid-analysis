@@ -17,29 +17,17 @@ import { SectionCard } from './across/shared';
 import { useEffect, useMemo, useState, lazy, Suspense, type ReactNode } from 'react';
 import {
   getTimeseries,
-  getHeatmap,
   getDurationCurve,
-  getDailyProfile,
   getCorrelationMatrix,
   getBoxPlot,
-  getPowerFactor,
   getExceedance,
-  getQuality,
-  getDSTEvents,
-  getSeasonRadar,
   type TimeseriesData,
   type AggregationFn,
   type ResolutionInfo,
-  type HeatmapData,
   type DurationCurveData,
-  type DailyProfileData,
   type CorrelationMatrixData,
   type BoxPlotData,
-  type PowerFactorData,
   type ExceedanceData,
-  type QualityData,
-  type DSTData,
-  type SeasonRadarData,
 } from '../api/client';
 import ScenarioOptions from './across/ScenarioOptions';
 import ErrorBoundary from './ErrorBoundary';
@@ -48,58 +36,37 @@ import ColorSwatchPicker from './ui/ColorSwatchPicker';
 import {
   buildCorrelation,
   buildCorrelation3,
-  buildPeakRows,
-  buildEnergyIntegral,
-  buildLosses,
-  buildLoading,
-  buildOverloadDuration,
   buildRollingMean,
   buildAnomalyScore,
   buildVoltageBand,
-  missingRequiredMeasurements,
   seriesLabel,
   defaultThresholdLevelName,
   defaultThresholdLevelColor,
   normalizeThresholdLevelColor,
   normalizeThresholdLevelEntries,
-  MTYPE_LABELS,
   type DashboardChartConfig,
   type DynamicChartConfig,
   type DashboardSeries,
 } from '../util/dynamicCharts';
 import { getTemplate, ARITY_LABELS, type ChartTemplate } from './charts/chartTemplates';
-import type { PeakDemandPeriod } from './charts/PeakDemandChart';
 
 const AcrossChartBody = lazy(() => import('./across/AcrossChartBody'));
 const TimeseriesChart = lazy(() => import('./charts/TimeseriesChart'));
 const TimeseriesHistogramChart = lazy(() => import('./charts/TimeseriesHistogramChart'));
 const HistogramCombinedChart = lazy(() => import('./charts/HistogramCombinedChart'));
-const HeatmapChart = lazy(() => import('./charts/HeatmapChart'));
 const DurationCurveChart = lazy(() => import('./charts/DurationCurveChart'));
-const DailyProfileChart = lazy(() => import('./charts/DailyProfileChart'));
 const CorrelationChart = lazy(() => import('./charts/CorrelationChart'));
 const Correlation3DChart = lazy(() => import('./charts/Correlation3DChart'));
 const CorrelationMatrixChart = lazy(() => import('./charts/CorrelationMatrixChart'));
 const BoxPlotChart = lazy(() => import('./charts/BoxPlotChart'));
 const BoxPlotCombinedChart = lazy(() => import('./charts/BoxPlotCombinedChart'));
-const PowerFactorChart = lazy(() => import('./charts/PowerFactorChart'));
 const ExceedanceChart = lazy(() => import('./charts/ExceedanceChart'));
-const QualityChart = lazy(() => import('./charts/QualityChart'));
-const DSTChart = lazy(() => import('./charts/DSTChart'));
-const SeasonRadarChart = lazy(() => import('./charts/SeasonRadarChart'));
-const PeakDemandChart = lazy(() => import('./charts/PeakDemandChart'));
-
-const PEAK_PERIOD_LABELS: Record<PeakDemandPeriod, string> = {
-  day: 'Täglich',
-  week: 'Wöchentlich',
-  month: 'Monatlich',
-};
 
 const AGG_LABELS: Record<AggregationFn, string> = {
-  AVG: 'Mittelwert',
+  AVG: 'Mean',
   MIN: 'Minimum',
   MAX: 'Maximum',
-  SUM: 'Summe',
+  SUM: 'Sum',
 };
 
 const DEFAULT_THRESHOLD_LEVELS = [80, 100];
@@ -111,39 +78,23 @@ function normalizedLevels(levels: number[] | undefined): number[] {
 }
 
 /** Template kinds whose data is fetched from the API by the card itself. */
-const FETCH_KINDS = new Set([
-  'aggTrend',
-  'heatmap',
-  'durationCurve',
-  'dailyProfile',
-  'correlationMatrix',
-  'boxplot',
-  'powerFactor',
-  'exceedance',
-  'quality',
-  'dst',
-  'seasonRadar',
-]);
+const FETCH_KINDS = new Set(['aggTrend', 'durationCurve', 'correlationMatrix', 'boxplot', 'exceedance']);
 
 /**
- * Kinds that derive their result from a whole Betriebsmittel rather than a
- * single measurement: one fetch + one chart per component. Season radar is
- * included because a radar is per-component (its polygons are the picked
- * measurements of that component).
+ * Kinds that derive their result from a whole equipment rather than a single measurement:
+ * one fetch + one chart per component.
  */
-const COMPONENT_GROUPED = new Set([
-  'powerFactor', 'correlationMatrix', 'dst', 'quality', 'seasonRadar',
-]);
+const COMPONENT_GROUPED = new Set(['correlationMatrix']);
 
 /**
  * Kinds that should show one active fetched payload at a time. With multiple
  * signals/components these switch via a dropdown on the card instead of
  * rendering several charts in parallel.
  */
-const DROPDOWN_KINDS = new Set(['heatmap', 'boxplot', 'histogram', 'correlationMatrix']);
+const DROPDOWN_KINDS = new Set(['boxplot', 'histogram', 'correlationMatrix']);
 
 /** Kinds that overlay multiple signals into a single chart (shared axis). */
-const COMBINE_KINDS = new Set(['aggTrend', 'dailyProfile', 'durationCurve', 'powerFactor']);
+const COMBINE_KINDS = new Set(['aggTrend', 'durationCurve']);
 
 /** One fetch unit — a signal (signal-level) or a component (component-grouped). */
 interface FetchUnit {
@@ -241,8 +192,8 @@ function LiveConfigControls({
         {template.needsScenarioOptions && (
           <details className="w-full rounded border border-[var(--grid-border)] bg-[var(--grid-subpanel)] px-2 py-1">
             <summary className="cursor-pointer text-[10px] text-[var(--grid-text-soft)]">
-              Auswahl: {config.elementMode === 'selected' ? `${config.elementIds?.length ?? 0} gewählt` : `automatisch Top ${config.topN ?? 12}`}
-              {' · '}Szenarien: {config.scenarioIds?.length ? config.scenarioIds.length : 'alle'}
+              Selection: {config.elementMode === 'selected' ? `${config.elementIds?.length ?? 0} selected` : `automatic top ${config.topN ?? 12}`}
+              {' · '}Scenarios: {config.scenarioIds?.length ? config.scenarioIds.length : 'all'}
             </summary>
             <div className="pt-2">
               <ScenarioOptions compact kind={template.kind} config={config} onChange={(next) => patch(next)} />
@@ -252,7 +203,7 @@ function LiveConfigControls({
 
         {template.needsResolution && (
           <label className="flex items-center gap-0.5 text-[9px] text-[var(--grid-muted)]">
-            Auflösung
+            Resolution
             <select
               value={config.resolutionMinutes ?? 60}
               onChange={(e) => patch({ resolutionMinutes: Number(e.target.value) })}
@@ -267,7 +218,7 @@ function LiveConfigControls({
 
         {template.needsThreshold && (
           <label className="flex items-center gap-0.5 text-[9px] text-[var(--grid-muted)]">
-            {template.thresholdLabel ?? 'Schwellwert'}
+            {template.thresholdLabel ?? 'Threshold'}
             <input
               type="number"
               value={config.threshold ?? template.thresholdDefault ?? 80}
@@ -306,7 +257,7 @@ function LiveConfigControls({
 
         {template.needsThresholdLevels && (
           <>
-            <span className="text-[9px] text-[var(--grid-muted)]">Schwellen</span>
+            <span className="text-[9px] text-[var(--grid-muted)]">Thresholds</span>
             {levels.map((level, index) => {
               const tone = normalizeThresholdLevelColor(levelColors[index], index, levels.length);
               const fallbackLabel = defaultThresholdLevelName(index, levels.length);
@@ -337,8 +288,8 @@ function LiveConfigControls({
                     type="button"
                     onClick={() => removeLevel(index)}
                     className="px-0.5 text-[10px] leading-none text-[var(--grid-muted)] transition-colors hover:text-[var(--grid-danger)]"
-                    aria-label={`${label} entfernen`}
-                    title={`${label} entfernen`}
+                    aria-label={`Remove ${label}`}
+                    title={`Remove ${label}`}
                   >
                     ×
                   </button>
@@ -357,51 +308,51 @@ function LiveConfigControls({
 
         {template.needsHistogramMode && (
           <label className="flex items-center gap-0.5 text-[9px] text-[var(--grid-muted)]">
-            Ansicht
+            View
             <select
               value={config.histogramMode ?? 'single'}
               onChange={(e) => patch({ histogramMode: e.target.value as 'single' | 'combined' })}
               className="grid-form-input grid-form-input--compact h-5 min-w-20"
             >
-              <option value="single">Einzeln</option>
-              <option value="combined">Kombiniert</option>
+              <option value="single">Single</option>
+              <option value="combined">Combined</option>
             </select>
           </label>
         )}
 
         {template.needsBoxplotGroupBy && (
           <label className="flex items-center gap-0.5 text-[9px] text-[var(--grid-muted)]">
-            Gruppierung
+            Grouping
             <select
               value={config.boxplotGroupBy ?? 'hour'}
               onChange={(e) => patch({ boxplotGroupBy: e.target.value as DynamicChartConfig['boxplotGroupBy'] })}
               className="grid-form-input grid-form-input--compact h-5 min-w-24"
             >
-              <option value="hour">Stunde</option>
-              <option value="weekday">Wochentag</option>
-              <option value="month">Monat</option>
-              <option value="weekday_weekend">Werktag/Wochenende</option>
+              <option value="hour">Hour</option>
+              <option value="weekday">Weekday</option>
+              <option value="month">Month</option>
+              <option value="weekday_weekend">Weekday/weekend</option>
             </select>
           </label>
         )}
 
         {template.needsBoxplotMode && (
           <label className="flex items-center gap-0.5 text-[9px] text-[var(--grid-muted)]">
-            Ansicht
+            View
             <select
               value={config.boxplotMode ?? 'single'}
               onChange={(e) => patch({ boxplotMode: e.target.value as 'single' | 'combined' })}
               className="grid-form-input grid-form-input--compact h-5 min-w-20"
             >
-              <option value="single">Einzeln</option>
-              <option value="combined">Kombiniert</option>
+              <option value="single">Single</option>
+              <option value="combined">Combined</option>
             </select>
           </label>
         )}
 
         {template.needsCorrelationMethod && (
           <label className="flex items-center gap-0.5 text-[9px] text-[var(--grid-muted)]">
-            Methode
+            Method
             <select
               value={config.correlationMethod ?? 'pearson'}
               onChange={(e) => patch({ correlationMethod: e.target.value as DynamicChartConfig['correlationMethod'] })}
@@ -417,14 +368,14 @@ function LiveConfigControls({
         {template.needsYAxisControl && (
           <>
             <label className="flex items-center gap-0.5 text-[9px] text-[var(--grid-muted)]">
-              Y-Achse
+              Y axis
               <select
                 value={config.yAxisScaleType ?? 'auto'}
                 onChange={(e) => patch({ yAxisScaleType: e.target.value as 'auto' | 'manual' })}
                 className="grid-form-input grid-form-input--compact h-5 min-w-16"
               >
                 <option value="auto">Auto</option>
-                <option value="manual">Manuell</option>
+                <option value="manual">Manual</option>
               </select>
             </label>
             {config.yAxisScaleType === 'manual' && (
@@ -462,7 +413,7 @@ function LiveConfigControls({
       </div>
       {template.needsThresholdLevels && normalizedLevels(levels).length < 2 && (
         <div className="mt-0.5 text-[9px] text-[var(--grid-warning)]">
-          Mindestens zwei Schwellen sind nötig.
+          At least two thresholds are required.
         </div>
       )}
     </div>
@@ -474,7 +425,7 @@ function extractError(err: unknown): string {
     const axErr = err as { response?: { status?: number; data?: { detail?: string } } };
     const status = axErr.response?.status ?? '?';
     const detail = axErr.response?.data?.detail ?? '';
-    return `${status} – ${detail || 'Unbekannter Serverfehler'}`;
+    return `${status} – ${detail || 'Unknown server error'}`;
   }
   if (err instanceof Error) return err.message;
   return String(err);
@@ -539,20 +490,6 @@ export default function DynamicChartCard({
     return !resolvedSources[0];
   }, [template, resolvedSources, presentSources.length]);
 
-  // Defense-in-depth: even though the picker gates on required measurements,
-  // a signal can be removed after the card exists. Re-check here so we show a
-  // clear "missing measurement" state instead of an empty/garbage plot.
-  const missingMeasurements = useMemo(
-    () => (template
-      ? missingRequiredMeasurements(
-          template.requiredComponentMeasurements,
-          presentSources.map((s) => s.key),
-          availableSeries,
-        )
-      : []),
-    [template, presentSources, availableSeries],
-  );
-
   // -- Fetch-based templates -----------------------------------------------
   const [items, setItems] = useState<FetchItem[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -560,7 +497,7 @@ export default function DynamicChartCard({
 
   const isFetchKind = !!template && FETCH_KINDS.has(template.kind);
 
-  // Component-grouped charts derive their result from a whole Betriebsmittel:
+  // Component-grouped charts derive their result from a whole Equipment:
   // one fetch (and one chart) per component, regardless of how many signals
   // identify it. Season radar additionally narrows to the picked measurements.
   const fetchUnits = useMemo<FetchUnit[]>(() => {
@@ -601,19 +538,15 @@ export default function DynamicChartCard({
     setError(null);
 
     const fetchOne = (unit: FetchUnit): Promise<unknown> => {
-      const { src, componentId, measurementTypes } = unit;
+      const { src, componentId } = unit;
       switch (template.kind) {
         case 'aggTrend':
           return getTimeseries(
             src.componentId, src.measurementType, startIso, endIso,
             config.resolutionMinutes || 60, undefined, undefined, config.aggregation ?? 'AVG',
           );
-        case 'heatmap':
-          return getHeatmap(src.componentId, src.measurementType, startIso, endIso);
         case 'durationCurve':
           return getDurationCurve(src.componentId, src.measurementType, startIso, endIso);
-        case 'dailyProfile':
-          return getDailyProfile(src.componentId, src.measurementType, startIso, endIso);
         case 'boxplot':
           return getBoxPlot(src.componentId, src.measurementType, startIso, endIso, config.boxplotGroupBy ?? 'hour');
         case 'exceedance':
@@ -625,15 +558,6 @@ export default function DynamicChartCard({
           ));
           return getCorrelationMatrix(componentId, types, startIso, endIso);
         }
-        case 'powerFactor':
-          return getPowerFactor(componentId, startIso, endIso);
-        case 'quality':
-          return getQuality(componentId, startIso, endIso);
-        case 'dst':
-          return getDSTEvents(componentId, startIso, endIso);
-        case 'seasonRadar':
-          // Only compute the picked measurements for this component.
-          return getSeasonRadar(componentId, startIso, endIso, measurementTypes.join(','));
         default:
           return Promise.resolve(null);
       }
@@ -675,20 +599,13 @@ export default function DynamicChartCard({
   ]);
 
   // -- Local controls -------------------------------------------------------
-  const [peakPeriod, setPeakPeriod] = useState<PeakDemandPeriod>('month');
-  const [peakIndex, setPeakIndex] = useState(0);
-  // Active signal for dropdown-switched charts (heatmap / boxplot / histogram).
+  // Active signal for dropdown-switched charts (boxplot / histogram).
   const [activeIdx, setActiveIdx] = useState(0);
-  const peakRowsByPeriod = useMemo(
-    () => (template?.kind === 'peakDemand' ? buildPeakRows(presentSources, dataMap) : null),
-    [template, presentSources, dataMap],
-  );
-  const peakRows = peakRowsByPeriod ? peakRowsByPeriod[peakPeriod] : [];
 
   if (!template) {
     return (
-      <CardShell id={instance.id} title="Unbekanntes Diagramm" subtitle="" onRemove={onRemove}>
-        <InfoState text="Diese Diagrammvorlage ist nicht mehr verfügbar." />
+      <CardShell id={instance.id} title="Unknown chart" subtitle="" onRemove={onRemove}>
+        <InfoState text="This chart template is no longer available." />
       </CardShell>
     );
   }
@@ -702,7 +619,7 @@ export default function DynamicChartCard({
     : undefined;
   const subtitle = [
     ARITY_LABELS[template.arity],
-    resolutionLabel ? `Auflösung ${resolutionLabel}` : null,
+    resolutionLabel ? `Resolution ${resolutionLabel}` : null,
   ].filter(Boolean).join(' · ');
   const sourceSummary = presentSources.map((s) => seriesLabel(s)).join(', ');
 
@@ -712,16 +629,7 @@ export default function DynamicChartCard({
     body = (
       <InfoState
         tone="warn"
-        text="Quelle nicht verfügbar — das zugehörige Signal wurde aus der Auswahl entfernt. Signal erneut hinzufügen, um dieses Diagramm wiederherzustellen."
-      />
-    );
-  } else if (missingMeasurements.length > 0) {
-    body = (
-      <InfoState
-        tone="warn"
-        text={`Fehlende Messgröße(n) am Betriebsmittel: ${missingMeasurements
-          .map((m) => MTYPE_LABELS[m] ?? m)
-          .join(', ')}. Diese Auswertung benötigt sie für eine korrekte Berechnung.`}
+        text="Source not available — the signal was removed from the selection. Add the signal again to restore this chart."
       />
     );
   } else if (template.scenarioLevel) {
@@ -738,7 +646,7 @@ export default function DynamicChartCard({
     } else if (loading || items == null) {
       body = <GeneratingLoader />;
     } else if (items.length === 0) {
-      body = <InfoState text="Keine Daten im Zeitraum." />;
+      body = <InfoState text="No data in the period." />;
     } else {
       const useBoxplotCombined = template.kind === 'boxplot' && config.boxplotMode === 'combined';
       const useDropdown = DROPDOWN_KINDS.has(template.kind) && items.length > 1 && !useBoxplotCombined;
@@ -759,14 +667,14 @@ export default function DynamicChartCard({
                   items={items}
                   value={idx}
                   onChange={setActiveIdx}
-                  label={template.kind === 'correlationMatrix' ? 'Betriebsmittel:' : 'Signal:'}
+                  label={template.kind === 'correlationMatrix' ? 'Equipment:' : 'Signal:'}
                 />
                 {renderFetchChart(template, items[idx].data, config)}
               </div>
             ) : COMBINE_KINDS.has(template.kind) ? (
               renderCombinedFetchChart(template, items, config)
             ) : (
-              // Component-grouped charts (one per Betriebsmittel) lay out as
+              // Component-grouped charts (one per Equipment) lay out as
               // small multiples; each item already combines its measurements.
               <ChartGrid>
                 {items.map((it) => (
@@ -785,11 +693,6 @@ export default function DynamicChartCard({
       presentSources,
       dataMap,
       config,
-      peakRows,
-      peakIndex,
-      setPeakIndex,
-      peakPeriod,
-      setPeakPeriod,
       activeIdx,
       setActiveIdx,
     });
@@ -833,47 +736,23 @@ function renderFetchChart(template: ChartTemplate, payload: unknown, config: Dyn
   switch (template.kind) {
     case 'aggTrend': {
       const data = payload as TimeseriesData;
-      if (!data.data.length) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (!data.data.length) return <InfoState text="No data in the period." />;
       return <TimeseriesChart seriesList={[data]} {...tsChartProps(template, config)} />;
-    }
-    case 'heatmap': {
-      const data = payload as HeatmapData;
-      if (!data.data.length) return <InfoState text="Keine Daten im Zeitraum." />;
-      return <HeatmapChart data={data} />;
     }
     case 'durationCurve': {
       const data = payload as DurationCurveData;
-      if (!data.data.length) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (!data.data.length) return <InfoState text="No data in the period." />;
       return <DurationCurveChart data={data} {...yAxisProps(config)} />;
     }
-    case 'dailyProfile':
-      return <DailyProfileChart data={payload as DailyProfileData} {...yAxisProps(config)} />;
     case 'correlationMatrix':
       return <CorrelationMatrixChart data={payload as CorrelationMatrixData} />;
     case 'boxplot': {
       const data = payload as BoxPlotData;
-      if (!data.items.length) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (!data.items.length) return <InfoState text="No data in the period." />;
       return <BoxPlotChart data={data} {...yAxisProps(config)} />;
-    }
-    case 'powerFactor': {
-      const data = payload as PowerFactorData;
-      if (!data.data.length) return <InfoState text="Keine P/Q/S-Daten für den Leistungsfaktor." />;
-      return <PowerFactorChart data={data} mode="timeseries" {...yAxisProps(config)} />;
     }
     case 'exceedance':
       return <ExceedanceChart data={payload as ExceedanceData} {...yAxisProps(config)} />;
-    case 'quality': {
-      const data = payload as QualityData;
-      if (!data.gap_heatmap.length) return <InfoState text="Keine Lückendaten im Zeitraum." />;
-      return <QualityChart data={data} />;
-    }
-    case 'dst':
-      return <DSTChart data={payload as DSTData} />;
-    case 'seasonRadar': {
-      const data = payload as SeasonRadarData;
-      if (!data.series.length) return <InfoState text="Keine saisonalen Daten im Zeitraum." />;
-      return <SeasonRadarChart data={data} />;
-    }
     default:
       return null;
   }
@@ -886,40 +765,15 @@ function renderCombinedFetchChart(template: ChartTemplate, items: FetchItem[], c
       const seriesList = (items as { data: TimeseriesData }[])
         .map((it) => it.data)
         .filter((data) => data.data.length > 0);
-      if (seriesList.length === 0) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (seriesList.length === 0) return <InfoState text="No data in the period." />;
       return <TimeseriesChart seriesList={seriesList} {...tsChartProps(template, config)} />;
-    }
-    case 'dailyProfile': {
-      const profiles = (items as { label: string; data: DailyProfileData }[])
-        .filter((it) => it.data.weekday_avg.length > 0 || it.data.weekend_avg.length > 0);
-      if (profiles.length === 0) return <InfoState text="Keine Daten im Zeitraum." />;
-      return (
-        <DailyProfileChart
-          data={profiles[0].data}
-          series={profiles.map((it) => ({ label: it.label, data: it.data }))}
-          {...yAxisProps(config)}
-        />
-      );
     }
     case 'durationCurve': {
       const curves = (items as { label: string; data: DurationCurveData }[])
         .filter((it) => it.data.data.length > 0)
         .map((it) => ({ label: it.label, unit: it.data.unit, data: it.data.data }));
-      if (curves.length === 0) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (curves.length === 0) return <InfoState text="No data in the period." />;
       return <DurationCurveChart data={items[0].data as DurationCurveData} series={curves} {...yAxisProps(config)} />;
-    }
-    case 'powerFactor': {
-      const factors = (items as { label: string; data: PowerFactorData }[])
-        .filter((it) => it.data.data.length > 0);
-      if (factors.length === 0) return <InfoState text="Keine P/Q/S-Daten für den Leistungsfaktor." />;
-      return (
-        <PowerFactorChart
-          data={factors[0].data}
-          series={factors.map((it) => ({ label: it.label, data: it.data }))}
-          mode="timeseries"
-          {...yAxisProps(config)}
-        />
-      );
     }
     default:
       return null;
@@ -931,11 +785,6 @@ interface ClientRenderArgs {
   presentSources: DashboardSeries[];
   dataMap: Record<string, TimeseriesData>;
   config: DynamicChartConfig;
-  peakRows: ReturnType<typeof buildPeakRows>[PeakDemandPeriod];
-  peakIndex: number;
-  setPeakIndex: (i: number) => void;
-  peakPeriod: PeakDemandPeriod;
-  setPeakPeriod: (p: PeakDemandPeriod) => void;
   activeIdx: number;
   setActiveIdx: (i: number) => void;
 }
@@ -955,14 +804,14 @@ function renderClientChart(args: ClientRenderArgs): ReactNode {
         .map((s) => dataMap[s.key])
         .filter((d): d is TimeseriesData => !!d);
       if (loaded.length < presentSources.length) return <GeneratingLoader />;
-      if (loaded.length === 0) return <InfoState text="Keine Daten geladen." />;
+      if (loaded.length === 0) return <InfoState text="No data loaded." />;
       return wrap(<TimeseriesChart seriesList={loaded} {...tsChartProps(template, config)} />);
     }
     case 'histogram': {
       const loaded = presentSources.map((s) => ({ s, data: dataMap[s.key] }));
       if (loaded.some((x) => !x.data)) return <GeneratingLoader />;
       const usable = loaded.filter((x) => x.data.data.length > 0);
-      if (usable.length === 0) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (usable.length === 0) return <InfoState text="No data in the period." />;
       if (usable.length === 1) {
         return wrap(<TimeseriesHistogramChart series={usable[0].data} binCount={24} mode="count" cumulative={false} {...yAxisProps(config)} />);
       }
@@ -1000,51 +849,12 @@ function renderClientChart(args: ClientRenderArgs): ReactNode {
         return <ErrorState message={extractError(err)} />;
       }
     }
-    case 'peakDemand': {
-      const { peakRows, peakIndex, setPeakIndex, peakPeriod, setPeakPeriod } = args;
-      const hasLoaded = presentSources.some((s) => s.measurementType === 'P' && dataMap[s.key]);
-      if (!hasLoaded) return <GeneratingLoader />;
-      if (peakRows.length === 0) return <InfoState text="Wirkleistung (P) auswählen, um Spitzenlasten zu berechnen." />;
-      const safeIndex = Math.min(peakIndex, peakRows.length - 1);
-      return (
-        <div>
-          <div className="mb-3 inline-flex overflow-hidden rounded border border-gray-600 text-xs">
-            {(Object.keys(PEAK_PERIOD_LABELS) as PeakDemandPeriod[]).map((period) => (
-              <button
-                key={period}
-                type="button"
-                onClick={() => { setPeakPeriod(period); setPeakIndex(0); }}
-                className={`px-2.5 py-1 transition-colors ${
-                  peakPeriod === period ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
-                }`}
-              >
-                {PEAK_PERIOD_LABELS[period]}
-              </button>
-            ))}
-          </div>
-          {wrap(<PeakDemandChart rows={peakRows} selectedIndex={safeIndex} onSelect={setPeakIndex} {...yAxisProps(config)} />)}
-        </div>
-      );
-    }
     // -- Client-side derived charts (reuse existing chart components) --------
-    case 'pqQuadrant':
-    case 'quScatter': {
-      const [x, y] = presentSources;
-      if (!x || !y) return <InfoState text="Bitte zwei Signale wählen." />;
-      const xData = dataMap[x.key];
-      const yData = dataMap[y.key];
-      if (!xData || !yData) return <GeneratingLoader />;
-      try {
-        return wrap(<CorrelationChart data={buildCorrelation(x, y, xData, yData)} {...yAxisProps(config)} />);
-      } catch (err) {
-        return <ErrorState message={extractError(err)} />;
-      }
-    }
     case 'correlationScatter3':
     case 'correlationScatter3d': {
       const [x, y, z] = presentSources;
       const is3D = template.kind === 'correlationScatter3d';
-      if (!x || !y || !z) return <InfoState text={is3D ? 'Bitte drei Signale wählen (X, Y, Z).' : 'Bitte drei Signale wählen (X, Y, Farbe).'} />;
+      if (!x || !y || !z) return <InfoState text={is3D ? 'Please choose three signals (X, Y, Z).' : 'Please choose three signals (X, Y, colour).'} />;
       const xData = dataMap[x.key];
       const yData = dataMap[y.key];
       const zData = dataMap[z.key];
@@ -1059,37 +869,6 @@ function renderClientChart(args: ClientRenderArgs): ReactNode {
       } catch (err) {
         return <ErrorState message={extractError(err)} />;
       }
-    }
-    case 'energyIntegral': {
-      const s = presentSources[0];
-      const d = dataMap[s.key];
-      if (!d) return <GeneratingLoader />;
-      if (!d.data.length) return <InfoState text="Keine Daten im Zeitraum." />;
-      return wrap(<TimeseriesChart seriesList={[buildEnergyIntegral(s, d)]} {...tsChartProps(template, config)} />);
-    }
-    case 'lossesEfficiency': {
-      const [a, b] = presentSources;
-      if (!a || !b) return <InfoState text="Bitte zwei P-Signale wählen (Ein- und Ausspeisung)." />;
-      const ad = dataMap[a.key];
-      const bd = dataMap[b.key];
-      if (!ad || !bd) return <GeneratingLoader />;
-      const losses = buildLosses(ad, bd, `${a.componentName} − ${b.componentName}`);
-      if (!losses.data.length) return <InfoState text="Keine gemeinsamen Zeitpunkte für die Differenz." />;
-      return wrap(<TimeseriesChart seriesList={[losses]} {...tsChartProps(template, config)} />);
-    }
-    case 'assetLoading': {
-      const s = presentSources[0];
-      const d = dataMap[s.key];
-      if (!d) return <GeneratingLoader />;
-      if (!d.data.length) return <InfoState text="Keine Daten im Zeitraum." />;
-      return wrap(<TimeseriesChart seriesList={[buildLoading(s, d, config.threshold ?? 100)]} {...tsChartProps(template, config)} />);
-    }
-    case 'overloadDuration': {
-      const s = presentSources[0];
-      const d = dataMap[s.key];
-      if (!d) return <GeneratingLoader />;
-      if (!d.data.length) return <InfoState text="Keine Daten im Zeitraum." />;
-      return wrap(<DurationCurveChart data={buildOverloadDuration(s, d, config.threshold ?? 100)} {...yAxisProps(config)} />);
     }
     case 'rollingEnvelope': {
       const win = Math.max(2, Math.round((config.resolutionMinutes ?? 60) / 15));
@@ -1109,14 +888,14 @@ function renderClientChart(args: ClientRenderArgs): ReactNode {
           ),
         ];
       });
-      if (seriesList.length === 0) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (seriesList.length === 0) return <InfoState text="No data in the period." />;
       return wrap(<TimeseriesChart seriesList={seriesList} {...tsChartProps(template, config)} />);
     }
     case 'thresholdBands': {
       const s = presentSources[0];
       const d = dataMap[s.key];
       if (!d) return <GeneratingLoader />;
-      if (!d.data.length) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (!d.data.length) return <InfoState text="No data in the period." />;
       const entries = normalizeThresholdLevelEntries(
         config.thresholdLevels,
         config.thresholdLevelNames,
@@ -1139,7 +918,7 @@ function renderClientChart(args: ClientRenderArgs): ReactNode {
       const s = presentSources[0];
       const d = dataMap[s.key];
       if (!d) return <GeneratingLoader />;
-      if (!d.data.length) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (!d.data.length) return <InfoState text="No data in the period." />;
       // Baseline window ≥ ~1 day (96×15 min) so the rolling z-score flags
       // deviations from the normal daily cycle instead of tracking the cycle.
       const win = Math.max(96, Math.round((config.resolutionMinutes ?? 1440) / 15));
@@ -1149,7 +928,7 @@ function renderClientChart(args: ClientRenderArgs): ReactNode {
       const s = presentSources[0];
       const d = dataMap[s.key];
       if (!d) return <GeneratingLoader />;
-      if (!d.data.length) return <InfoState text="Keine Daten im Zeitraum." />;
+      if (!d.data.length) return <InfoState text="No data in the period." />;
       return wrap(
         <TimeseriesChart
           seriesList={buildVoltageBand(
@@ -1221,7 +1000,7 @@ interface CardShellProps {
 function CardShell({ id, title, subtitle, sourceSummary, onRemove, children }: CardShellProps) {
   return (
     <SectionCard title={title} hint={subtitle} actions={
-      <button type="button" onClick={() => onRemove(id)} className="shrink-0 text-xs text-gray-400 transition-colors hover:text-red-400" title="Diagramm entfernen" aria-label="Diagramm entfernen">✕</button>
+      <button type="button" onClick={() => onRemove(id)} className="shrink-0 text-xs text-gray-400 transition-colors hover:text-red-400" title="Remove chart" aria-label="Remove chart">✕</button>
     }>
       {sourceSummary && <p className="mb-2 truncate text-xs text-gray-500" title={sourceSummary}>{sourceSummary}</p>}
       {children}
@@ -1248,7 +1027,7 @@ function ErrorState({ message }: { message: string }) {
     <div className="flex items-start gap-3 rounded border border-red-800/40 bg-red-900/20 px-4 py-3">
       <span className="shrink-0 text-xl text-red-400">⚠</span>
       <div>
-        <div className="text-sm font-medium text-red-300">Fehler beim Laden</div>
+        <div className="text-sm font-medium text-red-300">Error while loading</div>
         <div className="mt-1 font-mono text-xs text-red-400/80">{message}</div>
       </div>
     </div>

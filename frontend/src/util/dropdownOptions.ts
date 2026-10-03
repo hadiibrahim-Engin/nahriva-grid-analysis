@@ -1,5 +1,5 @@
 // Helpers for building dropdown option lists that survive backend edge
-// cases. Used by the dashboard's Anlage / Betriebsmittel / Messgröße /
+// cases. Used by the dashboard's scenario / equipment / measurement /
 // histogram selectors.
 
 export interface Option {
@@ -60,8 +60,8 @@ export function buildOptions<T>(
 
 /** Case-insensitive multi-token AND filter used by SearchableDropdown.
  * Every whitespace-separated token in `query` must appear in `option.searchText`
- * (falling back to `label`). So "trafo a 110" matches a 110 kV transformer
- * named "Trafo A". */
+ * (falling back to `label`). So "transformer a 110" matches a 110 kV transformer
+ * named "Transformer A". */
 export function matchesSearch(option: Option, query: string): boolean {
   if (!query) return true;
   const haystack = option.searchText ?? option.label.toLowerCase();

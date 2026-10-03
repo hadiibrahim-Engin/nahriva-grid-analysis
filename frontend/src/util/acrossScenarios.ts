@@ -91,12 +91,12 @@ export type PatternId =
   | 'lodf-driven';
 
 export const PATTERN_LABELS: Record<PatternId, string> = {
-  'single-extreme': 'Einzelner Ausreißer',
-  'frequent-light': 'Häufig leicht überlastet',
-  'frequent-strong': 'Häufig stark überlastet',
-  'strong-change': 'Starke Änderung ohne Überlastung',
-  'high-constant': 'Hoch, szenarienunabhängig',
-  'lodf-driven': 'Hoher LODF mit großer Änderung',
+  'single-extreme': 'Single outlier',
+  'frequent-light': 'Often lightly overloaded',
+  'frequent-strong': 'Often strongly overloaded',
+  'strong-change': 'Strong change without overload',
+  'high-constant': 'High, independent of the scenario',
+  'lodf-driven': 'High LODF with a large change',
 };
 
 export interface LineStats {
@@ -321,7 +321,7 @@ export function scenarioStats(
   return stats;
 }
 
-/** Most critical first: strong overloads, then deutliche, then all overloads, then peak value. */
+/** Most critical first: strong overloads, then clear overloads, then all overloads, then peak value. */
 export function compareScenarioCriticality(a: ScenarioStats, b: ScenarioStats): number {
   return (
     b.n120 - a.n120 ||
@@ -401,9 +401,9 @@ export function severityIndex(stats: LineStats): number {
 
 // -- Formatting ---------------------------------------------------------------
 
-const nf1 = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const nf2 = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const nf0 = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
+const nf1 = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const nf2 = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf0 = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
 
 export const fmtPct = (v: number | null | undefined): string => v == null ? '–' : `${nf1.format(v)} %`;
 export const fmtNum = (v: number | null | undefined): string => v == null ? '–' : nf1.format(v);
@@ -413,9 +413,9 @@ export const fmtExcess = (v: number | null | undefined): string => v == null ? '
 export const fmtLodf = (v: number | null | undefined): string => v == null ? '–' : nf2.format(v);
 export const fmtShare = (v: number): string => `${nf1.format(v * 100)} %`;
 export const fmtHours = (h: number | null | undefined): string => h == null ? '–' : `${nf1.format(h)} h`;
-/** Length of the simulation period, e.g. "7 Tage" or "36 h". */
+/** Length of the simulation period, e.g. "7 days" or "36 h". */
 export const fmtPeriod = (hours: number): string =>
-  hours >= 48 ? `${nf0.format(Math.round((hours / 24) * 10) / 10)} Tage` : `${nf0.format(hours)} h`;
+  hours >= 48 ? `${nf0.format(Math.round((hours / 24) * 10) / 10)} days` : `${nf0.format(hours)} h`;
 
 // -- Navigation of the summary ----------------------------------------------
 
@@ -445,15 +445,15 @@ export function summarySections(
 ): SummarySection[] {
   // Reading order of an outage assessment: result, chosen scenario, voltage, loading matrix, comparison, reference.
   return [
-    { id: SUMMARY_IDS.kpis, label: 'Kennzahlen' },
-    { id: SUMMARY_IDS.overview, label: 'Bewertung', count: a.scenarios.length },
-    { id: SUMMARY_IDS.profile, label: 'Verlauf' },
-    { id: SUMMARY_IDS.details, label: 'Szenariodetails' },
-    ...(busCount > 0 ? [{ id: SUMMARY_IDS.voltage, label: 'Spannung', count: busCount }] : []),
+    { id: SUMMARY_IDS.kpis, label: 'Key figures' },
+    { id: SUMMARY_IDS.overview, label: 'Assessment', count: a.scenarios.length },
+    { id: SUMMARY_IDS.profile, label: 'Profile' },
+    { id: SUMMARY_IDS.details, label: 'Scenario details' },
+    ...(busCount > 0 ? [{ id: SUMMARY_IDS.voltage, label: 'Voltage', count: busCount }] : []),
     { id: SUMMARY_IDS.heatmap, label: 'Matrix', count: a.lines.length },
-    { id: SUMMARY_IDS.charts, label: 'Grafiken', count: 4 },
+    { id: SUMMARY_IDS.charts, label: 'Comparison', count: 4 },
     { id: SUMMARY_IDS.radar, label: 'Radar' },
-    { id: SUMMARY_IDS.table, label: 'Detailtabelle' },
+    { id: SUMMARY_IDS.table, label: 'Detail table' },
   ];
 }
 

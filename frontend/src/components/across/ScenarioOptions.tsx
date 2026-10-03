@@ -2,15 +2,16 @@ import { useMemo, useState } from 'react';
 import { useAcrossData } from '../../hooks/useAcrossData';
 import { scenarioCode } from '../../util/acrossScenarios';
 import { isVoltageKind } from '../../util/acrossSelection';
-import { equipmentKind, EQUIPMENT_MARK } from '../../util/freischaltung';
+import { filterByEquipment } from '../../util/outageAssessment';
+import EquipmentName from './EquipmentName';
 import type { DynamicChartConfig } from '../../util/dynamicCharts';
 
 const TOP_OPTIONS = [5, 8, 12, 20, 30] as const;
 type Equipment = NonNullable<DynamicChartConfig['equipment']>;
 const EQUIPMENT_OPTIONS: { id: Equipment; label: string }[] = [
-  { id: 'all', label: 'Alle Betriebsmittel' },
-  { id: 'line', label: 'Leitungen' },
-  { id: 'transformer', label: 'Transformatoren' },
+  { id: 'all', label: 'All equipment' },
+  { id: 'line', label: 'Lines' },
+  { id: 'transformer', label: 'Transformers' },
 ];
 
 export type ScenarioConfigPatch = Pick<DynamicChartConfig, 'topN' | 'equipment' | 'elementMode' | 'elementIds' | 'scenarioIds'>;
@@ -35,11 +36,11 @@ export default function ScenarioOptions({ kind, config, onChange, compact = fals
   const chosenScenarios = useMemo(() => new Set(config.scenarioIds ?? []), [config.scenarioIds]);
 
   const items = useMemo(() => {
-    const all = bus ? (data?.buses ?? []) : (data?.lines ?? []);
+    const all = bus ? (data?.buses ?? []) : filterByEquipment(data?.lines ?? [], equipment);
+    const needle = query.trim().toLocaleLowerCase('en');
     return all
-      .filter((item) => bus || equipment === 'all' || equipmentKind(item.type) === equipment)
-      .filter((item) => !query.trim() || item.name.toLocaleLowerCase('de').includes(query.trim().toLocaleLowerCase('de')))
-      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+      .filter((item) => !needle || item.name.toLocaleLowerCase('en').includes(needle))
+      .sort((a, b) => a.name.localeCompare(b.name, 'en'));
   }, [data, bus, equipment, query]);
 
   const toggle = (id: string) => {
@@ -59,9 +60,9 @@ export default function ScenarioOptions({ kind, config, onChange, compact = fals
     <div className={compact ? 'space-y-2' : 'space-y-4'}>
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <span className={label}>{bus ? 'Sammelschienen' : 'Betriebsmittel'}</span>
-          <div className="inline-flex overflow-hidden rounded border border-[var(--grid-border)] text-xs" role="group" aria-label="Auswahlmodus">
-            {([['auto', `Automatisch (Top ${topN})`], ['selected', `Ausgewählte${mode === 'selected' ? ` (${chosen.size})` : ''}`]] as const).map(([id, text]) => (
+          <span className={label}>{bus ? 'Busbars' : 'Equipment'}</span>
+          <div className="inline-flex overflow-hidden rounded border border-[var(--grid-border)] text-xs" role="group" aria-label="Selection mode">
+            {([['auto', `Automatic (top ${topN})`], ['selected', `Selected${mode === 'selected' ? ` (${chosen.size})` : ''}`]] as const).map(([id, text]) => (
               <button key={id} type="button" aria-pressed={mode === id} onClick={() => onChange({ elementMode: id })}
                 className={`px-2.5 py-1 transition-colors ${mode === id ? 'bg-[var(--grid-primary)] text-white' : 'bg-[var(--grid-control)] text-[var(--grid-text-soft)] hover:bg-[var(--grid-control-hover)]'}`}>
                 {text}
@@ -71,7 +72,7 @@ export default function ScenarioOptions({ kind, config, onChange, compact = fals
         </div>
         {mode === 'auto' && (
           <label>
-            <span className={label}>Anzahl</span>
+            <span className={label}>Count</span>
             <select className={select} value={topN} onChange={(e) => onChange({ topN: Number(e.target.value) })}>
               {TOP_OPTIONS.map((n) => <option key={n} value={n}>Top {n}</option>)}
             </select>
@@ -79,7 +80,7 @@ export default function ScenarioOptions({ kind, config, onChange, compact = fals
         )}
         {!bus && (
           <label>
-            <span className={label}>Typ</span>
+            <span className={label}>Type</span>
             <select className={select} value={equipment} onChange={(e) => onChange({ equipment: e.target.value as Equipment })}>
               {EQUIPMENT_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
             </select>
@@ -90,31 +91,30 @@ export default function ScenarioOptions({ kind, config, onChange, compact = fals
       {mode === 'selected' && (
         <div>
           <div className="mb-1 flex flex-wrap items-center gap-2">
-            <input type="search" className="grid-form-input grid-form-input--compact h-6 w-44" placeholder="Suchen" aria-label="Betriebsmittel suchen" value={query} onChange={(e) => setQuery(e.target.value)} />
-            <button type="button" className="text-xs text-[var(--grid-info)] hover:text-[var(--grid-primary)]" onClick={() => onChange({ elementIds: [...new Set([...chosen, ...items.map((i) => i.id)])] })}>Alle angezeigten</button>
-            <button type="button" className="text-xs text-[var(--grid-info)] hover:text-[var(--grid-primary)]" onClick={() => onChange({ elementIds: [] })}>Keine</button>
-            <span className="text-xs text-[var(--grid-muted)]">{chosen.size} gewählt</span>
+            <input type="search" className="grid-form-input grid-form-input--compact h-6 w-44" placeholder="Search" aria-label="Search equipment" value={query} onChange={(e) => setQuery(e.target.value)} />
+            <button type="button" className="text-xs text-[var(--grid-info)] hover:text-[var(--grid-primary)]" onClick={() => onChange({ elementIds: [...new Set([...chosen, ...items.map((i) => i.id)])] })}>All shown</button>
+            <button type="button" className="text-xs text-[var(--grid-info)] hover:text-[var(--grid-primary)]" onClick={() => onChange({ elementIds: [] })}>None</button>
+            <span className="text-xs text-[var(--grid-muted)]">{chosen.size} selected</span>
           </div>
-          <div className="max-h-44 space-y-0.5 overflow-y-auto rounded border border-[var(--grid-border)] bg-[var(--grid-subpanel)] p-1.5" role="group" aria-label="Auswahl">
-            {!data && <div className="px-2 py-1 text-xs text-[var(--grid-muted)]">Wird geladen …</div>}
-            {data && items.length === 0 && <div className="px-2 py-1 text-xs text-[var(--grid-muted)]">Keine Treffer.</div>}
+          <div className="max-h-44 space-y-0.5 overflow-y-auto rounded border border-[var(--grid-border)] bg-[var(--grid-subpanel)] p-1.5" role="group" aria-label="Selection">
+            {!data && <div className="px-2 py-1 text-xs text-[var(--grid-muted)]">Loading …</div>}
+            {data && items.length === 0 && <div className="px-2 py-1 text-xs text-[var(--grid-muted)]">No matches.</div>}
             {items.map((item) => (
               <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-0.5 text-xs text-[var(--grid-text-soft)] hover:bg-[var(--grid-control-hover)]">
                 <input type="checkbox" className="accent-[var(--grid-primary)]" checked={chosen.has(item.id)} onChange={() => toggle(item.id)} />
-                {!bus && EQUIPMENT_MARK[equipmentKind(item.type)] && <span className="ab-type">{EQUIPMENT_MARK[equipmentKind(item.type)]}</span>}
-                <span className="truncate">{item.name}</span>
+                <span className="truncate">{bus ? item.name : <EquipmentName type={item.type} name={item.name} />}</span>
               </label>
             ))}
           </div>
-          {chosen.size === 0 && <p className="mt-1 text-xs text-[var(--grid-warning)]">Bitte mindestens ein Element wählen.</p>}
+          {chosen.size === 0 && <p className="mt-1 text-xs text-[var(--grid-warning)]">Please choose at least one element.</p>}
         </div>
       )}
 
       {(data?.scenarios.length ?? 0) > 1 && (
         <div>
-          <span className={label}>Szenarien {chosenScenarios.size === 0 ? '(alle)' : `(${chosenScenarios.size})`}</span>
-          <div className="flex flex-wrap gap-1" role="group" aria-label="Szenarien">
-            <button type="button" className="ab-chip" aria-pressed={chosenScenarios.size === 0} onClick={() => onChange({ scenarioIds: [] })}>Alle</button>
+          <span className={label}>Scenarios {chosenScenarios.size === 0 ? '(all)' : `(${chosenScenarios.size})`}</span>
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Scenarios">
+            <button type="button" className="ab-chip" aria-pressed={chosenScenarios.size === 0} onClick={() => onChange({ scenarioIds: [] })}>All</button>
             {data!.scenarios.map((scenario, index) => (
               <button key={scenario.id} type="button" className="ab-chip" aria-pressed={chosenScenarios.has(scenario.id)} title={scenario.name} onClick={() => toggleScenario(scenario.id)}>
                 {scenarioCode(index)}

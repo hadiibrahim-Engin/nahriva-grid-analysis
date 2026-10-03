@@ -5,8 +5,7 @@ import sys
 from app.simulation.across import across_scenarios
 from app.simulation.store import ScenarioStore
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from seed_dummy_qds import create_dummy_database
+from tests.qds_fixture import create_dummy_database
 
 
 def load(tmp_path):
@@ -22,28 +21,28 @@ def test_buses_are_excluded_and_every_scenario_is_listed(tmp_path):
     result, ids, lines = load(tmp_path)
     assert {line["type"] for line in lines.values()} == {"line", "transformer"}  # all branch equipment
     assert len(ids) == 8 and len(lines) == 10
-    assert not any("Sammelschiene" in name for name in lines)
+    assert not any("Busbar" in name for name in lines)
     assert result["has_lodf"]
 
 
 def test_scenario_value_delta_and_lodf_for_single_outage(tmp_path):
     _, ids, lines = load(tmp_path)
-    cell = lines["Leitung Nord–Ost"]["cells"][ids["Freischaltung Leitung Nord"]]
+    cell = lines["Line North–East"]["cells"][ids["Outage Line North"]]
     assert round(cell["value"], 1) == 128.2  # 64 % base + 64 pp inside the outage window
     assert round(cell["delta"], 1) == 64.2  # like for like: REF maximum in the same window
     assert round(cell["lodf"], 2) == 0.55
-    assert lines["Leitung Nord–Ost"]["base"] == 64.0
+    assert lines["Line North–East"]["base"] == 64.0
 
 
 def test_switched_off_line_has_no_value_and_no_delta(tmp_path):
     _, ids, lines = load(tmp_path)
-    cell = lines["Leitung Nord–West"]["cells"][ids["Freischaltung Leitung Nord"]]
+    cell = lines["Line North–West"]["cells"][ids["Outage Line North"]]
     assert cell["outaged"] and cell["value"] is None and cell["delta"] is None
 
 
 def test_unaffected_line_has_zero_delta(tmp_path):
     _, ids, lines = load(tmp_path)
-    cell = lines["Trafo Nord T1"]["cells"][ids["Freischaltung Leitung Süd"]]
+    cell = lines["Transformer North T1"]["cells"][ids["Outage Line South"]]
     assert not cell["outaged"] and abs(cell["delta"]) < 1e-9
 
 
@@ -66,28 +65,28 @@ def test_endpoint_returns_the_aggregation_read_only(tmp_path, monkeypatch):
 def test_overload_time_relates_to_the_simulation_period_not_to_scenarios(tmp_path):
     result, ids, lines = load(tmp_path)
     assert result["period_hours"] == 168.0  # 672 steps of 15 minutes
-    cell = lines["Leitung Mitte–Süd"]["cells"][ids["Freischaltung Leitung Süd"]]
+    cell = lines["Line Central–South"]["cells"][ids["Outage Line South"]]
     assert cell["outaged"] and cell["hours_over"] is None
-    cell = lines["Leitung Nord–Ost"]["cells"][ids["Freischaltung Leitung Nord"]]
+    cell = lines["Line North–East"]["cells"][ids["Outage Line North"]]
     over100, over110, over120 = cell["hours_over"]
     assert 0 < over120 <= over110 <= over100 < 24  # only inside the one-day outage window
-    quiet = lines["Trafo Nord T1"]["cells"][ids["Freischaltung Leitung Süd"]]
+    quiet = lines["Transformer North T1"]["cells"][ids["Outage Line South"]]
     assert quiet["hours_over"] == [0.0, 0.0, 0.0]
 
 
 def test_busbars_carry_voltage_ranges_limits_and_hours_outside_the_band(tmp_path):
     result, ids, _ = load(tmp_path)
     buses = {bus["name"]: bus for bus in result["buses"]}
-    assert set(buses) == {"Sammelschiene Nord", "Sammelschiene Süd", "Sammelschiene Ost"}
-    south = buses["Sammelschiene Süd"]
+    assert set(buses) == {"Busbar North", "Busbar South", "Busbar East"}
+    south = buses["Busbar South"]
     assert south["limits"] == [0.9, 1.1]
     assert result["voltage_unit"] == "p.u."
-    cell = south["cells"][ids["Freischaltung Trafo Süd"]]
+    cell = south["cells"][ids["Outage Transformer South"]]
     assert cell["out"][0] < 0.9 <= cell["ref"][0]  # band violated by the outage, REF within the band
     assert cell["hours_outside"] > 0
-    calm = south["cells"][ids["Freischaltung Leitung Nord"]]
+    calm = south["cells"][ids["Outage Line North"]]
     assert calm["hours_outside"] == 0
-    east = buses["Sammelschiene Ost"]["cells"][ids["Freischaltung Leitung Ost"]]
+    east = buses["Busbar East"]["cells"][ids["Outage Line East"]]
     assert east["out"][1] > 1.1 >= east["ref"][1]  # overvoltage
 
 
@@ -95,10 +94,10 @@ def test_profile_lists_the_most_critical_in_service_branches(tmp_path):
     from app.simulation.across import scenario_profile
 
     store = ScenarioStore(str(create_dummy_database(tmp_path / "demo.sqlite3")))
-    scenario = next(s for s in across_scenarios(store)["scenarios"] if s["name"] == "Freischaltung Trafo Süd")
+    scenario = next(s for s in across_scenarios(store)["scenarios"] if s["name"] == "Outage Transformer South")
     profile = scenario_profile(store, scenario["id"], top=3, points=100)
-    assert [s["name"] for s in profile["series"]][0] == "Leitung Süd–West"
-    assert "Trafo Süd T2" not in [s["name"] for s in profile["series"]]  # switched off in this scenario
+    assert [s["name"] for s in profile["series"]][0] == "Line South–West"
+    assert "Transformer South T2" not in [s["name"] for s in profile["series"]]  # switched off in this scenario
     assert len(profile["times"]) <= 100 and len(profile["series"][0]["out"]) == len(profile["times"])
     assert max(v for v in profile["series"][0]["out"] if v is not None) > 100
     assert len(profile["windows"]) == 1
@@ -156,8 +155,8 @@ def test_per_scenario_cells_compose_to_the_combined_payload(tmp_path):
     full = across.across_scenarios(store)
     assert [s["id"] for s in partial["scenarios"]] == [s["id"] for s in index["scenarios"][:2]]
     assert len(full["scenarios"]) == 8 and len(full["lines"]) == 10 and len(full["buses"]) == 3
-    line = next(item for item in full["lines"] if item["name"] == "Leitung Nord–Ost")
-    sid = next(s["id"] for s in full["scenarios"] if s["name"] == "Freischaltung Leitung Nord")
+    line = next(item for item in full["lines"] if item["name"] == "Line North–East")
+    sid = next(s["id"] for s in full["scenarios"] if s["name"] == "Outage Line North")
     assert round(line["cells"][sid]["value"], 1) == 128.2 and line["base"] == 64.0
     store.close()
 

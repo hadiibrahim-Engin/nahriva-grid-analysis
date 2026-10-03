@@ -1,5 +1,5 @@
 /**
- * Criteria of the outage (Freischaltung) assessment. Change values here only.
+ * Criteria of the outage assessment. Change values here only.
  *
  * A scenario is judged on all evaluated equipment: branches by thermal loading
  * (lines, transformers) and busbars by voltage. The decisive question is whether a
@@ -25,23 +25,23 @@ export type Verdict = 'permissible' | 'conditional' | 'not-permissible' | 'unkno
 
 export const VERDICTS: Record<Verdict, { label: string; glyph: string; description: string }> = {
   permissible: {
-    label: 'Zulässig',
+    label: 'Permissible',
     glyph: '✓',
-    description: 'Keine Verletzung durch die Freischaltung, keine Annäherung an Grenzen.',
+    description: 'No violation caused by the outage and no approach to limits.',
   },
   conditional: {
-    label: 'Bedingt zulässig',
+    label: 'Conditionally permissible',
     glyph: '!',
-    description: 'Keine neue Verletzung, aber Vorbelastung über den Grenzen, geringe thermische Reserve, Warnbereich oder geringe Spannungsreserve.',
+    description: 'No new violation, but pre-existing load above the limits, a small thermal reserve, the warning range or a small voltage reserve.',
   },
   'not-permissible': {
-    label: 'Nicht zulässig',
+    label: 'Not permissible',
     glyph: '✕',
-    description: 'Überlastung oder Spannungsverletzung durch die Freischaltung verursacht oder verschärft.',
+    description: 'Overload or voltage violation caused or aggravated by the outage.',
   },
   unknown: {
-    label: 'Nicht bewertbar',
+    label: 'Not assessable',
     glyph: '?',
-    description: 'Keine Ergebniswerte für dieses Szenario.',
+    description: 'No result values for this scenario.',
   },
 };

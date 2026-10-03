@@ -7,53 +7,32 @@
  * `kind` to fetch the right data source and render the matching ECharts
  * component.
  *
- * Templates whose backend data does not exist yet are flagged `comingSoon` —
- * they still appear in the gallery (greyed out, non-selectable) so the product
- * surface is discoverable, but they cannot be generated.
+ * The PowerFactory export delivers loading (L) and voltage (U) of a short scenario simulation, so
+ * only charts that make sense for these two signals are registered.
  */
 
-export type ChartCategory =
-  | 'scenarioEvaluation'
-  | 'timeseries'
-  | 'distribution'
-  | 'powerQuality'
-  | 'gridOperation'
-  | 'correlation'
-  | 'forecastEvents'
-  | 'dataQuality';
+export type ChartCategory = 'scenarioEvaluation' | 'timeseries' | 'distribution' | 'limits' | 'correlation';
 
 export const CATEGORY_LABELS: Record<ChartCategory, string> = {
-  scenarioEvaluation: 'Szenarioauswertung',
-  timeseries: 'Zeitreihen',
-  distribution: 'Verteilung',
-  powerQuality: 'Netzqualität',
-  gridOperation: 'Netzbetrieb',
-  correlation: 'Korrelation',
-  forecastEvents: 'Prognose / Ereignisse',
-  dataQuality: 'Datenqualität',
+  scenarioEvaluation: 'Scenario evaluation',
+  timeseries: 'Time series',
+  distribution: 'Distribution',
+  limits: 'Limits',
+  correlation: 'Correlation',
 };
 
 /** Fixed display order of categories in the picker. */
-export const CATEGORY_ORDER: ChartCategory[] = [
-  'scenarioEvaluation',
-  'timeseries',
-  'distribution',
-  'powerQuality',
-  'gridOperation',
-  'correlation',
-  'forecastEvents',
-  'dataQuality',
-];
+export const CATEGORY_ORDER: ChartCategory[] = ['scenarioEvaluation', 'timeseries', 'distribution', 'limits', 'correlation'];
 
 /** How many source signals the template consumes. */
 export type SignalArity = 'none' | 'one' | 'two' | 'three' | 'multi';
 
 export const ARITY_LABELS: Record<SignalArity, string> = {
-  none: 'Alle Szenarien',
-  one: 'Ein Signal',
-  two: 'Zwei Signale',
-  three: 'Drei Signale',
-  multi: 'Mehrere Signale',
+  none: 'All scenarios',
+  one: 'One signal',
+  two: 'Two signals',
+  three: 'Three signals',
+  multi: 'Several signals',
 };
 
 /** Discriminator consumed by DynamicChartCard to pick the fetch + render path. */
@@ -65,35 +44,22 @@ export type ChartKind =
   | 'acrossLodf'
   | 'acrossVoltage'
   | 'acrossVoltageDelta'
+  // Charts of saved signals:
   | 'overlay'
   | 'aggTrend'
   | 'histogram'
-  | 'heatmap'
   | 'durationCurve'
-  | 'dailyProfile'
-  | 'peakDemand'
   | 'correlationScatter'
   | 'correlationScatter3'
   | 'correlationScatter3d'
   | 'correlationMatrix'
   | 'boxplot'
-  | 'powerFactor'
   | 'exceedance'
-  | 'quality'
-  | 'dst'
-  | 'seasonRadar'
   // Client-side derived (computed from already-loaded raw timeseries):
-  | 'pqQuadrant'
-  | 'quScatter'
-  | 'energyIntegral'
-  | 'lossesEfficiency'
-  | 'assetLoading'
-  | 'overloadDuration'
   | 'rollingEnvelope'
   | 'thresholdBands'
   | 'anomalyScore'
-  | 'voltageCompliance'
-  | 'comingSoon';
+  | 'voltageCompliance';
 
 export interface ChartTemplate {
   id: string;
@@ -106,17 +72,9 @@ export interface ChartTemplate {
   /** Measurement types the user selects the source FROM, e.g. ['P','Q']. Empty = any. */
   measurements: string[];
   /**
-   * Measurement types the selected COMPONENT must provide for the calculation
-   * to be physically correct, e.g. power factor needs P, Q AND S of the same
-   * component. Checked against the loaded signals; the Add-chart action is
-   * blocked (with a clear hint) until all are present. Empty/undefined = none.
-   */
-  requiredComponentMeasurements?: string[];
-  /**
    * Component-level charts derive their result from several measurements of ONE
-   * Betriebsmittel (e.g. power factor uses P, Q, S; the correlation matrix uses
-   * all measurements). The picker then selects a COMPONENT, not a single
-   * measurement signal — picking "P" alone would be misleading.
+   * equipment (e.g. the correlation matrix uses all measurements). The picker then
+   * selects a COMPONENT, not a single measurement signal.
    */
   componentLevel?: boolean;
   arity: SignalArity;
@@ -131,7 +89,7 @@ export interface ChartTemplate {
   needsThreshold?: boolean;
   /** Show a configurable list of threshold levels. */
   needsThresholdLevels?: boolean;
-  /** Override the generic "Schwellwert" label (e.g. "Bemessungsleistung (MVA)"). */
+  /** Override the generic "Threshold" label (e.g. "Nominal voltage"). */
   thresholdLabel?: string;
   /** Default value for the threshold input. */
   thresholdDefault?: number;
@@ -158,8 +116,6 @@ export interface ChartTemplate {
   needsBoxplotMode?: boolean;
   /** Show the correlation-statistic selector (Pearson/Spearman/Kendall). */
   needsCorrelationMethod?: boolean;
-  /** Still registered for discoverability but not yet renderable (no data source). */
-  comingSoon?: boolean;
 }
 
 export const CHART_TEMPLATES: ChartTemplate[] = [
@@ -167,8 +123,8 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'across-loading-range',
     kind: 'acrossLoading',
-    name: 'Höchste Auslastung je Betriebsmittel',
-    question: 'Welche Betriebsmittel erreichen über alle Szenarien die höchste Auslastung (Base bis Maximum)?',
+    name: 'Highest loading per equipment',
+    question: 'Which equipment reaches the highest loading across all scenarios (base to maximum)?',
     category: 'scenarioEvaluation',
     measurements: [],
     arity: 'none',
@@ -178,8 +134,8 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'across-overload-time',
     kind: 'acrossTime',
-    name: 'Überlastdauer (Overload Rate)',
-    question: 'Wie lange und wie stark sind Betriebsmittel im Simulationszeitraum überlastet?',
+    name: 'Overload duration (overload rate)',
+    question: 'How long and how strongly is equipment overloaded during the simulation period?',
     category: 'scenarioEvaluation',
     measurements: [],
     arity: 'none',
@@ -189,8 +145,8 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'across-delta',
     kind: 'acrossDelta',
-    name: 'Änderung der Auslastung',
-    question: 'Welche Betriebsmittel ändern ihre Auslastung durch eine Freischaltung am stärksten (pp gegenüber REF)?',
+    name: 'Change of loading',
+    question: 'Which equipment changes its loading most because of an outage (pp compared with REF)?',
     category: 'scenarioEvaluation',
     measurements: [],
     arity: 'none',
@@ -200,8 +156,8 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'across-voltage',
     kind: 'acrossVoltage',
-    name: 'Spannung je Sammelschiene',
-    question: 'Wie verhält sich die Spannung der gewählten Sammelschienen in den Szenarien gegenüber dem Spannungsband?',
+    name: 'Voltage per busbar',
+    question: 'How does the voltage of the chosen busbars behave in the scenarios compared with the voltage band?',
     category: 'scenarioEvaluation',
     measurements: [],
     arity: 'none',
@@ -211,8 +167,8 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'across-voltage-delta',
     kind: 'acrossVoltageDelta',
-    name: 'Spannungsänderung (ΔU)',
-    question: 'Wie stark ändert eine Freischaltung die Spannung der gewählten Sammelschienen gegenüber REF?',
+    name: 'Voltage change (ΔU)',
+    question: 'How much does an outage change the voltage of the chosen busbars compared with REF?',
     category: 'scenarioEvaluation',
     measurements: [],
     arity: 'none',
@@ -222,20 +178,20 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'across-lodf',
     kind: 'acrossLodf',
-    name: 'LODF und Änderung der Auslastung',
-    question: 'Wo treffen ein hoher LODF und eine große Mehrbelastung zusammen?',
+    name: 'LODF and change of loading',
+    question: 'Where do a high LODF and a large additional load coincide?',
     category: 'scenarioEvaluation',
     measurements: [],
     arity: 'none',
     scenarioLevel: true,
     needsScenarioOptions: true,
   },
-  // -- Live templates (backed by existing API + chart components) ----------
+  // -- Signal charts: one or more saved signals --------------------------------
   {
     id: 'timeseries-overlay',
     kind: 'overlay',
-    name: 'Zeitreihen-Overlay',
-    question: 'Wie verlaufen mehrere Signale im direkten Vergleich?',
+    name: 'Time series overlay',
+    question: 'How do several signals compare directly?',
     category: 'timeseries',
     measurements: [],
     arity: 'multi',
@@ -244,8 +200,8 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'aggregated-trend',
     kind: 'aggTrend',
-    name: 'Aggregierter Trend',
-    question: 'Wie sieht der Mittel-/Min-/Max-/Summen-Trend bei gewählter Auflösung aus?',
+    name: 'Aggregated trend',
+    question: 'What does the mean / min / max / sum trend look like at the chosen resolution?',
     category: 'timeseries',
     measurements: [],
     arity: 'multi',
@@ -254,31 +210,32 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
     needsYAxisControl: true,
   },
   {
-    id: 'daily-profile',
-    kind: 'dailyProfile',
-    name: 'Tagesprofil',
-    question: 'Wie unterscheidet sich der mittlere Tagesverlauf an Werktagen und Wochenenden?',
+    id: 'rolling-envelope',
+    kind: 'rollingEnvelope',
+    name: 'Rolling mean',
+    question: 'How does the smoothed profile develop over time?',
     category: 'timeseries',
     measurements: [],
     arity: 'multi',
+    needsResolution: true,
     needsYAxisControl: true,
   },
   {
-    id: 'season-radar',
-    kind: 'seasonRadar',
-    name: 'Saison-Radar',
-    question: 'Wie sieht der saisonale Fingerabdruck über die Monate aus?',
+    id: 'anomaly-score',
+    kind: 'anomalyScore',
+    name: 'Anomaly score (z-value)',
+    question: 'When does the signal deviate statistically from its normal behaviour?',
     category: 'timeseries',
-    // Season radar is backed by P/Q/S monthly medians; only the picked ones
-    // are computed and drawn (one radar per Betriebsmittel, polygons combined).
-    measurements: ['P', 'Q', 'S'],
-    arity: 'multi',
+    measurements: [],
+    arity: 'one',
+    needsResolution: true,
+    needsYAxisControl: true,
   },
   {
     id: 'histogram',
     kind: 'histogram',
-    name: 'Histogramm',
-    question: 'Wie sind die Messwerte einer oder mehrerer Zeitreihen verteilt?',
+    name: 'Histogram',
+    question: 'How are the values of one or more time series distributed?',
     category: 'distribution',
     measurements: [],
     arity: 'multi',
@@ -288,8 +245,8 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'boxplot-distribution',
     kind: 'boxplot',
-    name: 'Boxplot-Verteilung',
-    question: 'Wie streuen die Werte (Median, Quartile, Ausreißer) — gruppiert nach Stunde, Wochentag, Monat oder Werktag/Wochenende?',
+    name: 'Boxplot distribution',
+    question: 'How do the values spread (median, quartiles, outliers), grouped by hour, weekday, month or weekday/weekend?',
     category: 'distribution',
     measurements: [],
     arity: 'multi',
@@ -300,54 +257,19 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'duration-curve',
     kind: 'durationCurve',
-    name: 'Dauerlinie',
-    question: 'Wie lange wird ein Wert über den Zeitraum überschritten?',
+    name: 'Duration curve',
+    question: 'For how long is a value exceeded over the period?',
     category: 'distribution',
     measurements: [],
     arity: 'multi',
     needsYAxisControl: true,
   },
   {
-    id: 'power-factor',
-    kind: 'powerFactor',
-    name: 'Leistungsfaktor',
-    question: 'Wie verhält sich cos φ / tan φ aus P, Q und S?',
-    category: 'powerQuality',
-    measurements: [],
-    // Component-level: the backend derives cos φ / tan φ from the
-    // Betriebsmittel's P, Q, S — the user picks the component, not a single
-    // measurement, and the needed inputs are pulled automatically.
-    componentLevel: true,
-    arity: 'one',
-    needsYAxisControl: true,
-  },
-  {
-    id: 'day-hour-heatmap',
-    kind: 'heatmap',
-    name: 'Tag/Stunde-Heatmap',
-    question: 'Welche Last- bzw. Spannungsmuster zeigen sich nach Wochentag und Stunde?',
-    category: 'gridOperation',
-    // Two heatmaps cannot share axes, so multiple signals are switched via a
-    // dropdown on the card instead of being combined.
-    measurements: [],
-    arity: 'multi',
-  },
-  {
-    id: 'peak-demand',
-    kind: 'peakDemand',
-    name: 'Spitzenlast',
-    question: 'Wann treten Tages-, Wochen- oder Monatsspitzen auf und wer trägt dazu bei?',
-    category: 'gridOperation',
-    measurements: ['P'],
-    arity: 'multi',
-    needsYAxisControl: true,
-  },
-  {
     id: 'exceedance-threshold',
     kind: 'exceedance',
-    name: 'Schwellwertüberschreitung',
-    question: 'Wie oft und wie stark wird ein Schwellwert überschritten?',
-    category: 'gridOperation',
+    name: 'Threshold exceedance',
+    question: 'How often and how strongly is a threshold exceeded?',
+    category: 'limits',
     measurements: [],
     arity: 'one',
     needsThreshold: true,
@@ -356,9 +278,9 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'multi-threshold-lines',
     kind: 'thresholdBands',
-    name: 'Mehrstufige Schwellwertlinien',
-    question: 'Wann erreicht das Signal Warn- und Überschreitungsstufen?',
-    category: 'gridOperation',
+    name: 'Multi-level threshold lines',
+    question: 'When does the signal reach warning and exceedance levels?',
+    category: 'limits',
     measurements: [],
     arity: 'one',
     needsThresholdLevels: true,
@@ -366,10 +288,26 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
     needsYAxisControl: true,
   },
   {
+    id: 'voltage-compliance',
+    kind: 'voltageCompliance',
+    name: 'Voltage compliance',
+    question: 'Does U leave the chosen band around the nominal voltage?',
+    category: 'limits',
+    measurements: ['U'],
+    arity: 'one',
+    needsThreshold: true,
+    thresholdLabel: 'Nominal voltage (0 = automatic from data)',
+    thresholdDefault: 0,
+    needsVoltageBand: true,
+    voltageMinPercentDefault: 90,
+    voltageMaxPercentDefault: 110,
+    needsYAxisControl: true,
+  },
+  {
     id: 'correlation-scatter',
     kind: 'correlationScatter',
-    name: 'Korrelations-Scatter',
-    question: 'Wie hängen zwei Messgrößen zusammen (Pearson, Spearman oder Kendall)?',
+    name: 'Correlation scatter',
+    question: 'How are two measurements related (Pearson, Spearman or Kendall)?',
     category: 'correlation',
     measurements: [],
     arity: 'two',
@@ -379,8 +317,8 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'correlation-scatter-3d',
     kind: 'correlationScatter3',
-    name: 'Farbkodierter Korrelations-Scatter',
-    question: 'Wie hängen zwei Messgrößen zusammen, wenn eine dritte die Punktfarbe steuert?',
+    name: 'Colour-coded correlation scatter',
+    question: 'How are two measurements related when a third one controls the point colour?',
     category: 'correlation',
     measurements: [],
     arity: 'three',
@@ -390,8 +328,8 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'correlation-scatter-3d-view',
     kind: 'correlationScatter3d',
-    name: '3D-Korrelations-Scatter',
-    question: 'Wie verteilen sich drei Messgrößen gemeinsam im X/Y/Z-Raum?',
+    name: '3D correlation scatter',
+    question: 'How do three measurements distribute together in X/Y/Z space?',
     category: 'correlation',
     measurements: [],
     arity: 'three',
@@ -401,240 +339,14 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
   {
     id: 'correlation-matrix',
     kind: 'correlationMatrix',
-    name: 'Korrelationsmatrix',
-    question: 'Wie korrelieren alle Messgrößen eines Betriebsmittels untereinander?',
+    name: 'Correlation matrix',
+    question: 'How do all measurements of one equipment correlate with each other?',
     category: 'correlation',
     measurements: [],
     componentLevel: true,
     arity: 'one',
-  },
-  {
-    id: 'dst-anomaly',
-    kind: 'dst',
-    name: 'Zeitumstellung / Zeit-Anomalie',
-    question: 'Treten an Zeitumstellungstagen fehlende oder doppelte Stunden auf?',
-    category: 'forecastEvents',
-    measurements: [],
-    componentLevel: true,
-    arity: 'one',
-  },
-  {
-    id: 'quality-gap-heatmap',
-    kind: 'quality',
-    name: 'Qualitäts-Lücken-Heatmap',
-    question: 'Wo fehlen Messwerte nach Tag und Stunde?',
-    category: 'dataQuality',
-    measurements: [],
-    componentLevel: true,
-    arity: 'one',
-  },
-
-  // -- Client-side derived (computed from the loaded raw timeseries) -------
-  {
-    id: 'pq-quadrant',
-    kind: 'pqQuadrant',
-    name: 'P-Q-Quadrant',
-    question: 'In welchem Lastquadranten (P/Q) arbeitet das Betriebsmittel?',
-    category: 'powerQuality',
-    measurements: ['P', 'Q'],
-    arity: 'two',
-    needsYAxisControl: true,
-  },
-  {
-    id: 'qu-scatter',
-    kind: 'quScatter',
-    name: 'Q-U-Scatter',
-    question: 'Wie hängt die Blindleistung von der Spannung ab?',
-    category: 'correlation',
-    measurements: ['Q', 'U'],
-    arity: 'two',
-    needsYAxisControl: true,
-  },
-  {
-    id: 'energy-integral',
-    kind: 'energyIntegral',
-    name: 'Energie-Integral',
-    question: 'Wie viel Energie (∫P dt) wurde im Zeitraum umgesetzt?',
-    category: 'gridOperation',
-    measurements: ['P'],
-    arity: 'one',
-    needsYAxisControl: true,
-  },
-  {
-    id: 'losses-efficiency',
-    kind: 'lossesEfficiency',
-    name: 'Verluste (Ein- minus Ausspeisung)',
-    question: 'Wie hoch sind die Wirkleistungsverluste zwischen zwei Messpunkten?',
-    category: 'gridOperation',
-    measurements: ['P'],
-    arity: 'two',
-    needsYAxisControl: true,
-  },
-  {
-    id: 'asset-loading',
-    kind: 'assetLoading',
-    name: 'Betriebsmittel-Auslastung',
-    question: 'Wie hoch ist die Auslastung in % der Bemessungsleistung?',
-    category: 'gridOperation',
-    measurements: ['S'],
-    arity: 'one',
-    needsThreshold: true,
-    thresholdLabel: 'Bemessungsleistung (MVA)',
-    thresholdDefault: 100,
-    needsYAxisControl: true,
-  },
-  {
-    id: 'overload-duration',
-    kind: 'overloadDuration',
-    name: 'Überlast-Dauerlinie',
-    question: 'Wie lange liegt die Auslastung über 100 %?',
-    category: 'gridOperation',
-    measurements: ['S'],
-    arity: 'one',
-    needsThreshold: true,
-    thresholdLabel: 'Bemessungsleistung (MVA)',
-    thresholdDefault: 100,
-    needsYAxisControl: true,
-  },
-  {
-    id: 'rolling-envelope',
-    kind: 'rollingEnvelope',
-    name: 'Rollender Mittelwert',
-    question: 'Wie entwickelt sich der geglättete Verlauf über die Zeit?',
-    category: 'timeseries',
-    measurements: [],
-    arity: 'multi',
-    needsResolution: true,
-    needsYAxisControl: true,
-  },
-  {
-    id: 'anomaly-score',
-    kind: 'anomalyScore',
-    name: 'Anomalie-Score (z-Wert)',
-    question: 'Wann weicht das Signal statistisch auffällig vom Normalverhalten ab?',
-    category: 'forecastEvents',
-    measurements: [],
-    arity: 'one',
-    needsResolution: true,
-    needsYAxisControl: true,
-  },
-  {
-    id: 'voltage-compliance',
-    kind: 'voltageCompliance',
-    name: 'Spannungskonformität',
-    question: 'Verlässt U das gewählte Band um die Nennspannung?',
-    category: 'powerQuality',
-    measurements: ['U'],
-    arity: 'one',
-    needsThreshold: true,
-    thresholdLabel: 'Nennspannung (0 = automatisch aus Daten)',
-    thresholdDefault: 0,
-    needsVoltageBand: true,
-    voltageMinPercentDefault: 90,
-    voltageMaxPercentDefault: 110,
-    needsYAxisControl: true,
-  },
-
-  // -- Coming soon (no data source exists in the FDWH yet) -----------------
-  {
-    id: 'phase-imbalance',
-    kind: 'comingSoon',
-    name: 'Phasenunsymmetrie',
-    question: 'Wie groß ist die Unsymmetrie zwischen L1/L2/L3?',
-    category: 'powerQuality',
-    measurements: ['U', 'I'],
-    arity: 'multi',
-    comingSoon: true,
-  },
-  {
-    id: 'thd-harmonics',
-    kind: 'comingSoon',
-    name: 'THD / Oberschwingungen',
-    question: 'Wie hoch ist der Klirrfaktor und welche Harmonischen dominieren?',
-    category: 'powerQuality',
-    measurements: [],
-    arity: 'one',
-    comingSoon: true,
-  },
-  {
-    id: 'sag-swell-timeline',
-    kind: 'comingSoon',
-    name: 'Sag/Swell/Unterbrechung',
-    question: 'Wann traten Spannungseinbrüche, -spitzen oder Unterbrechungen auf?',
-    category: 'powerQuality',
-    measurements: ['U'],
-    arity: 'one',
-    comingSoon: true,
-  },
-  {
-    id: 'alarm-timeline',
-    kind: 'comingSoon',
-    name: 'Alarm-/Ereignis-Timeline',
-    question: 'Wann traten Alarme und Ereignisse auf?',
-    category: 'forecastEvents',
-    measurements: [],
-    arity: 'one',
-    comingSoon: true,
-  },
-  {
-    id: 'alarm-pareto',
-    kind: 'comingSoon',
-    name: 'Alarm-Pareto / Ranking',
-    question: 'Welche Alarmtypen treten am häufigsten auf?',
-    category: 'forecastEvents',
-    measurements: [],
-    arity: 'one',
-    comingSoon: true,
-  },
-  {
-    id: 'forecast-vs-actual',
-    kind: 'comingSoon',
-    name: 'Prognose vs. Ist',
-    question: 'Wie genau trifft die Prognose den tatsächlichen Verlauf?',
-    category: 'forecastEvents',
-    measurements: [],
-    arity: 'two',
-    comingSoon: true,
-  },
-  {
-    id: 'data-completeness',
-    kind: 'comingSoon',
-    name: 'Vollständigkeit / Flatline',
-    question: 'Wo gibt es Datenlücken oder eingefrorene (flatline) Werte?',
-    category: 'dataQuality',
-    measurements: [],
-    arity: 'one',
-    comingSoon: true,
   },
 ];
-
-/**
- * Templates that stay registered (saved charts keep working) but are not offered in "Diagramm
- * hinzufügen". Reasons, all verified against the PowerFactory export, which delivers only loading (L)
- * and voltage (U) of a short scenario simulation:
- */
-export const HIDDEN_TEMPLATE_REASONS: Record<string, string> = {
-  // Need P, Q, S or I, which the export does not contain.
-  'season-radar': 'braucht P/Q/S und ein Jahresprofil über zwölf Monate',
-  'power-factor': 'braucht P, Q und S',
-  'pq-quadrant': 'braucht P und Q',
-  'qu-scatter': 'braucht Q',
-  'peak-demand': 'braucht P',
-  'energy-integral': 'braucht P',
-  'losses-efficiency': 'braucht P',
-  'asset-loading': 'braucht S; die Auslastung liegt schon in Prozent vor',
-  'overload-duration': 'braucht S; die Dauerlinie auf der Auslastung leistet dasselbe',
-  // Meaningless for a short simulation.
-  'dst-anomaly': 'Simulationszeiten kennen keine Zeitumstellung',
-  'quality-gap-heatmap': 'Simulationsdaten haben keine Messlücken',
-  'daily-profile': 'ein typischer Tag aus sieben Simulationstagen ist nicht aussagekräftig',
-  'day-hour-heatmap': 'Tag-Stunde-Muster brauchen lange Zeiträume',
-};
-
-/** What the picker offers: no hidden and no not-yet-built templates. */
-export const PICKER_TEMPLATES: ChartTemplate[] = CHART_TEMPLATES.filter(
-  (t) => !t.comingSoon && !(t.id in HIDDEN_TEMPLATE_REASONS),
-);
 
 export function getTemplate(id: string): ChartTemplate | undefined {
   return CHART_TEMPLATES.find((t) => t.id === id);

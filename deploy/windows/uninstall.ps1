@@ -1,8 +1,6 @@
-<# Entfernt Autostart und Firewall-Regel. Ergebnisdatenbank und Programmordner bleiben unverändert. #>
+<# Removes the optional autostart task. The results database and the project folder stay unchanged. #>
 $ErrorActionPreference = 'Continue'
 $TaskName = 'OutageAssessmentDashboard'
-$RuleName = 'Outage Assessment Dashboard'
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
-Write-Host "Aufgabe und Firewall-Regel entfernt (sofern vorhanden). Laufende Server-Prozesse ggf. im Task-Manager beenden (pythonw.exe)."
+Write-Host "Autostart task removed (if it existed). A running server can be ended in the Task Manager (pythonw.exe)."

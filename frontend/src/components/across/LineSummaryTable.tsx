@@ -14,7 +14,8 @@ import {
   type ScenarioStats,
   SUMMARY_IDS,
 } from '../../util/acrossScenarios';
-import { EQUIPMENT_LABEL, EQUIPMENT_MARK, causeOf, equipmentKind } from '../../util/freischaltung';
+import { causeCounts, equipmentTitle } from '../../util/outageAssessment';
+import EquipmentName from './EquipmentName';
 import { DataBar, DivergingBar, ScenarioTag, SectionCard } from './shared';
 
 type SortKey =
@@ -24,26 +25,26 @@ type SortKey =
 interface Column { key: SortKey; label: string; title: string; align?: 'right'; detail?: boolean }
 
 const COLUMNS: Column[] = [
-  { key: 'name', label: 'Betriebsmittel', title: 'Leitung (ohne Marke) oder Transformator (T)' },
-  { key: 'status', label: 'Status', title: 'Schweregrad der größten Auslastung und erkanntes Muster' },
-  { key: 'base', label: 'Base', title: 'Base Loading: REF-Maximum über den gesamten Zeitraum', align: 'right' },
-  { key: 'min', label: 'Min', title: 'Kleinste Szenario-Auslastung (Betriebsmittel in Betrieb)', align: 'right' },
-  { key: 'max', label: 'Max Loading', title: 'Größte Szenario-Auslastung' },
-  { key: 'maxScenario', label: 'Szenario', title: 'Szenario bei Max Loading' },
-  { key: 'delta', label: 'Max Δ Loading', title: 'Größte Änderung gegenüber REF im selben Ausfallfenster, in pp (Sortierung nach Betrag)' },
-  { key: 'spread', label: 'Max Δ zw. Szenarien', title: 'Größte minus kleinste Szenario-Auslastung, in pp' },
-  { key: 'n100', label: 'Szen. > 100 %', title: 'Anzahl Szenarien mit Loading > 100 %', align: 'right' },
-  { key: 'n110', label: 'Szen. > 110 %', title: 'Anzahl Szenarien mit Loading > 110 %', align: 'right' },
-  { key: 'n120', label: 'Szen. > 120 %', title: 'Anzahl Szenarien mit Loading > 120 %', align: 'right' },
-  { key: 'rate', label: 'Overload Rate', title: 'Zeit über 100 % im ungünstigsten Szenario, bezogen auf den Simulationszeitraum' },
-  { key: 'sumExcess', label: 'Sum Excess', title: 'Summe von max(Loading − 100 %, 0) über alle Szenarien, in pp' },
-  { key: 'maxExcess', label: 'Max Excess', title: 'Größte Überschreitung über 100 %, in pp', detail: true, align: 'right' },
-  { key: 'meanExcess', label: 'Ø Excess', title: 'Mittlere Überschreitung in den überlasteten Szenarien, in pp', detail: true, align: 'right' },
-  { key: 'lodf', label: 'Max |LODF|', title: 'Größter Betrag des Line Outage Distribution Factors' },
-  { key: 'lodfScenario', label: 'Größter Einfluss', title: 'Szenario mit dem größten Einfluss (höchster |LODF|)' },
+  { key: 'name', label: 'Equipment', title: 'Line (no mark) or transformer (T)' },
+  { key: 'status', label: 'Status', title: 'Severity of the highest loading and detected pattern' },
+  { key: 'base', label: 'Base', title: 'Base loading: REF maximum over the whole period', align: 'right' },
+  { key: 'min', label: 'Min', title: 'Smallest scenario loading (equipment in service)', align: 'right' },
+  { key: 'max', label: 'Max Loading', title: 'Largest scenario loading' },
+  { key: 'maxScenario', label: 'Scenario', title: 'Scenario at max loading' },
+  { key: 'delta', label: 'Max Δ Loading', title: 'Largest change against REF in the same outage window, in pp (sorted by magnitude)' },
+  { key: 'spread', label: 'Max Δ between scenarios', title: 'Largest minus smallest scenario loading, in pp' },
+  { key: 'n100', label: 'Scen. > 100 %', title: 'Number of scenarios with loading > 100 %', align: 'right' },
+  { key: 'n110', label: 'Scen. > 110 %', title: 'Number of scenarios with loading > 110 %', align: 'right' },
+  { key: 'n120', label: 'Scen. > 120 %', title: 'Number of scenarios with loading > 120 %', align: 'right' },
+  { key: 'rate', label: 'Overload Rate', title: 'Time above 100 % in the worst scenario, relative to the simulation period' },
+  { key: 'sumExcess', label: 'Sum Excess', title: 'Sum of max(loading − 100 %, 0) over all scenarios, in pp' },
+  { key: 'maxExcess', label: 'Max Excess', title: 'Largest exceedance above 100 %, in pp', detail: true, align: 'right' },
+  { key: 'meanExcess', label: 'Ø Excess', title: 'Mean exceedance in the overloaded scenarios, in pp', detail: true, align: 'right' },
+  { key: 'lodf', label: 'Max |LODF|', title: 'Largest magnitude of the line outage distribution factor' },
+  { key: 'lodfScenario', label: 'Largest influence', title: 'Scenario with the largest influence (highest |LODF|)' },
 ];
 
-const STATUS_LABEL: Record<BandId, string> = { ok: 'OK', high: 'Hoch', light: 'Leicht', clear: 'Deutlich', severe: 'Stark' };
+const STATUS_LABEL: Record<BandId, string> = { ok: 'OK', high: 'High', light: 'Light', clear: 'Clear', severe: 'Strong' };
 
 function sortValue(s: LineStats, key: SortKey, codeOf: (id: string | null) => string | null): number | string | null {
   switch (key) {
@@ -76,6 +77,18 @@ interface Props {
 
 const PAGE = 25;
 
+const scenarioCount = (count: number) => `${count} scenario${count === 1 ? '' : 's'}`;
+
+/** Where a line's overloads come from: the outage itself, or the load it already carried. */
+function CauseNotes({ counts }: { counts: { caused: number; preexisting: number } }) {
+  return (
+    <>
+      {counts.caused > 0 && <span className="ab-sub">Caused by the outage in {scenarioCount(counts.caused)}</span>}
+      {counts.preexisting > 0 && <span className="ab-sub">Pre-existing load in {scenarioCount(counts.preexisting)}</span>}
+    </>
+  );
+}
+
 export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHours }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'status', dir: 'desc' });
   const [query, setQuery] = useState('');
@@ -84,6 +97,7 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
   const [limit, setLimit] = useState(PAGE);
 
   const stats = useMemo(() => new Map(scenarios.map((s) => [s.scenario.id, s])), [scenarios]);
+  const scenarioIds = useMemo(() => scenarios.map((s) => s.scenario.id), [scenarios]);
   const codeOf = useCallback((id: string | null) => (id ? stats.get(id)?.code ?? null : null), [stats]);
   const scales = useMemo(() => ({
     rate: Math.max(0.1, ...lines.map((s) => s.overloadShare)),
@@ -95,9 +109,9 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
   }), [lines]);
 
   const rows = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase('de');
+    const needle = query.trim().toLocaleLowerCase('en');
     const filtered = lines.filter((s) =>
-      (!needle || s.line.name.toLocaleLowerCase('de').includes(needle)) &&
+      (!needle || s.line.name.toLocaleLowerCase('en').includes(needle)) &&
       (!onlyRelevant || s.n100 > 0 || s.pattern !== null));
     const sign = sort.dir === 'asc' ? 1 : -1;
     return [...filtered].sort((a, b) => {
@@ -106,7 +120,7 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
       if (x === null && y === null) return 0;
       if (x === null) return 1; // missing values always last
       if (y === null) return -1;
-      return (typeof x === 'string' && typeof y === 'string' ? x.localeCompare(y, 'de') : (x as number) - (y as number)) * sign;
+      return (typeof x === 'string' && typeof y === 'string' ? x.localeCompare(y, 'en') : (x as number) - (y as number)) * sign;
     });
   }, [lines, query, onlyRelevant, sort, codeOf]);
 
@@ -123,13 +137,13 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
       collapsible
       defaultOpen
       id={SUMMARY_IDS.table}
-      title="Detailtabelle: Betriebsmittel über alle Szenarien"
-      summary={`${lines.length} Betriebsmittel (Leitungen, Transformatoren) mit allen Kennzahlen, sortierbar. Zum Aufklappen klicken.`}
-      hint="Eine Zeile je Betriebsmittel. Spaltenköpfe sortieren; die Balken ergänzen die exakten Werte. Δ in Prozentpunkten (pp) gegenüber REF im selben Ausfallfenster. Overload Rate = Zeit über 100 % bezogen auf den Simulationszeitraum."
+      title="Detail table: equipment across all scenarios"
+      summary={`${lines.length} equipment items (lines, transformers) with all key figures, sortable. Click to expand.`}
+      hint="One row per equipment. Column headers sort; the bars complement the exact values. Δ in percentage points (pp) against REF in the same outage window. Overload rate = time above 100 % relative to the simulation period."
       actions={<>
-        <input type="search" className="ab-control" style={{ width: '9.5rem' }} placeholder="Betriebsmittel filtern" aria-label="Betriebsmittel filtern" value={query} onChange={(e) => { setQuery(e.target.value); setLimit(PAGE); }} />
-        <label className="ab-toggle"><input type="checkbox" className="accent-[var(--grid-primary)]" checked={onlyRelevant} onChange={(e) => { setOnlyRelevant(e.target.checked); setLimit(PAGE); }} />nur auffällige</label>
-        <label className="ab-toggle"><input type="checkbox" className="accent-[var(--grid-primary)]" checked={details} onChange={(e) => setDetails(e.target.checked)} />Excess-Details</label>
+        <input type="search" className="ab-control" style={{ width: '9.5rem' }} placeholder="Filter equipment" aria-label="Filter equipment" value={query} onChange={(e) => { setQuery(e.target.value); setLimit(PAGE); }} />
+        <label className="ab-toggle"><input type="checkbox" className="accent-[var(--grid-primary)]" checked={onlyRelevant} onChange={(e) => { setOnlyRelevant(e.target.checked); setLimit(PAGE); }} />conspicuous only</label>
+        <label className="ab-toggle"><input type="checkbox" className="accent-[var(--grid-primary)]" checked={details} onChange={(e) => setDetails(e.target.checked)} />Excess details</label>
       </>}
     >
       <div className="ab-scroll ab-table-wide">
@@ -157,29 +171,14 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
               const maxBand = s.max === null ? null : bandOf(s.max).id;
               return (
                 <tr key={s.line.id}>
-                  <td className="ab-sticky"><div className="ab-linename" title={`${EQUIPMENT_LABEL[equipmentKind(s.line.type)]}: ${s.line.name}`}>
-                    {EQUIPMENT_MARK[equipmentKind(s.line.type)] && <span className="ab-type" aria-label={EQUIPMENT_LABEL[equipmentKind(s.line.type)]}>{EQUIPMENT_MARK[equipmentKind(s.line.type)]}</span>}
-                    {s.line.name}
+                  <td className="ab-sticky"><div className="ab-linename" title={equipmentTitle(s.line.type, s.line.name)}>
+                    <EquipmentName type={s.line.type} name={s.line.name} />
                   </div></td>
                   <td>
                     <div className="ab-status">
                       {s.band && <span className={`ab-badge ab-fill--${s.band} ab-ink--${s.band}`} title={s.max === null ? undefined : `Max Loading ${fmtNum(s.max)} %`}>{STATUS_LABEL[s.band]}</span>}
                       {s.pattern && <span className="ab-sub">{PATTERN_LABELS[s.pattern]}</span>}
-                      {(() => {
-                        let caused = 0;
-                        let pre = 0;
-                        for (const sc of scenarios) {
-                          const cause = causeOf(s.line.cells[sc.scenario.id]);
-                          if (cause === 'caused' || cause === 'aggravated') caused += 1;
-                          else if (cause === 'preexisting') pre += 1;
-                        }
-                        return (
-                          <>
-                            {caused > 0 && <span className="ab-sub">durch Freischaltung in {caused} Szenario{caused === 1 ? '' : 'en'}</span>}
-                            {pre > 0 && <span className="ab-sub">Vorbelastung in {pre} Szenario{pre === 1 ? '' : 'en'}</span>}
-                          </>
-                        );
-                      })()}
+                      <CauseNotes counts={causeCounts(s.line, scenarioIds)} />
                     </div>
                   </td>
                   <td className="ab-num">{fmtPct(s.base)}</td>
@@ -194,7 +193,7 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
                   <td>
                     {s.maxDelta === null ? '–' : (
                       <DivergingBar value={s.maxDelta} scale={scales.delta} text={fmtPp(s.maxDelta)} strong={Math.abs(s.maxDelta) >= ANALYSIS.deltaStrongPp}
-                        title={`${codeOf(s.maxDeltaScenarioId) ?? ''} · − Reduktion der Auslastung, + Erhöhung der Auslastung`} />
+                        title={`${codeOf(s.maxDeltaScenarioId) ?? ''} · − reduction of loading, + increase of loading`} />
                     )}
                   </td>
                   <td>
@@ -207,17 +206,17 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
                   <td className="ab-num">{s.n120}</td>
                   <td>
                     <DataBar value={s.overloadShare} scale={scales.rate} text={fmtShare(s.overloadShare)} color={bandVar(maxBand ?? 'ok')} strong={s.overloadHours > 0}
-                      title={s.overloadHours > 0 ? `${fmtHours(s.overloadHours)} über 100 % in ${codeOf(s.overloadScenarioId) ?? 'einem Szenario'}` : 'keine Überlastung'} />
-                    <span className="ab-sub">{fmtHours(s.overloadHours)} von {fmtHours(periodHours)}{s.overloadScenarioId ? ` · ${codeOf(s.overloadScenarioId)}` : ''}</span>
+                      title={s.overloadHours > 0 ? `${fmtHours(s.overloadHours)} above 100 % in ${codeOf(s.overloadScenarioId) ?? 'one scenario'}` : 'no overload'} />
+                    <span className="ab-sub">{fmtHours(s.overloadHours)} of {fmtHours(periodHours)}{s.overloadScenarioId ? ` · ${codeOf(s.overloadScenarioId)}` : ''}</span>
                   </td>
                   <td>
                     <DataBar value={s.sumExcess} scale={scales.excess} text={fmtExcess(s.sumExcess)} color={bandVar(maxBand ?? 'ok')} strong={s.sumExcess > 0}
-                      title="Summe max(Loading − 100 %, 0) über alle Szenarien" />
+                      title="Sum of max(loading − 100 %, 0) over all scenarios" />
                   </td>
                   {details && <td className="ab-num">{fmtExcess(s.maxExcess)}</td>}
                   {details && <td className="ab-num">{s.meanExcess === null ? '–' : fmtExcess(s.meanExcess)}</td>}
                   <td>
-                    {s.maxAbsLodf === null ? <span className="ab-sub">{hasLodf ? '–' : 'nicht berechnet'}</span> : (
+                    {s.maxAbsLodf === null ? <span className="ab-sub">{hasLodf ? '–' : 'not calculated'}</span> : (
                       <DataBar value={s.maxAbsLodf} scale={scales.lodf} text={fmtLodf(s.maxAbsLodf)} color="var(--ab-lodf)" strong={s.maxAbsLodf >= ANALYSIS.lodfNotable} />
                     )}
                   </td>
@@ -229,9 +228,9 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
         </table>
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11.5px] text-[var(--grid-muted)]">
-        <span>{Math.min(limit, rows.length)} von {rows.length} Betriebsmitteln</span>
+        <span>{Math.min(limit, rows.length)} of {rows.length} equipment items</span>
         {rows.length > limit && (
-          <button type="button" className="ab-chip" onClick={() => setLimit((n) => n + PAGE)}>Weitere {Math.min(PAGE, rows.length - limit)} anzeigen</button>
+          <button type="button" className="ab-chip" onClick={() => setLimit((n) => n + PAGE)}>Show {Math.min(PAGE, rows.length - limit)} more</button>
         )}
       </div>
     </SectionCard>

@@ -135,9 +135,9 @@ test('kpi: longest overload names hours, share of the period, line and scenario'
 });
 
 test('pp formatting always carries the unit and a sign', () => {
-  assert.equal(fmtPp(42), '+42,0 pp');
-  assert.equal(fmtPp(-18), '−18,0 pp');
-  assert.equal(fmtPp(0), '0,0 pp');
+  assert.equal(fmtPp(42), '+42.0 pp');
+  assert.equal(fmtPp(-18), '−18.0 pp');
+  assert.equal(fmtPp(0), '0.0 pp');
 });
 
 test('navigation outline follows the reading order of an outage assessment, with counts', () => {

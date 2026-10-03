@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import { ANALYSIS, bandOf, type BandId } from '../../config/loadingBands';
 import { VERDICTS, type Verdict } from '../../config/assessment';
-import { verdictCounts, type Assessment } from '../../util/freischaltung';
+import { verdictCounts, type Assessment } from '../../util/outageAssessment';
 import {
   fmtHours,
   fmtLodf,
@@ -53,9 +53,9 @@ export default function AcrossKpis({ kpis, scenarios, assessments }: Props) {
   const critical: ScenarioStats | null = kpis.criticalScenario;
 
   return (
-    <div className="ab-kpis" role="list" aria-label="Zusammenfassung über alle Szenarien">
-      <div className="ab-kpi" title="Freigabe-Bewertung aller Szenarien nach den Kriterien in config/assessment.ts">
-        <div className="ab-kpi__label">Freigabe-Bewertung</div>
+    <div className="ab-kpis" role="list" aria-label="Summary across all scenarios">
+      <div className="ab-kpi" title="Assessment of all scenarios according to the criteria in config/assessment.ts">
+        <div className="ab-kpi__label">Assessment</div>
         <div className="ab-vcounts">
           {(['permissible', 'conditional', 'not-permissible'] as Verdict[]).map((v) => (
             <span key={v} className={`ab-vcount ab-verdict--${v}`} title={`${VERDICTS[v].label}: ${VERDICTS[v].description}`} style={{ '--v': `var(--ab-v-${v})` } as CSSProperties}>
@@ -63,28 +63,28 @@ export default function AcrossKpis({ kpis, scenarios, assessments }: Props) {
             </span>
           ))}
         </div>
-        <div className="ab-kpi__sub">{n} Szenarien{kpis.periodHours > 0 ? ` · Zeitraum ${fmtPeriod(kpis.periodHours)}` : ''}</div>
+        <div className="ab-kpi__sub">{n} scenarios{kpis.periodHours > 0 ? ` · Period ${fmtPeriod(kpis.periodHours)}` : ''}</div>
       </div>
       <Kpi
-        label="Szenarien mit Überlastung"
+        label="Scenarios with overload"
         value={`${kpis.scenariosOverloaded} / ${n}`}
         tone={kpis.scenariosOverloaded > 0 ? 'light' : undefined}
-        sub={`${share} % der Szenarien > 100 %`}
+        sub={`${share} % of the scenarios > 100 %`}
       />
       <Kpi
-        label="Betriebsmittel > 100 %"
+        label="Equipment > 100 %"
         value={String(kpis.linesOverloaded)}
         tone={kpis.linesOverloaded > 0 ? 'light' : undefined}
-        sub={kpis.linesOverloaded > 0 ? `${kpis.linesRecurring} davon in ≥ ${ANALYSIS.recurringMinScenarios} Szenarien` : 'in keinem Szenario'}
-        title="Leitungen, die in mindestens einem Szenario über 100 % liegen; davon wiederkehrend in mehreren Szenarien"
+        sub={kpis.linesOverloaded > 0 ? `${kpis.linesRecurring} thereof in ≥ ${ANALYSIS.recurringMinScenarios} scenarios` : 'in no scenario'}
+        title="Lines above 100 % in at least one scenario; thereof recurring in several scenarios"
       />
       <Kpi
-        label="Längste Überlastung"
+        label="Longest overload"
         value={kpis.longestOverload ? fmtHours(kpis.longestOverload.value) : '–'}
         tone={kpis.longestOverload ? 'clear' : undefined}
         sub={kpis.longestOverload
-          ? `${fmtShare(kpis.longestOverload.share)} des Zeitraums · ${place(kpis.longestOverload.line, kpis.longestOverload.scenarioId)}`
-          : 'keine Überlastung'}
+          ? `${fmtShare(kpis.longestOverload.share)} of the period · ${place(kpis.longestOverload.line, kpis.longestOverload.scenarioId)}`
+          : 'no overload'}
         title={kpis.longestOverload ? `Overload Rate ${fmtShare(kpis.longestOverload.share)} · ${place(kpis.longestOverload.line, kpis.longestOverload.scenarioId)}` : undefined}
       />
       <Kpi
@@ -96,24 +96,24 @@ export default function AcrossKpis({ kpis, scenarios, assessments }: Props) {
         title={max ? place(max.line, max.scenarioId) : undefined}
       />
       <Kpi
-        label="Größte Änderung ggü. Base"
+        label="Largest change vs. base"
         value={kpis.maxChange ? fmtPp(kpis.maxChange.value) : '–'}
         sub={kpis.maxChange ? place(kpis.maxChange.line, kpis.maxChange.scenarioId) : '–'}
         title={kpis.maxChange ? place(kpis.maxChange.line, kpis.maxChange.scenarioId) : undefined}
       />
       <Kpi
-        label="Höchster |LODF|"
+        label="Highest |LODF|"
         value={kpis.maxLodf ? fmtLodf(kpis.maxLodf.value) : '–'}
-        sub={kpis.maxLodf ? place(kpis.maxLodf.line, kpis.maxLodf.scenarioId) : 'noch nicht berechnet'}
+        sub={kpis.maxLodf ? place(kpis.maxLodf.line, kpis.maxLodf.scenarioId) : 'not calculated yet'}
         title={kpis.maxLodf ? place(kpis.maxLodf.line, kpis.maxLodf.scenarioId) : undefined}
       />
       <Kpi
-        label="Kritischstes Szenario"
+        label="Most critical scenario"
         value={critical ? critical.code : '–'}
         tone={critical ? bandOf(critical.maxValue ?? 0).id : undefined}
         sub={critical
-          ? `${critical.scenario.name} · ${critical.n100} Betriebsmittel > 100 %`
-          : 'keine Überlastung'}
+          ? `${critical.scenario.name} · ${critical.n100} Equipment > 100 %`
+          : 'no overload'}
         title={critical?.scenario.name}
       />
     </div>

@@ -1,103 +1,94 @@
 # Outage Assessment — Big Picture
 
-## 1. Zweck und Komponenten
+## 1. Purpose and components
 
-Ein Nutzer startet Outage Assessment lokal auf seiner PowerFactory-VM. Das
-ComPython-Skript berechnet Freischaltszenarien und speichert ihre Ergebnisse in
-SQLite. Das Dashboard zeigt diese Ergebnisse als Zusammenfassung mit
-Freigabe-Bewertung je Szenario und, auf Wunsch, mit den übernommenen
-DashB-Diagrammen. Es gibt keine Anmeldung, keine Benutzerverwaltung, keinen
-Dashboard-Footer und keinen Datumsfilter für die Plots.
+A user runs Outage Assessment locally on their PowerFactory PC. The ComPython script calculates outage
+scenarios and stores their results in SQLite. The dashboard shows these results as a summary with an
+assessment per scenario and, on request, with signal charts. There is no login, no user management, no
+footer and no date filter for the plots. Nothing needs administrator rights or an extra network port.
 
 ```mermaid
 flowchart LR
-    User[Nutzer in PowerFactory] --> Entry[start_assessment.py]
-    Entry --> Plan[scenario_plan: Namen und Ausfälle prüfen]
-    Plan --> Batch[run_assessment: Szenarien nacheinander]
+    User[User in PowerFactory] --> Entry[start_assessment.py]
+    Entry --> Plan[scenario_plan: check names and outages]
+    Plan --> Batch[run_assessment: scenarios one after another]
     Batch --> Worker[analysis_worker.py]
     Worker --> Engine[gridlens_engine.py]
-    Engine --> PF[ComStatsim und ElmRes]
+    Engine --> PF[ComStatsim and ElmRes]
     PF --> Worker
     Worker --> Store[ScenarioStore]
-    Store --> DB[(Lokale SQLite-Datei)]
-    Entry --> Launcher[dashboard_launcher.py]
-    Launcher --> Server[Lokaler FastAPI-Server]
+    Store --> DB[(Local SQLite file)]
+    Batch --> Launcher[dashboard_launcher.py: after the last scenario]
+    Launcher --> Server[Local FastAPI server]
     Server --> DB
-    Server --> Browser[Outage Assessment im Browser]
-    Browser --> Charts[DashB-Diagramme]
+    Server --> Browser[Outage Assessment in the browser]
+    Browser --> Charts[Charts]
 ```
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `powerfactory/start_assessment.py` | Datenbankordner/-name, Szenariodefinitionen, native Berechnung und Dashboard-Start |
-| `powerfactory/analysis_worker.py` | PF-Kontext lesen, Ausfälle aktivieren, REF/OUTAGE ausführen, Zustand wiederherstellen, vollständige Reihen serialisieren |
-| `powerfactory/gridlens_engine.py` | Übernommene GridLens-Helfer für native Objekte, QDS, ElmRes und Wiederherstellung |
-| `backend/app/simulation/store.py` | Gemeinsamer SQLite-Vertrag für PF und Webapp; Aufträge und atomarer Szenarioimport |
-| `scripts/dashboard_launcher.py` | Separaten HTTP-Prozess mit genau der angegebenen Datenbank starten und Browser öffnen |
-| `backend/app/main.py` | HTTP-Prozess, Readiness, Simulation-API und statisches Frontend |
-| `backend/app/simulation/routes.py` | DashB-API-Verträge auf SQLite abbilden |
-| `backend/app/simulation/data.py` | Rohreihen, explizite Aggregation und Analysen |
-| `frontend/src/pages/DashboardPage.tsx` | Auswahl von Szenario/Betriebsmittel/Messgröße und vollständige Ergebnisreihen |
-| `frontend/src/components/OutageManagement.tsx` | Kopf des Abschnitts: Projekt, Szenarioanzahl, Datenbankpfad |
-| `frontend/src/components/across/` | Zusammenfassung: Kennzahlen, Bewertung, Verlauf, Spannung, Matrix, Grafiken, Radar, Tabelle, Details |
-| `frontend/src/hooks/useAcrossData.ts`, `util/acrossLoad.ts` | Laden in Teilen: Index zuerst, dann Szenario für Szenario |
-| `frontend/src/components/across/LazySection.tsx` | Hängt einen Abschnitt erst ein, wenn er nahe ins Bild kommt |
-| `frontend/src/util/freischaltung.ts`, `config/assessment.ts` | Verursachung, Spannungsband und Freigabe-Urteil mit Kriterien |
-| `frontend/src/config/loadingBands.ts` | Zentrale Auslastungsbänder und Schwellen |
-| `backend/app/simulation/across.py` | Lesende Aggregation: Index, Werte je Szenario (zwischengespeichert), Verlauf |
-| `powerfactory/lodf.py` | LODF aus DC-Lastflüssen vor der ersten Simulation |
-| `docs/ASSESSMENT.md` | Definitionen, Kriterien, API und Anpassung der Auswertung |
-| `scripts/seed_dummy_qds.py` | Kleine synthetische QDS-Datenbank für Mac-Tests erzeugen |
-| `start-demo.command` | Mac-Test per Doppelklick oder Terminal starten |
+| `powerfactory/start_assessment.py` | database folder / name, scenario definitions, native calculation and dashboard start |
+| `powerfactory/analysis_worker.py` | read the PF context, activate outages, run REF/OUTAGE, restore state, serialise complete series |
+| `powerfactory/gridlens_engine.py` | taken-over GridLens helpers for native objects, QDS, ElmRes and restoration |
+| `powerfactory/lodf.py` | LODF from DC load flows before the first simulation |
+| `backend/app/simulation/store.py` | shared SQLite contract of PF and web app; jobs and atomic scenario import |
+| `backend/app/simulation/across.py` | read-only aggregation: index, values per scenario (cached), profile |
+| `backend/app/simulation/routes.py`, `data.py` | HTTP API on SQLite: series and analyses |
+| `backend/app/main.py` | HTTP process, readiness, API and static frontend |
+| `scripts/dashboard_launcher.py` | start a separate HTTP process for exactly the given database and open the browser |
+| `scripts/serve.py`, `appconfig.py` | permanent server and shared configuration |
+| `setup.ps1`, `setup.cmd` | one script from A to Z: Python, backend, Node, frontend build, configuration, self-test (no administrator rights) |
+| `frontend/src/pages/DashboardPage.tsx` | selection of scenario / equipment / measurement and complete result series |
+| `frontend/src/components/across/` | summary: key figures, assessment, profile, voltage, matrix, charts, radar, table, details |
+| `frontend/src/hooks/useAcrossData.ts`, `util/acrossLoad.ts` | loading in parts: index first, then scenario by scenario |
+| `frontend/src/util/outageAssessment.ts`, `config/assessment.ts` | cause, voltage band and verdict with criteria |
+| `frontend/src/config/loadingBands.ts` | central loading bands and thresholds |
+| `docs/ASSESSMENT.md` | definitions, criteria, API and customisation of the evaluation |
+| `start-dashboard.command` | start the dashboard for an existing results database on the Mac |
+| `backend/tests/qds_fixture.py` | synthetic test database, tests only (not in the package) |
 
-## 2. Native Ausführung in PowerFactory
+## 2. Native execution in PowerFactory
 
-In `start_assessment.py` werden `DATABASE_DIRECTORY` und `DATABASE_NAME`
-konfiguriert. `SCENARIOS=None` bedeutet: jedes auswertbare Planned-Outage-Objekt
-mit überlappendem QDS-Fenster bildet ein Szenario unter seinem vorhandenen Namen.
-Auch ursprünglich ignorierte Ausfälle werden für ihren eigenen Lauf ausdrücklich
-aktiviert. Ein Szenario kann alternativ mehrere Ausfälle unter einem eigenen
-Namen kombinieren. Bei mehrdeutigen Objektnamen werden vollständige PF-Pfade benutzt.
+`DATABASE_DIRECTORY` and `DATABASE_NAME` are configured in `start_assessment.py`. `SCENARIOS=None`
+means: every eligible Planned Outage object with an overlapping QDS window forms one scenario under its
+existing name. Outages that were ignored originally are activated explicitly for their own run. A
+scenario can alternatively combine several outages under a custom name. With ambiguous object names,
+full PF paths are used.
 
-Start, Ende, Schrittweite, Profile und Ergebnisvariablen werden im aktiven
-`ComStatsim` konfiguriert. Das Dashboard übernimmt diese Dauer vollständig.
+Start, end, step size, profiles and result variables are configured in the active `ComStatsim`. The
+dashboard takes over this duration completely.
 
 ```mermaid
 flowchart TD
-    Start[Externes ComPython ausführen] --> Install[Backend und Frontend-Build prüfen]
-    Install --> Discover[Aktives Projekt, Study Case, QDS und Planned Outages lesen]
-    Discover --> Validate[Alle Szenarionamen und Ausfallreferenzen prüfen]
-    Validate --> Valid{Plan gültig?}
-    Valid -->|Nein| Stop[Fehler anzeigen, keine native Rechnung]
-    Valid -->|Ja| Lodf[LODF je Szenario aus DC-Lastflüssen berechnen und in pf_lodf speichern]
-    Lodf --> Next[Nächstes benanntes Szenario]
-    Next --> Job[Katalog veröffentlichen und Auftrag anlegen]
-    Job --> Calc[Worker berechnet REF und OUTAGE]
-    Calc --> Saved{Wiederherstellung und Import erfolgreich?}
-    Saved -->|Nein| Fail[Auftrag fehlgeschlagen, Lauf stoppen]
-    Saved -->|Ja| More{Weitere Szenarien?}
-    More -->|Ja| Next
-    More -->|Nein| Launch[Dashboard für diese SQLite-Datei starten]
-    Launch --> View[Browser mit gespeicherten Szenarien öffnen]
+    Start[Run the external ComPython script] --> Install[Check backend and frontend build]
+    Install --> Discover[Read active project, study case, QDS and Planned Outages]
+    Discover --> Validate[Check all scenario names and outage references]
+    Validate --> Valid{Plan valid?}
+    Valid -->|No| Stop[Show error, no native calculation]
+    Valid -->|Yes| Lodf[Calculate LODF per scenario from DC load flows and store it in pf_lodf]
+    Lodf --> Next[Next named scenario]
+    Next --> Job[Publish catalog and create job]
+    Job --> Calc[Worker calculates REF and OUTAGE]
+    Calc --> Saved{Restoration and import successful?}
+    Saved -->|No| Fail[Job failed, stop the run]
+    Saved -->|Yes| More{More scenarios?}
+    More -->|Yes| Next
+    More -->|No| Done[All scenarios saved: start the dashboard and open the browser]
 ```
 
-Die LODF-Berechnung läuft einmal vor der ersten Simulation und stellt jeden geänderten
-Zustand verifiziert wieder her. Schlägt sie fehl, folgt eine Warnung; die Szenarien laufen
-trotzdem.
+The LODF calculation runs once before the first simulation and restores every changed state, verified.
+If it fails there is a warning; the scenarios run anyway.
 
-Bereits erfolgreich gespeicherte Szenarien bleiben erhalten, falls eine spätere
-Berechnung fehlschlägt. Jeder erneute Batch erzeugt neue Ergebnisläufe mit eigenen
-IDs; bestehende Ergebnisse werden nicht überschrieben. Es werden keine
-`IntScenario`-Objekte erzeugt: Szenarioname und Ausfallkombination gehören zum
-persistierten Assessment-Ergebnis.
+Scenarios that were saved successfully are kept if a later calculation fails. Every new batch creates
+new result runs with their own IDs; existing results are not overwritten. No `IntScenario` objects are
+created: scenario name and outage combination belong to the persisted assessment result.
 
-## 3. REF/OUTAGE und Wiederherstellung
+## 3. REF/OUTAGE and restoration
 
-`calculate()` verwendet kopierte ElmRes-Objekte mit der vorhandenen
-Variablenauswahl. Die Eingriffe sind zeitlich begrenzt und werden geprüft
-zurückgenommen. Das Script benötigt im nativen PF-Prozess nur die
-Standardbibliothek und das PowerFactory-Modul; FastAPI läuft in einem eigenen
-Python-Prozess mit der Backend-Umgebung.
+`calculate()` uses copied ElmRes objects with the existing variable selection. The interventions are
+limited in time and are taken back with verification. In the native PF process the script needs only
+the standard library and the PowerFactory module; FastAPI runs in its own Python process with the
+backend environment.
 
 ```mermaid
 sequenceDiagram
@@ -105,42 +96,41 @@ sequenceDiagram
     participant Worker as analysis_worker
     participant PF as PowerFactory
     participant DB as SQLite
-    Batch->>DB: Auftrag mit Name, Auswahl und Katalog-Fingerprint
-    Worker->>DB: Auftrag atomar übernehmen
-    Worker->>PF: Projekt und QDS-Kontext erneut prüfen
-    Worker->>PF: Outage-Flags, iopt_maint, Study-Zeit und ElmRes-Bindung sichern
-    Worker->>PF: Ausgewählte outserv=0, übrige outserv=1
-    Worker->>PF: REF mit iopt_maint=0 auf ElmRes-Kopie
-    PF-->>Worker: Vollständige Ergebniszeilen
-    Worker->>PF: Study-Zeit wiederherstellen
-    Worker->>PF: OUTAGE mit iopt_maint=1 auf ElmRes-Kopie
-    PF-->>Worker: Vollständige Ergebniszeilen
-    Worker->>Worker: Zeitachsen und Ergebnisgrenzen prüfen
-    Worker->>PF: Alle Flags, Study-Zeit und Ergebnisbindung zurücksetzen
-    Worker->>PF: Temporäre ElmRes-Kopien entfernen
-    Worker->>DB: Szenario plus beide Ergebnisläufe gemeinsam committen
-    DB-->>Batch: Szenario gespeichert
+    Batch->>DB: job with name, selection and catalog fingerprint
+    Worker->>DB: take over the job atomically
+    Worker->>PF: re-check project and QDS context
+    Worker->>PF: save outage flags, iopt_maint, study time and ElmRes binding
+    Worker->>PF: selected outserv=0, others outserv=1
+    Worker->>PF: REF with iopt_maint=0 on an ElmRes copy
+    PF-->>Worker: complete result rows
+    Worker->>PF: restore study time
+    Worker->>PF: OUTAGE with iopt_maint=1 on an ElmRes copy
+    PF-->>Worker: complete result rows
+    Worker->>Worker: check time axes and result limits
+    Worker->>PF: reset all flags, study time and result binding
+    Worker->>PF: remove temporary ElmRes copies
+    Worker->>DB: commit scenario plus both result runs together
+    DB-->>Batch: scenario saved
 ```
 
 ```mermaid
 flowchart TD
-    Capture[Ursprungszustand erfassen] --> Run[REF und OUTAGE berechnen]
-    Run --> Finally[finally: Wiederherstellung versuchen]
-    Finally --> Restore{Vollständig verifiziert?}
-    Restore -->|Nein| Reject[Keine Ergebnisse speichern, PF-Zustand manuell prüfen]
-    Restore -->|Ja| CalcOK{Berechnung und Zeitachsen gültig?}
-    CalcOK -->|Nein| Failed[Auftrag als fehlgeschlagen markieren]
-    CalcOK -->|Ja| Tx[SQLite-Transaktion: Szenario, REF, OUTAGE und Samples]
-    Tx --> DBOK{Import erfolgreich?}
-    DBOK -->|Nein| Rollback[Gesamten Szenarioimport zurückrollen]
-    DBOK -->|Ja| Done[Auftrag abgeschlossen]
+    Capture[Capture the original state] --> Run[Calculate REF and OUTAGE]
+    Run --> Finally[finally: try to restore]
+    Finally --> Restore{Completely verified?}
+    Restore -->|No| Reject[Save no results, check the PF state manually]
+    Restore -->|Yes| CalcOK{Calculation and time axes valid?}
+    CalcOK -->|No| Failed[Mark the job as failed]
+    CalcOK -->|Yes| Tx[SQLite transaction: scenario, REF, OUTAGE and samples]
+    Tx --> DBOK{Import successful?}
+    DBOK -->|No| Rollback[Roll back the whole scenario import]
+    DBOK -->|Yes| Done[Job completed]
 ```
 
-Ein bereits laufender Auftrag wird nicht automatisch erneut ausgeführt. Nach
-Abbruch des PF-Prozesses ist der native Zustand zu prüfen, bevor der betreffende
-Auftrag ausdrücklich bereinigt wird.
+A job that is already running is not re-run automatically. After an abort of the PF process the native
+state must be checked before that job is cleaned up explicitly.
 
-## 4. Datenbankmodell und Identität
+## 4. Database model and identity
 
 ```mermaid
 erDiagram
@@ -201,11 +191,6 @@ erDiagram
         float lower
         float upper
     }
-    UI_SHARES {
-        string id PK
-        string kind
-        string payload
-    }
     PF_LODF {
         string outage_key PK
         string element_id PK
@@ -223,207 +208,184 @@ erDiagram
     ANALYSIS_ELEMENTS ||--o{ PF_ELEMENT_LIMITS : limits
 ```
 
-SQLite verwendet WAL und Fremdschlüssel. Der Element-Hash stammt aus Projektpfad
-und Objektpfad. Die Frontend-Kennung kodiert zusätzlich die Lauf-ID: dasselbe
-Betriebsmittel in REF und OUTAGE lässt sich dadurch getrennt auswählen. Diagramm-
-legenden enthalten Szenarioname, Laufart und Betriebsmittel. Umbenennungen in PF
-ändern die pfadbasierte Identität.
+SQLite uses WAL and foreign keys. The element hash comes from project path and object path. The frontend
+identifier additionally encodes the run ID, so the same equipment in REF and OUTAGE can be selected
+separately. Chart legends contain scenario name, run kind and equipment. Renaming in PF changes the
+path-based identity.
 
-## 5. Dashboard und vollständige Plots
+## 5. Dashboard and complete plots
 
 ```mermaid
 sequenceDiagram
-    participant User as Nutzer
+    participant User as User
     participant UI as Dashboard
-    participant API as Simulation-API
+    participant API as Simulation API
     participant DB as SQLite
     UI->>API: GET facilities
-    API->>DB: Gespeicherte Ergebnisläufe lesen
-    API-->>UI: Szenarioname plus REF oder OUTAGE
-    User->>UI: Szenario, Betriebsmittel, Messgröße, Hinzufügen
-    UI->>API: GET timeseries/raw ohne start/end
-    API->>DB: Alle Samples dieser Auswahl in Zeitreihenfolge
-    API-->>UI: Rohwerte und optional next_cursor
-    loop Weitere Seiten vorhanden
-        UI->>API: Folgeseite mit Cursor
-        API-->>UI: Weitere Rohwerte
+    API->>DB: read the saved result runs
+    API-->>UI: scenario name plus REF or OUTAGE
+    User->>UI: scenario, equipment, measurement, Add
+    UI->>API: GET timeseries/raw without start/end
+    API->>DB: all samples of this selection in time order
+    API-->>UI: raw values and optional next_cursor
+    loop more pages
+        UI->>API: next page with cursor
+        API-->>UI: more raw values
     end
-    UI->>UI: Vollständige Reihe an DashB-Chart übergeben
-    User->>UI: Zweiten Szenariolauf hinzufügen
-    UI->>UI: REF und OUTAGE im Overlay anzeigen
+    UI->>UI: hand the complete series to the chart
+    User->>UI: add the second scenario run
+    UI->>UI: show REF and OUTAGE in the overlay
 ```
 
-Es gibt keinen versteckten Filter auf die letzten 30 Tage und keinen
-Dashboard-Zeitraum. Alte Simulationen werden ebenfalls vollständig angezeigt.
-Chart-Zoom ist eine Ansichtsfunktion. Zusätzliche aggregierte Diagramme werden
-nur auf ausdrückliche Auswahl erzeugt. Fehlende/fehlgeschlagene Werte werden
-nicht als Nullen erfunden. Übergröße wird mit einem Fehler gemeldet, nicht still
-abgeschnitten. Die native ElmRes-Auslese begrenzt ein Resultat auf 35.040 Zeilen;
-die Simulation-API akzeptiert bis 200.000 Rohwerte je Auswahl und paginiert
-mit maximal 50.000 Werten je Seite.
+There is no hidden filter to the last 30 days and no dashboard period. Old simulations are shown
+completely. Chart zoom is a view function. Additional aggregated charts are created only on explicit
+choice. Missing or failed values are not invented as zeros. Oversize is reported with an error, not
+silently cut off. The native ElmRes read-out limits a result to 35,040 rows; the simulation API accepts
+up to 200,000 raw values per selection and pages with at most 50,000 values per page.
 
-## 6. Auswertung über alle Szenarien
+## 6. Evaluation across all scenarios
 
-Die Zusammenfassung ist die Standardansicht. Sie liest nur und verändert weder Berechnung noch
-Ergebnisse. Details und Definitionen: [docs/ASSESSMENT.md](docs/ASSESSMENT.md).
+The summary is the standard view. It only reads and changes neither the calculation nor the results.
+Details and definitions: [docs/ASSESSMENT.md](docs/ASSESSMENT.md).
 
-### Laden in Teilen (große Datenbanken)
+### Loading in parts (large databases)
 
 ```mermaid
 sequenceDiagram
     participant UI as Dashboard
-    participant API as Simulation-API
+    participant API as Simulation API
     participant DB as SQLite
     UI->>API: GET across-scenarios/index
-    API->>DB: Szenarien und Ausfälle, keine Samples
-    API-->>UI: Index sofort
-    loop je Szenario, 3 gleichzeitig
+    API->>DB: scenarios and outages, no samples
+    API-->>UI: index at once
+    loop per scenario, 3 at a time
         UI->>API: GET across-scenarios/id/cells
-        API->>DB: Gruppierte Abfragen REF und OUTAGE, Spannung
-        API-->>UI: Reduzierte Werte, im Server zwischengespeichert
-        UI->>UI: Szenario in fester Reihenfolge anzeigen
+        API->>DB: grouped queries REF and OUTAGE, voltage
+        API-->>UI: reduced values, cached in the server
+        UI->>UI: show the scenario in a fixed order
     end
-    UI->>UI: Abschnitte unterhalb der Bewertung erst beim Scrollen einhängen
-    UI->>API: GET across-scenarios/id/profile nur für das gewählte Szenario
+    UI->>UI: mount sections below the assessment only when scrolled into view
+    UI->>API: GET across-scenarios/id/profile only for the chosen scenario
 ```
 
-Gespeicherte Szenarien ändern sich nie; ein Auffrischen lädt daher nur neue nach. Die Codes
-S01, S02 … bleiben stabil, weil Szenarien nur als Präfix der Reihenfolge erscheinen.
+Saved scenarios never change; a refresh therefore loads only new ones. The codes S01, S02 … stay stable
+because scenarios appear only as a prefix of the order.
 
-### Freigabe-Urteil
+### Verdict
 
 ```mermaid
 flowchart TD
-    Cell[Betriebsmittel im Ausfallfenster: Szenariowert gegen REF] --> Over{Über 100 % bzw. Spannungsband verlassen?}
-    Over -->|Nein| Soft{Reserve unter 5 pp, Warnbereich neu oder Spannung nahe der Grenze?}
-    Over -->|Ja| Cause{REF im selben Fenster ebenfalls verletzt?}
-    Cause -->|Nein| Bad[verursacht]
-    Cause -->|Ja, mindestens 2 pp höher| Worse[verschärft]
-    Cause -->|Ja, unverändert| Pre[Vorbelastung]
-    Bad --> No[Nicht zulässig]
+    Cell[Equipment in the outage window: scenario value against REF] --> Over{Above 100 % or voltage band left?}
+    Over -->|No| Soft{Reserve below 5 pp, warning range newly reached or voltage near the limit?}
+    Over -->|Yes| Cause{REF in the same window also violated?}
+    Cause -->|No| Bad[caused]
+    Cause -->|Yes, at least 2 pp higher| Worse[aggravated]
+    Cause -->|Yes, unchanged| Pre[pre-existing]
+    Bad --> No[Not permissible]
     Worse --> No
-    Pre --> Cond[Bedingt zulässig]
-    Soft -->|Ja| Cond
-    Soft -->|Nein| Ok[Zulässig]
+    Pre --> Cond[Conditionally permissible]
+    Soft -->|Yes| Cond
+    Soft -->|No| Ok[Permissible]
 ```
 
-Bewertet werden Leitungen und Transformatoren nach Auslastung, Sammelschienen nach Spannung
-(Band 0,90 bis 1,10 p.u. zentral konfiguriert). Das Urteil ist eine Entscheidungshilfe, keine
-Freigabe; die Kriterien stehen in `frontend/src/config/assessment.ts`.
+Lines and transformers are assessed by loading, busbars by voltage (band 0.90 to 1.10 p.u., configured
+centrally). The verdict is a decision aid, not an approval; the criteria are in
+`frontend/src/config/assessment.ts`.
 
-### Lesereihenfolge und Text
+### Reading order and text
 
-Kennzahlen, Bewertung, Verlauf und Szenariodetails, Spannung, Matrix, Vergleichsgrafiken und
-Radar, zuletzt die Detailtabelle. Eine Navigationsleiste folgt dieser Reihenfolge. Erklärende
-Texte sind aus; **i** an einer Karte oder **Erläuterungen** blendet sie ein. Zeitreihen-Overlay,
-Heatmap und Peak Demand sind optionale Ansichten unter der Zusammenfassung.
+Key figures, assessment, profile and scenario details, voltage, matrix, comparison charts and radar,
+finally the detail table. A navigation bar follows this order. Explanations are off; the **i** on a card
+or **Explanations** shows them. The time series overlay is an optional view under the summary.
 
-## 7. Produktiver Betrieb und Dashboard-Prozess
+## 7. Operation and dashboard process
 
-Alles liegt auf dem PowerFactory-PC: Skript, Ergebnisdatenbank und Dashboard-Server. Andere PCs
-brauchen nur einen Browser. Einrichtung und Wartung: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Everything is on the PowerFactory PC: script, results database and dashboard server. Setup and
+maintenance: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ```mermaid
 flowchart TD
-    Run[start_assessment.py in PowerFactory] --> Pre[Prüfen: Installation, Ordner beschreibbar, Speicher]
-    Pre --> Cfg[outage-assessment.config.json: Datenbank, Host, Port]
-    Cfg --> Reuse{Läuft ein Server für diese Datenbank?}
-    Reuse -->|Ja| Keep[Wiederverwenden]
-    Reuse -->|Nein| Start[Server starten: Nur-Lese-Betrieb, im Netz erreichbar]
-    Keep --> Calc[Szenarien nacheinander berechnen und speichern]
-    Start --> Calc
-    Calc --> Live[Dashboard zeigt jedes Szenario sofort, auch auf anderen PCs]
-    Auto[Autostart serve.py bei Anmeldung] -.hält Server dauerhaft bereit.-> Reuse
+    Setup[setup.cmd / setup.ps1: once] --> Ready[Python, backend, frontend, configuration]
+    Run[start_assessment.py in PowerFactory] --> Pre[Check installation, folder writable, free space]
+    Pre --> Calc[Calculate and save scenarios one after another]
+    Calc --> Reuse{A server already runs for this database?}
+    Reuse -->|Yes| Keep[Reuse it]
+    Reuse -->|No| Start[Start the server on 127.0.0.1]
+    Keep --> Open[Open the dashboard in the browser]
+    Start --> Open
+    Auto[Optional autostart serve.py at logon] -.keeps a server ready.-> Reuse
 ```
 
-- **Konfiguration:** `scripts/appconfig.py` liest Umgebung, dann `outage-assessment.config.json`, dann
-  die Standardwerte. Skript und Autostart nutzen dieselbe Datei und damit dieselbe Datenbank.
-- **Server:** `scripts/dashboard_launcher.py` startet ihn aus dem Skript (fester Port 8765, bei Belegung
-  durch einen anderen Server ein freier Port mit Hinweis, laufender Server wird wiederverwendet, vom
-  PowerFactory-Prozess gelöst). `scripts/serve.py` ist derselbe Server als Dauerprozess mit rotierendem
-  Log; `deploy/windows/install.ps1` richtet Umgebung, Firewall-Regel (nur lokales Netz) und Autostart ein.
-- **Nur-Lese-Betrieb im Netz:** Ist der Host nicht `127.0.0.1`, läuft das Backend mit `APP_ENV=production`:
-  kein Wechsel der Datenbank, keine Aufträge, kein Speichern von Ansichten; zusätzliche
-  Schutz-Header. Das Dashboard hat keine Anmeldung und gehört nur ins interne Netz.
-- **Datenbank:** Das Skript schreibt, der Server liest, beide auf demselben PC über SQLite mit WAL.
-  Die Datei wird nie über eine Netzfreigabe geöffnet.
-- **Live-Anzeige:** Die Oberfläche liest den Jobstatus der Datenbank und zeigt „PowerFactory berechnet: …“
-  und lädt neue Szenarien nach, sobald sie gespeichert sind.
-- **Paket:** `scripts/package_release.py` baut ein ZIP mit Backend, fertigem Frontend, Skripten, Installer
-  und Doku, ohne Datenbanken, Logs und lokale Konfiguration.
-- **Mac-Entwicklung:** `start-demo.command` bindet weiterhin nur an `127.0.0.1` und hält das Terminal offen.
+- **Configuration:** `scripts/appconfig.py` reads the environment, then `outage-assessment.config.json`,
+  then the defaults. Script and autostart use the same file and thus the same database.
+- **Server:** `scripts/dashboard_launcher.py` starts it from the script (fixed port 8765; if another
+  server holds it, a free port with a note; a running server is reused; detached from the PowerFactory
+  process). `scripts/serve.py` is the same server as a permanent process with a rotating log;
+  `setup.ps1` sets up Python, the backend environment, the frontend build and the optional per-user
+  autostart. It needs no administrator rights and creates no firewall rule.
+- **Local by default:** the host is `127.0.0.1`. Only if an operator sets another host (and IT allows
+  the port) does the backend run with `APP_ENV=production`: no database switching and protective
+  headers. The dashboard has no login.
+- **Database:** the script writes, the server reads, both on the same PC through SQLite with WAL. The
+  file is never opened over a network share.
+- **Dashboard after the calculation:** the script starts (or reuses) the server when the last scenario is saved
+  and opens the browser. If the dashboard is already open (autostart), it also shows "PowerFactory is
+  calculating: …" and loads new scenarios as soon as they are saved.
+- **Package:** `scripts/package_release.py` builds a ZIP with backend, finished frontend, scripts,
+  installer and docs, without databases, logs and local configuration.
+- **Mac development:** `start-dashboard.command` binds only to `127.0.0.1` and keeps the terminal open.
 
-## 8. Mac-Test ohne PowerFactory
+## 8. Mac start with an existing database
 
 ```mermaid
 flowchart TD
-    Command[start-demo.command] --> Setup[uv sync und npm ci bei geänderter Lockdatei]
-    Setup --> Build[Frontend bauen]
-    Build --> Seed[seed_dummy_qds.py]
-    Seed --> Exists{Datenbank schon befüllt?}
-    Exists -->|Eigene Dummy-Version| Reuse[Vorhandene Testdaten wiederverwenden]
-    Exists -->|Fremde Ergebnisse| Abort[Abbrechen, andere Datenbankdatei wählen]
-    Exists -->|Leer| Generate[Acht benannte Szenarien: je REF und OUTAGE, dazu synthetische LODF]
-    Generate --> Store[672 Zeitpunkte pro Messreihe speichern]
-    Store --> Launch[Lokales Dashboard starten]
-    Reuse --> Launch
-    Launch --> Browser[Dummy-Kennzeichnung und echte SQLite-Abfragen]
-    Browser --> Stop[Ctrl+C beendet den eigenen Server]
+    Command[start-dashboard.command --db file] --> Setup[uv sync and npm ci when the lock file changed]
+    Setup --> Build[Build the frontend]
+    Build --> Check[Check file and schema, never create]
+    Check --> Launch[Start the local dashboard]
+    Launch --> Browser[Real SQLite queries]
+    Browser --> Stop[Ctrl+C ends the own server]
 ```
 
-Die Testdaten enthalten acht Leitungen, zwei Transformatoren, drei Sammelschienen,
-Auslastungen, Spannungen (Band 0,90 bis 1,10 p.u.) sowie P/Q/Strom. Sie decken alle drei
-Urteile ab: zulässig, bedingt und nicht zulässig, auch durch Unter- und Überspannung. Ausfallbedingte Unterschiede entstehen
-nur in den jeweiligen Dummy-Ausfallfenstern. Sie sind synthetisch und werden als
-`Dummy QDS (synthetic)` gespeichert. Standarddatei:
-`backend/data/outage-assessment-demo.sqlite3`. Der echte PF-Standard verwendet
-`backend/data/outage-assessment.sqlite3`.
+The real PF default is `backend/data/outage-assessment.sqlite3`. Synthetic data exists only as a test
+fixture (`backend/tests/qds_fixture.py`) for backend tests and the browser smoke test.
 
-## 9. Tests und reale Abnahme
+## 9. Tests and real acceptance
 
-### Lokale Datenbank wechseln
+### Switching the local database
 
 ```mermaid
 flowchart TD
-    Start[Mac-Starter mit --db oder PowerFactory-Konfiguration] --> Active[Aktive lokale SQLite-Datei]
-    Button[Header: Datenbank hinzufügen] --> Path[Absoluten Dateipfad eingeben]
-    Path --> Check[POST /api/simulation/database: vorhandene Datei und Schema prüfen]
-    Check -->|Ungültig| Error[Fehler anzeigen, bisherige Auswahl beibehalten]
-    Check -->|Gültig| Switch[Aktives Repository und Datenbankpfad umstellen]
-    Switch --> Reload[Frontend-Cache und gespeicherte Auswahl löschen, neu laden]
-    Active --> Queries[API liest vollständige Reihen]
+    Start[start-dashboard.command --db or PowerFactory configuration] --> Active[Active local SQLite file]
+    Button[Header: add database] --> Path[Enter an absolute file path]
+    Path --> Check[POST /api/simulation/database: check existing file and schema]
+    Check -->|Invalid| Error[Show error, keep the previous selection]
+    Check -->|Valid| Switch[Switch the active repository and database path]
+    Switch --> Reload[Clear frontend cache and saved selection, reload]
+    Active --> Queries[API reads complete series]
     Reload --> Queries
-    Queries --> Charts[Bestehende DashB-Diagramme]
+    Queries --> Charts[Charts]
 ```
 
-Der Pfad bezeichnet eine Datei auf dem Rechner des Servers, bei PowerFactory
-also auf der VM. Die Auswahl verändert weder die gespeicherten Messwerte noch
-die Startkonfiguration. Alte Repository-Verbindungen bleiben für bereits
-laufende Abfragen bis zum Server-Ende verfügbar. Der neue Mac-Starter
-`start-dashboard.command` prüft eine bestehende Ergebnisdatei; `start-demo.command`
-erzeugt bzw. verwendet die synthetische Testdatei.
+The path names a file on the machine of the server, with PowerFactory the PC itself. The selection
+changes neither the stored measurements nor the start configuration. Old repository connections stay
+available for running queries until the server ends. Switching is disabled when the server is exposed
+to the network.
 
-### Darstellung und Build
+### Presentation and build
 
-Die bestehenden Light-Mode-Variablen und ausschließlich unter
-`[data-grid-theme="light"]` geltende Regeln in `frontend/src/index.css` steuern
-die optische Anpassung. Die Dark-Mode- und gemeinsamen Layout-Regeln bleiben
-unverändert. `docs/LIGHT_MODE.css` enthält eine Kopie der angepassten Sektion zur
-Code-Erklärung, keinen zusätzlich eingebundenen Stylesheet.
+The light-mode variables and rules that apply only under `[data-grid-theme="light"]` in
+`frontend/src/index.css` control the visual adaptation. The dark-mode and shared layout rules are
+unchanged.
 
-Vite lädt Diagramme weiterhin dynamisch. Die bestehenden ECharts- und
-MapLibre-Bibliotheken werden über Rolldown-Chunk-Gruppen mit `maxSize` verteilt;
-die Warnschwelle bleibt bei 650 kB. Logo, Query-Monitor und Export-/Teilen-Buttons
-sind entfernt.
+Vite loads charts dynamically. The ECharts libraries are distributed over Rolldown chunk groups with
+`maxSize`; the warning threshold stays at 650 kB.
 
-Worker-Tests verwenden eine native API-Nachbildung und prüfen einzelne Ausfälle,
-benannte Kombinationen, Batch-Verarbeitung, Zustandswiederherstellung und atomare
-Persistenz. Der Produktions-Smoke startet den gleichen Dashboard-Launcher mit
-isolierter Dummy-Datenbank. Browserprüfungen kontrollieren vollständige Reihen
-auch mit alten Zeitstempeln sowie die entfernte Anmeldung, den Footer und den
-Datumsfilter.
+Worker tests use a native API replacement and check single outages, named combinations, batch
+processing, state restoration and atomic persistence. The production smoke test starts the same
+dashboard launcher with an isolated synthetic test database. Browser checks verify complete series even
+with old timestamps, and the removed login, footer and date filter.
 
-Ein echter PowerFactory-2026-Lauf auf Windows bleibt erforderlich. Insbesondere
-muss die im GridLens-Projekt offene Zuordnung zwischen ElmRes-Zeitstempel,
-Intervallende und Planned-Outage-Fenster fachlich geprüft werden. Die Anwendung
-verschiebt diese Zeitstempel nicht automatisch.
+A real PowerFactory 2026 run on Windows remains necessary. In particular the mapping between ElmRes
+timestamp, interval end and Planned Outage window that is still open in the GridLens project must be
+checked technically. The application does not shift these timestamps automatically.

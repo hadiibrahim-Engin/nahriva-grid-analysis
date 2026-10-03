@@ -2,12 +2,6 @@ export type ThemeMode = 'dark' | 'light' | 'system';
 
 export const THEME_STORAGE_KEY = 'grid-monitor-theme-mode';
 
-export const THEME_OPTIONS: { id: ThemeMode; label: string; icon: string }[] = [
-  { id: 'dark', label: 'Dunkel', icon: '◐' },
-  { id: 'light', label: 'Hell', icon: '☼' },
-  { id: 'system', label: 'System', icon: '◌' },
-];
-
 export function isThemeMode(value: string | null): value is ThemeMode {
   return value === 'dark' || value === 'light' || value === 'system';
 }

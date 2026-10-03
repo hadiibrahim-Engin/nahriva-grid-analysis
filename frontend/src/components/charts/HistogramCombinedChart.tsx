@@ -111,7 +111,7 @@ export default function HistogramCombinedChart({
       },
       yAxis: {
         ...scaledValueAxis({ yAxisScaleType, yAxisMin, yAxisMax, yAxisLog }),
-        name: 'Anzahl',
+        name: 'Count',
         ...yAxisNameStyle(theme.mutedText),
         axisLabel: { color: theme.mutedText, formatter: formatChartNumber },
         axisLine: { lineStyle: { color: theme.axis } },
@@ -150,7 +150,7 @@ export default function HistogramCombinedChart({
   if (!option) {
     return (
       <div className="h-[260px] flex items-center justify-center text-gray-500">
-        Keine Histogrammdaten
+        No histogram data
       </div>
     );
   }

@@ -67,9 +67,9 @@ export default function DurationCurveChart({ data, series, ...yScale }: Props & 
           const lines = params
             .map((p) => `${p.marker ?? ''} ${p.seriesName}: ≥ ${formatChartNumber(p.value[1])} ${unitByName.get(p.seriesName ?? '') ?? ''}`)
             .join('<br/>');
-          return `${pct} der Zeit<br/>${lines}`;
+          return `${pct} of the time<br/>${lines}`;
         }
-        return `${pct} der Zeit<br/>≥ ${formatChartNumber(params[0].value[1])} ${data.unit}`;
+        return `${pct} of the time<br/>≥ ${formatChartNumber(params[0].value[1])} ${data.unit}`;
       },
     },
     legend: multi
@@ -78,7 +78,7 @@ export default function DurationCurveChart({ data, series, ...yScale }: Props & 
     grid: { left: Y_AXIS_GRID_LEFT, right: DATA_ZOOM_Y_GRID_RIGHT, top: multi ? 56 : 42, bottom: 54, containLabel: true },
     xAxis: {
       type: 'value',
-      name: 'Überschreitungsdauer (%)',
+      name: 'Exceedance duration (%)',
       nameLocation: 'center',
       nameGap: 25,
       nameTextStyle: { color: theme.mutedText },

@@ -80,7 +80,7 @@ export default function TimeseriesHistogramChart({
         : count;
       return mode === 'percent' ? Math.round((raw / values.length) * 1000) / 10 : raw;
     });
-    const axisName = mode === 'percent' ? (cumulative ? 'Kumuliert (%)' : 'Anteil (%)') : (cumulative ? 'Kumuliert' : 'Anzahl');
+    const axisName = mode === 'percent' ? (cumulative ? 'Cumulative (%)' : 'Share (%)') : (cumulative ? 'Cumulative' : 'Count');
 
     return {
       backgroundColor: 'transparent',
@@ -156,7 +156,7 @@ export default function TimeseriesHistogramChart({
   if (!option) {
     return (
       <div className="h-[260px] flex items-center justify-center text-gray-500">
-        Keine Histogrammdaten
+        No histogram data
       </div>
     );
   }

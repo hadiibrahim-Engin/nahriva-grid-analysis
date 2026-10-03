@@ -92,7 +92,7 @@ export default function CinematicThemeSwitch({
             : 'inset 0 1px 4px rgba(91,110,130,0.24), 0 4px 12px rgba(15,23,42,0.1)',
           border: '1px solid var(--grid-border)',
         }}
-        aria-label={isDark ? 'Helles Design aktivieren' : 'Dunkles Design aktivieren'}
+        aria-label={isDark ? 'Switch to the light theme' : 'Switch to the dark theme'}
         aria-checked={isDark}
         role="switch"
         whileTap={shouldReduceMotion ? undefined : { scale: 0.98 }}

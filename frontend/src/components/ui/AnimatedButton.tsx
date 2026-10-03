@@ -6,7 +6,7 @@
  *  • disabled state handled gracefully (no motion when disabled)
  *
  * Usage:
- *   <AnimatedButton variant="primary" onClick={…}>Hinzufügen</AnimatedButton>
+ *   <AnimatedButton variant="primary" onClick={…}>Add</AnimatedButton>
  *   <AnimatedButton variant="ghost" size="sm" icon={<PdfIcon />}>PDF</AnimatedButton>
  */
 import { useRef, useState } from 'react';

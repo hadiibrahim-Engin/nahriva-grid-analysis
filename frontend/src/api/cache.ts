@@ -134,15 +134,6 @@ export function clearCache(): void {
   try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
 }
 
-/** Drop entries whose key starts with `prefix`. */
-export function invalidateCachePrefix(prefix: string): void {
-  for (const k of Array.from(store.keys())) {
-    if (k.startsWith(prefix)) store.delete(k);
-  }
-  // Re-persist with those entries removed
-  saveToStorage();
-}
-
 /** Serialize an object of params into a stable cache-key suffix. */
 export function paramsKey(params: Record<string, unknown>): string {
   const keys = Object.keys(params).sort();

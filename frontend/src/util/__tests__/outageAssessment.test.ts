@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 
 import {
   assessScenario,
+  causeCounts,
   causeOf,
   equipmentKind,
   verdictCounts,
   voltageResult,
-} from '../freischaltung.ts';
+} from '../outageAssessment.ts';
 import type { AcrossBus, AcrossBusCell, AcrossCell, AcrossLine, AcrossScenario } from '../acrossScenarios.ts';
 
 const scenario: AcrossScenario = { id: 's', name: 'S', outages: [], outaged_element_ids: [], has_lodf: false };
@@ -63,7 +64,7 @@ test('verdict: not permissible when the outage causes an overload, naming the wo
   const a = assessScenario(scenario, [line('L1', cell(128, 70)), line('L2', cell(60, 58))]);
   assert.equal(a.verdict, 'not-permissible');
   assert.equal(a.caused, 1);
-  assert.match(a.reasons[0], /L1 128,0 %/);
+  assert.match(a.reasons[0], /L1 128\.0 %/);
 });
 
 test('verdict: a pre-existing overload alone is only conditional', () => {
@@ -98,7 +99,14 @@ test('verdict: little thermal reserve left by the outage is conditional, but onl
   const pushedUp = assessScenario(scenario, [line('L1', cell(97, 60))]);
   assert.equal(pushedUp.verdict, 'conditional');
   assert.equal(pushedUp.lowReserve, 1);
-  assert.match(pushedUp.reasons[0], /Reserve < 5 pp/);
+  assert.match(pushedUp.reasons[0], /reserve < 5 pp/);
   // Already that high without the outage: not attributable to it.
   assert.equal(assessScenario(scenario, [line('L1', cell(97, 96))]).verdict, 'permissible');
+});
+
+test('cause counts tell outage-caused overloads from the load a branch already carried', () => {
+  const l = line('L', cell(0, 0));
+  l.cells = { a: cell(105, 90), b: cell(118, 104), c: cell(104.5, 104), d: cell(60, 60), e: cell(null, null, true) };
+  assert.deepEqual(causeCounts(l, ['a', 'b', 'c', 'd', 'e', 'missing']), { caused: 2, preexisting: 1 });
+  assert.deepEqual(causeCounts(l, []), { caused: 0, preexisting: 0 });
 });

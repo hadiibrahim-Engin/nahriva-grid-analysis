@@ -51,40 +51,6 @@ def test_original_dashboard_contract_reads_the_simulation_database(api):
     assert not any("fdwh" in p.lower() or "oracle" in p.lower() for p in paths)
 
 
-def test_scenario_name_and_selection_are_queued_and_duplicates_blocked(api):
-    client, path = api
-    store = ScenarioStore(str(path))
-    catalog = {
-        "project": "Model",
-        "project_path": "Model.IntPrj",
-        "study_case": "Study",
-        "study_case_path": "Study.IntCase",
-        "period": [0, 3600],
-        "outages": [{"id": "a", "name": "A", "in_period": True}],
-    }
-    store.publish_catalog(catalog)
-    request = {
-        "name": "Wartung Süd / Variante 2",
-        "outage_ids": ["a"],
-        "catalog_signature": catalog_signature(catalog),
-    }
-    result = client.post("/api/simulation/scenarios", json=request)
-    assert result.status_code == 202
-    assert client.post("/api/simulation/scenarios", json=request).status_code == 409
-    job = store.claim()
-    assert job["payload"]["name"] == request["name"] and job["payload"][
-        "outage_ids"
-    ] == ["a"]
-    assert client.post(f"/api/simulation/jobs/{job['id']}/cancel").status_code == 409
-    store.finish(job["id"], "test", failed=True)
-    request["outage_ids"] = ["missing"]
-    assert client.post("/api/simulation/scenarios", json=request).status_code == 422
-    request["outage_ids"] = ["a"]
-    request["catalog_signature"] = "stale"
-    assert client.post("/api/simulation/scenarios", json=request).status_code == 409
-    store.close()
-
-
 def test_offset_and_naive_chart_windows_are_both_normalized_as_utc():
     assert (
         data.parse_time("2026-01-01T02:00:00-02:00").isoformat()

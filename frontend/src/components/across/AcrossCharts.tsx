@@ -93,7 +93,7 @@ export function LoadingRangeChart({ lines, scenarios, top = TOP }: { lines: Line
             `Base (REF-Maximum): ${fmtPct(r.base)}`,
             `Max Loading: <strong>${fmtPct(r.max)}</strong> · ${escapeHtml(scenarioName(scenarios, r.maxScenarioId))}`,
             `Min Loading: ${fmtPct(r.min)}`,
-            `Szenarien &gt; 100 %: ${r.n100}`,
+            `Scenarios &gt; 100 %: ${r.n100}`,
           ].join('<br/>');
         },
       },
@@ -132,7 +132,7 @@ export function LoadingRangeChart({ lines, scenarios, top = TOP }: { lines: Line
       ],
     };
   }, [rows, theme, colors, scenarios]);
-  if (rows.length === 0) return <div className="ab-empty">Keine Auslastungswerte vorhanden.</div>;
+  if (rows.length === 0) return <div className="ab-empty">No loading values available.</div>;
   return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: rows.length * ROW + 40 }} />;
 }
 
@@ -160,9 +160,9 @@ export function OverloadTimeChart({ lines, scenarios, periodHours, top = TOP }: 
           const [a, b, c] = r.overloadHoursBands;
           return [
             `<strong>${escapeHtml(r.line.name)}</strong> · ${escapeHtml(scenarioName(scenarios, r.overloadScenarioId))}`,
-            `Overload Rate: <strong>${fmtShare(r.overloadShare)}</strong> des Simulationszeitraums`,
+            `Overload Rate: <strong>${fmtShare(r.overloadShare)}</strong> of the simulation period`,
             `&gt; 100 %: ${fmtHours(a)} · &gt; 110 %: ${fmtHours(b)} · &gt; 120 %: ${fmtHours(c)}`,
-            `Simulationszeitraum: ${fmtHours(periodHours)}`,
+            `Simulation period: ${fmtHours(periodHours)}`,
           ].join('<br/>');
         },
       },
@@ -181,7 +181,7 @@ export function OverloadTimeChart({ lines, scenarios, periodHours, top = TOP }: 
       ],
     };
   }, [rows, theme, colors, scenarios, periodHours]);
-  if (rows.length === 0) return <div className="ab-empty">Keine Leitung überschreitet 100 % im Simulationszeitraum.</div>;
+  if (rows.length === 0) return <div className="ab-empty">No line exceeds 100 % in the simulation period.</div>;
   return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: rows.length * ROW + 64 }} />;
 }
 
@@ -203,9 +203,9 @@ export function DeltaChart({ lines, scenarios, top = TOP }: { lines: LineStats[]
           if (!r) return '';
           return [
             `<strong>${escapeHtml(r.line.name)}</strong> · ${escapeHtml(scenarioName(scenarios, r.maxDeltaScenarioId))}`,
-            `Δ Loading: <strong>${fmtPp(r.maxDelta)}</strong> gegenüber REF im selben Fenster`,
+            `Δ Loading: <strong>${fmtPp(r.maxDelta)}</strong> against REF in the same window`,
             `Max Loading: ${fmtPct(r.max)}`,
-            `Spanne zwischen Szenarien: ${fmtPp(r.spread)}`,
+            `Spread between scenarios: ${fmtPp(r.spread)}`,
           ].join('<br/>');
         },
       },
@@ -224,7 +224,7 @@ export function DeltaChart({ lines, scenarios, top = TOP }: { lines: LineStats[]
       }],
     };
   }, [rows, theme, colors, scenarios]);
-  if (rows.length === 0) return <div className="ab-empty">Keine Änderungen berechnet.</div>;
+  if (rows.length === 0) return <div className="ab-empty">No changes calculated.</div>;
   return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: rows.length * ROW + 40 }} />;
 }
 
@@ -269,7 +269,7 @@ export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; s
         markArea: {
           silent: true,
           itemStyle: { color: withAlpha(colors.lodf, 0.09) },
-          label: { show: true, position: 'insideBottomRight', color: theme.mutedText, fontSize: 10, formatter: 'hoher LODF + große Änderung' },
+          label: { show: true, position: 'insideBottomRight', color: theme.mutedText, fontSize: 10, formatter: 'high LODF + large change' },
           data: [[{ xAxis: ANALYSIS.lodfNotable, yAxis: ANALYSIS.deltaStrongPp / 2 }, { xAxis: xMax, yAxis: yMax }]],
         },
         markLine: { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: theme.mutedText, width: 1 }, data: [{ yAxis: 0 }] },
@@ -281,24 +281,24 @@ export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; s
       }],
     };
   }, [points, theme, colors]);
-  if (!hasLodf) return <div className="ab-empty">LODF wurde noch nicht berechnet. Das PowerFactory-Skript schreibt es vor der ersten Simulation in die Datenbank.</div>;
-  if (points.length === 0) return <div className="ab-empty">Keine Punkte mit LODF und Änderung vorhanden.</div>;
+  if (!hasLodf) return <div className="ab-empty">LODF has not been calculated yet. The PowerFactory script writes it to the database before the first simulation.</div>;
+  if (points.length === 0) return <div className="ab-empty">No points with LODF and change available.</div>;
   return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: 360 }} />;
 }
 
 export default function AcrossCharts({ lines, scenarios, periodHours, hasLodf }: Props) {
   return (
     <div className="ab-charts">
-      <SectionCard title="Höchste Auslastung je Betriebsmittel" hint="Base (REF) → Maximum über alle Szenarien auf den Auslastungsbereichen. Die auffälligsten Betriebsmittel.">
+      <SectionCard title="Highest loading per equipment" hint="Base (REF) → maximum over all scenarios on the loading bands. The most conspicuous equipment.">
         <LoadingRangeChart lines={lines} scenarios={scenarios} />
       </SectionCard>
-      <SectionCard title="Überlastdauer (Overload Rate)" hint="Zeit über 100 % im ungünstigsten Szenario, bezogen auf den Simulationszeitraum.">
+      <SectionCard title="Overload duration (overload rate)" hint="Time above 100 % in the worst scenario, relative to the simulation period.">
         <OverloadTimeChart lines={lines} scenarios={scenarios} periodHours={periodHours} />
       </SectionCard>
-      <SectionCard title="Änderung der Auslastung" hint="Größte Änderung gegenüber REF im selben Ausfallfenster in Prozentpunkten (pp): links Entlastung, rechts Mehrbelastung.">
+      <SectionCard title="Change of loading" hint="Largest change against REF in the same outage window in percentage points (pp): relief on the left, additional load on the right.">
         <DeltaChart lines={lines} scenarios={scenarios} />
       </SectionCard>
-      <SectionCard title="LODF und Änderung der Auslastung" hint="Jeder Punkt ist eine Leitung in einem Szenario. Oben rechts: hoher |LODF| mit großer Mehrbelastung. Farbe = Auslastungsbereich.">
+      <SectionCard title="LODF and change of loading" hint="Each point is a line in one scenario. Top right: high |LODF| with a large additional load. Colour = loading band.">
         <LodfChart lines={lines} scenarios={scenarios} hasLodf={hasLodf} />
       </SectionCard>
     </div>

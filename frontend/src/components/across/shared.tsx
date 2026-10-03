@@ -40,7 +40,7 @@ export function SectionCard({ title, hint, actions, children, collapsible = true
     <section id={id} className={`across-card ${className}${collapsible && !expanded ? ' across-card--collapsed' : ''}`}>
       <header className="across-card__head">
         {collapsible ? (
-          <button type="button" className="across-card__toggle" aria-label={`${title} ${expanded ? 'zuklappen' : 'aufklappen'}`} aria-expanded={expanded} aria-controls={bodyId} onClick={() => setOpen((v) => !v)}>
+          <button type="button" className="across-card__toggle" aria-label={`${title} ${expanded ? 'collapse' : 'expand'}`} aria-expanded={expanded} aria-controls={bodyId} onClick={() => setOpen((v) => !v)}>
             <svg className="across-card__chevron" width="14" height="14" viewBox="0 0 16 16" aria-hidden><path d="M5 6l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
             {heading}
           </button>
@@ -48,7 +48,7 @@ export function SectionCard({ title, hint, actions, children, collapsible = true
         {expanded && (hint || actions) && (
           <div className="across-card__actions">
             {hint && (
-              <button type="button" className="ab-info" aria-pressed={showHint} disabled={help} title="Erläuterung ein- oder ausblenden" aria-label={`Erläuterung zu ${title}`} onClick={() => setHintOpen((v) => !v)}>i</button>
+              <button type="button" className="ab-info" aria-pressed={showHint} disabled={help} title="Show or hide the explanation" aria-label={`Explanation of ${title}`} onClick={() => setHintOpen((v) => !v)}>i</button>
             )}
             {actions}
           </div>
@@ -61,7 +61,7 @@ export function SectionCard({ title, hint, actions, children, collapsible = true
 
 export function BandLegend() {
   return (
-    <ul className="ab-legend" aria-label="Auslastungsbereiche">
+    <ul className="ab-legend" aria-label="Loading bands">
       {LOADING_BANDS.map((band) => (
         <li key={band.id}>
           <span className={`ab-swatch ab-fill--${band.id}`} aria-hidden />

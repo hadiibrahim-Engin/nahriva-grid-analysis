@@ -17,8 +17,8 @@ ANALYSIS_DB_PATH = os.getenv(
 CORS_ORIGINS = [
     value.strip() for value in os.getenv("CORS_ORIGINS", "").split(",") if value.strip()
 ]
-if ANALYSIS_MODE not in ("sqlite", "demo"):
-    raise RuntimeError("ANALYSIS_MODE must be sqlite or demo.")
+if ANALYSIS_MODE != "sqlite":
+    raise RuntimeError("ANALYSIS_MODE must be sqlite.")
 
 # Production: the dashboard server runs next to the results database and is reachable in the network.
 PRODUCTION = APP_ENV == "production"

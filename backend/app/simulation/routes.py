@@ -15,12 +15,6 @@ class DatabaseRequest(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
 
 
-def writable():
-    """Read-only operation: in production visitors of the dashboard cannot change anything."""
-    if settings.PRODUCTION:
-        raise HTTPException(403, "Der Dashboard-Server arbeitet im Nur-Lese-Betrieb.")
-
-
 @router.get("/database")
 def database():
     return {"path": settings.ANALYSIS_DB_PATH}
@@ -29,7 +23,7 @@ def database():
 @router.post("/database")
 def change_database(body: DatabaseRequest):
     if not settings.ALLOW_DB_SWITCH:
-        raise HTTPException(403, "Das Wechseln der Datenbank ist in diesem Betrieb deaktiviert.")
+        raise HTTPException(403, "Switching the database is disabled in this mode.")
     try:
         return {"path": select_database(body.path.strip())}
     except ValueError as exc:
@@ -42,13 +36,6 @@ def store():
         yield connection
     finally:
         connection.close()
-
-
-class ScenarioRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    name: str = Field(min_length=1, max_length=200)
-    outage_ids: list[str] = Field(min_length=1, max_length=500)
-    catalog_signature: str
 
 
 @router.get("/capabilities")
@@ -87,7 +74,7 @@ def across_cells(
     """Reduced values of one scenario, loaded on demand and cached."""
     result = across.scenario_cells(db, scenario_id, tuple(over))
     if result is None:
-        raise HTTPException(404, "Szenario nicht gefunden.")
+        raise HTTPException(404, "Scenario not found.")
     return result
 
 
@@ -108,77 +95,14 @@ def scenario_profile(
 ):
     result = across.scenario_profile(db, scenario_id, top, points)
     if result is None:
-        raise HTTPException(404, "Szenario nicht gefunden.")
+        raise HTTPException(404, "Scenario not found.")
     return result
-
-
-@router.post("/outage-management/sync", status_code=202, dependencies=[Depends(writable)])
-def sync(db=Depends(store)):
-    if settings.ANALYSIS_MODE != "sqlite":
-        raise HTTPException(409, "PowerFactory-Aufträge benötigen den SQLite-Modus.")
-    try:
-        return {"id": db.enqueue("sync", {})}
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-
-
-@router.post("/scenarios", status_code=202, dependencies=[Depends(writable)])
-def create_scenario(body: ScenarioRequest, db=Depends(store)):
-    catalog = db.catalog()
-    if settings.ANALYSIS_MODE != "sqlite" or not catalog:
-        raise HTTPException(
-            409, "Zuerst Planned Outages aus PowerFactory synchronisieren."
-        )
-    if body.catalog_signature != catalog_signature(catalog):
-        raise HTTPException(
-            409, "PowerFactory-Auswahl hat sich geändert. Liste neu laden."
-        )
-    if not body.name.strip() or len(set(body.outage_ids)) != len(body.outage_ids):
-        raise HTTPException(
-            422, "Szenarioname und eindeutige Ausfallauswahl erforderlich."
-        )
-    known = {o["id"]: o for o in catalog["outages"]}
-    if any(
-        identifier not in known or not known[identifier]["in_period"]
-        for identifier in body.outage_ids
-    ):
-        raise HTTPException(
-            422,
-            "Die Auswahl enthält unbekannte Ausfälle oder Ausfälle außerhalb des Rechenzeitraums.",
-        )
-    try:
-        return {
-            "id": db.enqueue(
-                "run",
-                {
-                    "name": body.name.strip(),
-                    "outage_ids": body.outage_ids,
-                    "catalog_signature": body.catalog_signature,
-                },
-            )
-        }
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-
-
-@router.post("/jobs/{job_id}/cancel", dependencies=[Depends(writable)])
-def cancel(job_id: str, db=Depends(store)):
-    with db.db:
-        changed = db.db.execute(
-            "UPDATE pf_jobs SET status='cancelled',finished_at=?,message='Cancelled before calculation.' WHERE id=? AND status='queued'",
-            (now(), job_id),
-        ).rowcount
-    if not changed:
-        raise HTTPException(
-            409, "Nur wartende Aufträge können hier abgebrochen werden."
-        )
-    return {"status": "cancelled"}
 
 
 @router.get("/facilities")
 def scenarios(repo=Depends(get_repository)):
     return [
-        {"id": r["id"], "name": r["name"], "spannungsebene": r["project"]}
+        {"id": r["id"], "name": r["name"], "project": r["project"]}
         for r in repo.runs()
         if r["status"] == "completed"
     ]
@@ -191,7 +115,7 @@ def elements(run_id: str, repo=Depends(get_repository)):
             "id": data.component_id(run_id, e["id"]),
             "facility_id": run_id,
             "name": e["name"],
-            "spannungsebene": e["className"],
+            "class_name": e["className"],
         }
         for e in repo.elements(run_id)
     ]
@@ -215,10 +139,10 @@ def resolutions():
     return [
         {"seconds": s, "label": label}
         for s, label in [
-            (0, "Originalauflösung"),
-            (900, "15 Minuten"),
-            (3600, "Stundenmittel"),
-            (86400, "Tagesmittel"),
+            (0, "Original resolution"),
+            (900, "15 minutes"),
+            (3600, "Hourly mean"),
+            (86400, "Daily mean"),
         ]
     ]
 
@@ -253,26 +177,6 @@ def aggregate(
     )
 
 
-@router.get("/timeseries/{identifier}/{code}/range")
-def date_range(identifier: str, code: str, repo=Depends(get_repository)):
-    _, _, rows = data.dataset(repo, identifier, code)
-    return {
-        "min_date": rows[0]["timestamp"] if rows else None,
-        "max_date": rows[-1]["timestamp"] if rows else None,
-    }
-
-
-@router.get("/timeseries/{identifier}/{code}/stats")
-def stats(
-    identifier: str,
-    code: str,
-    start: str | None = None,
-    end: str | None = None,
-    repo=Depends(get_repository),
-):
-    return data.metric_analytics(repo, identifier, code, "stats", start, end)
-
-
 @router.get("/analytics/{identifier}/{code}/{kind}")
 def metric_analysis(
     identifier: str,
@@ -296,42 +200,8 @@ def component_analysis(
     start: str | None = None,
     end: str | None = None,
     types: str | None = None,
-    type_x: str = "P",
-    type_y: str = "Q",
-    lag_minutes: int = Query(0, ge=-720, le=720),
     repo=Depends(get_repository),
 ):
     return data.component_analytics(
-        repo, identifier, kind, start, end, types, type_x, type_y, lag_minutes
+        repo, identifier, kind, start, end, types
     )
-
-
-class ShareRequest(BaseModel):
-    kind: str = Field(pattern="^(live|snapshot)$")
-    payload: dict
-
-
-@router.post("/shares", dependencies=[Depends(writable)])
-def create_share(body: ShareRequest, db=Depends(store)):
-    identifier = uuid.uuid4().hex
-    encoded = json.dumps(body.payload)
-    if len(encoded) > 5_000_000:
-        raise HTTPException(413, "Ansicht zu groß.")
-    with db.db:
-        db.db.execute(
-            "INSERT INTO ui_shares VALUES(?,?,?,?)",
-            (identifier, body.kind, encoded, now()),
-        )
-    return {"id": identifier}
-
-
-@router.get("/shares/{identifier}")
-def read_share(identifier: str, db=Depends(store)):
-    row = db.db.execute("SELECT * FROM ui_shares WHERE id=?", (identifier,)).fetchone()
-    if not row:
-        raise HTTPException(404, "Geteilte Ansicht nicht gefunden.")
-    return {
-        "kind": row["kind"],
-        "payload": json.loads(row["payload"]),
-        "created_at": datetime.fromisoformat(row["created_at"]).timestamp(),
-    }

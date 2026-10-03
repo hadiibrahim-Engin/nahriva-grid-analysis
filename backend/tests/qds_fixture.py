@@ -1,13 +1,9 @@
-"""Small, persistent and explicitly synthetic QDS result database for Mac testing."""
+"""Small, explicitly synthetic QDS result database; test fixture only, never shipped."""
 
-import argparse
 from datetime import datetime, timedelta, timezone
 import math
 from pathlib import Path
-import sys
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "backend"))
 from app.simulation.store import ScenarioStore, catalog_signature, outage_key
 
 START = datetime(2026, 1, 31, tzinfo=timezone.utc)
@@ -15,71 +11,71 @@ STEPS = 672  # 7 complete days at 15-minute steps, outside today's date window
 DUMMY_VERSION = 2  # 1: three scenarios, five elements; files of version 1 stay readable
 # (id, name, class, type, path, daily peak loading in %, relative rating)
 LINES = [
-    ("line-nord", "Leitung Nord–West", "ElmLne", "line", "Dummy/Leitung Nord", 70, 1.0),
-    ("line-sued", "Leitung Mitte–Süd", "ElmLne", "line", "Dummy/Leitung Süd", 82, 1.0),
-    ("trafo-nord", "Trafo Nord T1", "ElmTr2", "transformer", "Dummy/Trafo Nord", 66, 1.5),
-    ("line-ost", "Leitung Ost–Mitte", "ElmLne", "line", "Dummy/Leitung Ost", 55, 0.8),
-    ("line-west", "Leitung West–Mitte", "ElmLne", "line", "Dummy/Leitung West", 62, 0.8),
-    ("line-suedost", "Leitung Süd–Ost", "ElmLne", "line", "Dummy/Leitung Süd-Ost", 25, 1.2),
-    ("line-nordost", "Leitung Nord–Ost", "ElmLne", "line", "Dummy/Leitung Nord-Ost", 64, 0.6),
-    ("line-suedwest", "Leitung Süd–West", "ElmLne", "line", "Dummy/Leitung Süd-West", 87, 0.7),
-    ("line-ring", "Leitung Ring Mitte", "ElmLne", "line", "Dummy/Leitung Ring", 88, 1.0),
-    ("trafo-sued", "Trafo Süd T2", "ElmTr2", "transformer", "Dummy/Trafo Süd", 74, 1.5),
+    ("line-north", "Line North–West", "ElmLne", "line", "Dummy/Line North", 70, 1.0),
+    ("line-south", "Line Central–South", "ElmLne", "line", "Dummy/Line South", 82, 1.0),
+    ("transformer-north", "Transformer North T1", "ElmTr2", "transformer", "Dummy/Transformer North", 66, 1.5),
+    ("line-east", "Line East–Central", "ElmLne", "line", "Dummy/Line East", 55, 0.8),
+    ("line-west", "Line West–Central", "ElmLne", "line", "Dummy/Line West", 62, 0.8),
+    ("line-southeast", "Line South–East", "ElmLne", "line", "Dummy/Line South-East", 25, 1.2),
+    ("line-northeast", "Line North–East", "ElmLne", "line", "Dummy/Line North-East", 64, 0.6),
+    ("line-southwest", "Line South–West", "ElmLne", "line", "Dummy/Line South-West", 87, 0.7),
+    ("line-ring", "Line Central Ring", "ElmLne", "line", "Dummy/Line Ring", 88, 1.0),
+    ("transformer-south", "Transformer South T2", "ElmTr2", "transformer", "Dummy/Transformer South", 74, 1.5),
 ]
 BUSES = [
-    ("bus-nord", "Sammelschiene Nord", "ElmTerm", "bus", "Dummy/Bus Nord"),
-    ("bus-sued", "Sammelschiene Süd", "ElmTerm", "bus", "Dummy/Bus Süd"),
-    ("bus-ost", "Sammelschiene Ost", "ElmTerm", "bus", "Dummy/Bus Ost"),
+    ("bus-north", "Busbar North", "ElmTerm", "bus", "Dummy/Bus North"),
+    ("bus-south", "Busbar South", "ElmTerm", "bus", "Dummy/Bus South"),
+    ("bus-east", "Busbar East", "ElmTerm", "bus", "Dummy/Bus East"),
 ]
 # Voltage in p.u.: base level per busbar and the shift when a branch is switched off.
-BUS_OFFSET = {"bus-nord": 0.0, "bus-sued": 0.0, "bus-ost": 0.012}
+BUS_OFFSET = {"bus-north": 0.0, "bus-south": 0.0, "bus-east": 0.012}
 VOLT_SHIFT = {
-    "line-nord": {"bus-nord": -0.012},
-    "trafo-nord": {"bus-nord": -0.03, "bus-sued": -0.02},
-    "line-sued": {"bus-sued": -0.08},  # ends close to the lower limit of 0.90 p.u.
-    "line-ost": {"bus-ost": 0.075},  # leaves the band above 1.10 p.u.
-    "line-west": {"bus-nord": -0.015},
-    "trafo-sued": {"bus-sued": -0.115, "bus-nord": -0.02},  # leaves the band below 0.90 p.u.
+    "line-north": {"bus-north": -0.012},
+    "transformer-north": {"bus-north": -0.03, "bus-south": -0.02},
+    "line-south": {"bus-south": -0.08},  # ends close to the lower limit of 0.90 p.u.
+    "line-east": {"bus-east": 0.075},  # leaves the band above 1.10 p.u.
+    "line-west": {"bus-north": -0.015},
+    "transformer-south": {"bus-south": -0.115, "bus-north": -0.02},  # leaves the band below 0.90 p.u.
 }
 ELEMENTS = [line[:5] for line in LINES] + BUSES
 PEAK = {line[0]: line[5] for line in LINES}
 RATING = {line[0]: line[6] for line in LINES}
 METRICS = [
-    ("loading", "Auslastung", "%", None, 100),
-    ("voltage", "Spannung", "p.u.", 0.9, 1.1),
-    ("active_power", "Wirkleistung", "MW", None, None),
-    ("reactive_power", "Blindleistung", "Mvar", None, None),
-    ("current", "Strom", "A", None, None),
+    ("loading", "Loading", "%", None, 100),
+    ("voltage", "Voltage", "p.u.", 0.9, 1.1),
+    ("active_power", "Active power", "MW", None, None),
+    ("reactive_power", "Reactive power", "Mvar", None, None),
+    ("current", "Current", "A", None, None),
 ]
 # (id, name, switched-off element, first day, last day)
 OUTAGES = [
-    ("outage-line", "Freischaltung Leitung Nord", "line-nord", 2, 3),
-    ("outage-trafo", "Freischaltung Trafo Nord", "trafo-nord", 4, 5),
-    ("outage-sued", "Freischaltung Leitung Süd", "line-sued", 1, 2),
-    ("outage-ost", "Freischaltung Leitung Ost", "line-ost", 3, 4),
-    ("outage-west", "Freischaltung Leitung West", "line-west", 5, 6),
-    ("outage-suedost", "Freischaltung Leitung Süd-Ost", "line-suedost", 0, 1),
-    ("outage-trafo-sued", "Freischaltung Trafo Süd", "trafo-sued", 3, 4),
+    ("outage-line", "Outage Line North", "line-north", 2, 3),
+    ("outage-transformer", "Outage Transformer North", "transformer-north", 4, 5),
+    ("outage-south", "Outage Line South", "line-south", 1, 2),
+    ("outage-east", "Outage Line East", "line-east", 3, 4),
+    ("outage-west", "Outage Line West", "line-west", 5, 6),
+    ("outage-southeast", "Outage Line South-East", "line-southeast", 0, 1),
+    ("outage-transformer-south", "Outage Transformer South", "transformer-south", 3, 4),
 ]
 SCENARIOS = [
-    ("Freischaltung Leitung Nord", ["outage-line"]),
-    ("Freischaltung Trafo Nord", ["outage-trafo"]),
-    ("Freischaltung Nord gesamt", ["outage-line", "outage-trafo"]),
-    ("Freischaltung Leitung Süd", ["outage-sued"]),
-    ("Freischaltung Leitung Ost", ["outage-ost"]),
-    ("Freischaltung West und Süd-Ost", ["outage-west", "outage-suedost"]),
-    ("Freischaltung Trafo Süd", ["outage-trafo-sued"]),
-    ("Freischaltung Leitung Süd-Ost", ["outage-suedost"]),
+    ("Outage Line North", ["outage-line"]),
+    ("Outage Transformer North", ["outage-transformer"]),
+    ("Outage North combined", ["outage-line", "outage-transformer"]),
+    ("Outage Line South", ["outage-south"]),
+    ("Outage Line East", ["outage-east"]),
+    ("Outage West and South-East", ["outage-west", "outage-southeast"]),
+    ("Outage Transformer South", ["outage-transformer-south"]),
+    ("Outage Line South-East", ["outage-southeast"]),
 ]
 # LODF[switched-off element][monitored line]: share of the lost flow taken over.
 LODF = {
-    "line-nord": {"line-ost": 0.10, "line-west": 0.30, "line-nordost": 0.55, "line-suedwest": 0.22, "line-ring": 0.05},
-    "trafo-nord": {"line-suedwest": 0.06, "line-suedost": 0.35, "line-ring": 0.04, "line-sued": 0.10, "trafo-sued": 0.15},
-    "line-sued": {"line-suedwest": 0.30, "line-ost": 0.25, "line-nord": 0.20, "line-ring": 0.06, "line-suedost": 0.10, "line-west": 0.15, "trafo-sued": 0.12},
-    "line-ost": {"line-sued": 0.30, "line-suedwest": 0.15, "line-west": 0.20, "line-suedost": 0.30, "line-ring": 0.03},
-    "line-west": {"line-sued": 0.35, "line-suedwest": 0.10, "line-nord": 0.20, "line-ost": 0.30, "line-nordost": 0.15},
-    "line-suedost": {"line-nordost": 0.20, "line-suedwest": 0.12, "line-sued": 0.10},
-    "trafo-sued": {"line-sued": 0.30, "line-suedost": 0.28, "line-suedwest": 0.22, "trafo-nord": 0.12, "line-ring": 0.05, "line-ost": 0.08},
+    "line-north": {"line-east": 0.10, "line-west": 0.30, "line-northeast": 0.55, "line-southwest": 0.22, "line-ring": 0.05},
+    "transformer-north": {"line-southwest": 0.06, "line-southeast": 0.35, "line-ring": 0.04, "line-south": 0.10, "transformer-south": 0.15},
+    "line-south": {"line-southwest": 0.30, "line-east": 0.25, "line-north": 0.20, "line-ring": 0.06, "line-southeast": 0.10, "line-west": 0.15, "transformer-south": 0.12},
+    "line-east": {"line-south": 0.30, "line-southwest": 0.15, "line-west": 0.20, "line-southeast": 0.30, "line-ring": 0.03},
+    "line-west": {"line-south": 0.35, "line-southwest": 0.10, "line-north": 0.20, "line-east": 0.30, "line-northeast": 0.15},
+    "line-southeast": {"line-northeast": 0.20, "line-southwest": 0.12, "line-south": 0.10},
+    "transformer-south": {"line-south": 0.30, "line-southeast": 0.28, "line-southwest": 0.22, "transformer-north": 0.12, "line-ring": 0.05, "line-east": 0.08},
 }
 
 
@@ -117,7 +113,7 @@ def create_dummy_database(path):
         if has_data:
             if not catalog or catalog.get("dummy_qds_version") not in (1, DUMMY_VERSION):
                 raise ValueError(
-                    "Diese Datei enthält andere Ergebnisse. Für Dummy-QDS eine eigene Datenbank verwenden: "
+                    "This file contains other results. Use a separate database for the dummy QDS data: "
                     + str(path)
                 )
             return path
@@ -138,9 +134,9 @@ def create_dummy_database(path):
         ]
         by_id = {o["id"]: o for o in outages}
         catalog = {
-            "project": "Dummy QDS · synthetische Testdaten",
+            "project": "Dummy QDS · synthetic test data",
             "project_path": "Dummy.IntPrj",
-            "study_case": "7 Tage · 15 Minuten",
+            "study_case": "7 days · 15 minutes",
             "study_case_path": "Dummy.IntCase",
             "period": [int(START.timestamp()), int(end.timestamp())],
             "outages": outages,
@@ -230,10 +226,3 @@ def create_dummy_database(path):
     finally:
         store.close()
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--db", type=Path, default=ROOT / "backend/data/outage-assessment-demo.sqlite3"
-    )
-    print(create_dummy_database(parser.parse_args().db))

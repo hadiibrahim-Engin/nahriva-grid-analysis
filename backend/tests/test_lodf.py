@@ -2,6 +2,8 @@
 
 import sqlite3
 
+import pytest
+
 from app.simulation.store import ScenarioStore, outage_key
 from tests.test_powerfactory_worker import App, PFObject, assessment_module, worker
 
@@ -96,3 +98,34 @@ def test_missing_load_flow_object_is_not_fatal(tmp_path):
     app = LodfApp()
     app.ldf = None
     assert assessment_module().run_assessment(app, tmp_path / "x.sqlite3") == ["Chosen", "Other"]
+
+
+class StuckBranch(Branch):
+    """A branch that refuses to be switched off (the write does not stick)."""
+
+    def __setattr__(self, name, value):
+        if name == "outserv" and value == 1 and "network" in self.__dict__:
+            return
+        super().__setattr__(name, value)
+
+
+def test_a_branch_that_cannot_be_switched_off_leaves_no_other_branch_switched_off():
+    import lodf
+
+    app = LodfApp()
+    stuck = StuckBranch("D", 20.0, app.network)
+    scenario = {"key": "k", "equipment": [app.network.a, stuck]}
+    with pytest.raises(lodf.LodfError, match="Could not switch off"):
+        lodf.calculate(app, [scenario], lambda branch: branch.loc_name)
+    assert app.network.a.outserv == 0  # switched off first, must be restored although the second failed
+    assert app.ldf.iopt_net == 0
+
+
+def test_branches_that_are_out_of_service_from_the_start_do_not_abort_the_calculation():
+    import lodf
+
+    app = LodfApp()
+    app.network.c.outserv = 1  # already out of service in the study case: carries no flow
+    rows = lodf.calculate(app, [{"key": "k", "equipment": [app.network.a]}], lambda branch: branch.loc_name)
+    assert {row[1] for row in rows} == {"B"}  # monitored: only branches in service; C is skipped, not an error
+    assert app.network.c.outserv == 1

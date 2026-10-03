@@ -154,7 +154,7 @@ class App:
         )
 
 
-def queue(app, path, name="D7 · Wartung Nord"):
+def queue(app, path, name="D7 · Maintenance North"):
     store = ScenarioStore(str(path))
     catalog = worker.discover(app)
     store.publish_catalog(catalog)
@@ -187,7 +187,7 @@ def test_named_outage_selection_and_full_results_are_persisted(tmp_path):
     with sqlite3.connect(path) as db:
         assert (
             db.execute("SELECT name FROM pf_scenarios").fetchone()[0]
-            == "D7 · Wartung Nord"
+            == "D7 · Maintenance North"
         )
         assert db.execute("SELECT COUNT(*) FROM analysis_samples").fetchone()[0] == 600
         assert (

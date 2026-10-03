@@ -7,9 +7,7 @@ export { clearCache } from './cache';
 const api = axios.create({
   baseURL: '/api/simulation',
   headers: { Accept: 'application/json' },
-  // Slightly longer than the backend's 90 s call_timeout so the server
-  // gets a chance to return its own 504 — but bounded so the spinner
-  // can't spin forever even if the backend itself hangs.
+  // Bounded, so a spinner cannot run forever when the backend hangs.
   timeout: 120_000,
 });
 
@@ -19,33 +17,13 @@ const api = axios.create({
 type Timed = { _startTime?: number };
 const timed = (config: unknown): Timed => config as unknown as Timed;
 
-// In-flight request counter — lets the UI show a "fetching" indicator
-// without per-call wiring. Aborted requests still decrement.
-let inFlightCount = 0;
-const inFlightListeners = new Set<(count: number) => void>();
-function notifyInFlight(): void {
-  inFlightListeners.forEach((fn) => fn(inFlightCount));
-}
-export function subscribeInFlight(fn: (count: number) => void): () => void {
-  inFlightListeners.add(fn);
-  fn(inFlightCount);
-  return () => inFlightListeners.delete(fn);
-}
-function decrementInFlight(): void {
-  inFlightCount = Math.max(0, inFlightCount - 1);
-  notifyInFlight();
-}
-
 api.interceptors.request.use((config) => {
   timed(config)._startTime = Date.now();
-  inFlightCount += 1;
-  notifyInFlight();
   return config;
 });
 
 api.interceptors.response.use(
   (response) => {
-    decrementInFlight();
     const duration = Date.now() - (timed(response.config)._startTime ?? Date.now());
     const url = `${response.config.method?.toUpperCase()} ${response.config.url}`;
     const body: unknown = response.data;
@@ -63,7 +41,6 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    decrementInFlight();
     const config = error.config;
     const url = config ? `${config.method?.toUpperCase()} ${config.url}` : 'unknown';
     const duration = config ? Date.now() - (timed(config)._startTime ?? Date.now()) : 0;
@@ -76,9 +53,9 @@ api.interceptors.response.use(
         responseData: error.response?.data,
       });
     } else if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
-      logError('API', `${url} → Network Error (${duration}ms)`, 'Backend nicht erreichbar. Läuft der Server?');
+      logError('API', `${url} → Network Error (${duration}ms)`, 'Backend not reachable. Is the server running?');
     } else if (error.code === 'ECONNABORTED') {
-      logError('API', `${url} → Timeout (${duration}ms)`, 'Anfrage hat zu lange gedauert');
+      logError('API', `${url} → Timeout (${duration}ms)`, 'The request took too long');
     } else {
       logError('API', `${url} → ${error.message}`, error.stack);
     }
@@ -88,149 +65,22 @@ api.interceptors.response.use(
 
 export default api;
 
-// --- Shared views (server-side short links) ---
-export type ShareKind = 'live' | 'snapshot';
-
-export interface ShareEnvelope {
-  kind: ShareKind;
-  payload: { view?: unknown; data?: unknown };
-  created_at: number;
-}
-
-export async function createShare(kind: ShareKind, payload: object): Promise<string> {
-  const res = await api.post('/shares', { kind, payload });
-  return res.data.id;
-}
-
-export async function getShare(id: string): Promise<ShareEnvelope> {
-  const res = await api.get(`/shares/${id}`);
-  return res.data;
-}
-
-// --- Facilities ---
+// --- Facilities (saved scenarios) ---
 export interface Facility {
   id: string;
   name: string;
-  spannungsebene?: string | null;
-}
-
-function stripBOM(s: string): string {
-  if (s.charCodeAt(0) === 0xfeff) return s.slice(1);
-  return s;
-}
-
-function isLikelyHTML(s: string): boolean {
-  const t = s.trim().toLowerCase();
-  return t.startsWith('<!doctype html') || t.startsWith('<html') || t.includes('<head') || t.includes('<body');
-}
-
-function tryParseJSONString(s: string): unknown {
-  const raw = stripBOM(s.trim());
-  const cleaned = raw.startsWith(")]}',") ? raw.slice(4).trim() : raw;
-  if ((cleaned.startsWith('{') && cleaned.endsWith('}')) || (cleaned.startsWith('[') && cleaned.endsWith(']'))) {
-    try { return JSON.parse(cleaned); } catch { /* ignore */ }
-  }
-  // Nested JSON block inside a wrapper string
-  const firstBrace = Math.min(
-    ...[cleaned.indexOf('['), cleaned.indexOf('{')].filter((i) => i >= 0)
-  );
-  if (Number.isFinite(firstBrace) && firstBrace >= 0) {
-    const candidate = cleaned.slice(firstBrace);
-    const lastArray = candidate.lastIndexOf(']');
-    const lastObj = candidate.lastIndexOf('}');
-    const end = Math.max(lastArray, lastObj);
-    if (end > 0) {
-      const sub = candidate.slice(0, end + 1);
-      try { return JSON.parse(sub); } catch { /* ignore */ }
-    }
-  }
-  return s;
-}
-
-function pickId(obj: unknown, keys: string[]): string | undefined {
-  if (!obj || typeof obj !== 'object') return undefined;
-  for (const k of keys) {
-    const v = (obj as Record<string, unknown>)[k];
-    if (typeof v === 'string' && v.trim() !== '') return v;
-    if (typeof v === 'number') return String(v);
-  }
-  return undefined;
-}
-
-function pickString(obj: unknown, keys: string[]): string | undefined {
-  if (!obj || typeof obj !== 'object') return undefined;
-  for (const k of keys) {
-    const v = (obj as Record<string, unknown>)[k];
-    if (typeof v === 'string' && v.trim() !== '') return v;
-  }
-  return undefined;
-}
-
-function normalizeFacilities(raw: unknown[]): Facility[] {
-  if (raw.length === 0) return [];
-  if (typeof raw[0] === 'string' || typeof raw[0] === 'number') {
-    return (raw as (string | number)[]).map((s) => ({ id: String(s), name: String(s) }));
-  }
-  return raw
-    .map((item) => {
-      const id = pickId(item, ['id', '_id', 'uuid', 'facility_id', 'facilityId', 'code', 'external_id']);
-      const name = pickString(item, ['name', 'title', 'display_name', 'displayName', 'label']);
-      const spannungsebene =
-        pickString(item, ['spannungsebene', 'voltage_level', 'voltageLevel', 'level']) ?? null;
-      if (!id || !name) return null;
-      return { id, name, spannungsebene } as Facility;
-    })
-    .filter((x): x is Facility => x !== null);
+  project?: string | null;
 }
 
 export async function getFacilities(opts?: CacheOptions): Promise<Facility[]> {
   return withCache(
     'facilities',
     async () => {
-      const res = await api.get('/facilities');
-
-      let d: unknown = res.data;
-
-      if (typeof d === 'string') {
-        if (isLikelyHTML(d)) {
-          throw new Error('Server lieferte HTML statt JSON (prüfe Vite-Proxy/BaseURL/Auth).');
-        }
-        d = tryParseJSONString(d);
+      const res = await api.get<Facility[]>('/facilities');
+      if (!Array.isArray(res.data)) {
+        throw new Error('The server returned an unexpected scenario list (check the proxy / base URL).');
       }
-
-      // Unwrap common container keys
-      const obj = d as Record<string, unknown> | null | undefined;
-      let arr: unknown[] | null = null;
-      if (Array.isArray(d)) arr = d;
-      else if (Array.isArray(obj?.items)) arr = obj.items as unknown[];
-      else if (Array.isArray(obj?.facilities)) arr = obj.facilities as unknown[];
-      else if (Array.isArray(obj?.data)) arr = obj.data as unknown[];
-      else if (Array.isArray(obj?.results)) arr = obj.results as unknown[];
-      else if (Array.isArray(obj?.records)) arr = obj.records as unknown[];
-      else if (typeof obj?.data === 'string') {
-        const s = String(obj.data).trim();
-        try {
-          const inner = JSON.parse(stripBOM(s));
-          if (Array.isArray(inner)) arr = inner;
-        } catch { /* ignore */ }
-      }
-
-      if (!arr) {
-        const preview =
-          typeof d === 'string'
-            ? (d.length > 160 ? d.slice(0, 160) + '…' : d)
-            : d && typeof d === 'object'
-            ? JSON.stringify(d).slice(0, 160) + (JSON.stringify(d).length > 160 ? '…' : '')
-            : String(d);
-        throw new Error(`Unexpected /facilities payload (type/keys: ${typeof d === 'object' ? Object.keys(d as object).join(',') : typeof d}). Preview: ${preview}`);
-      }
-
-      const normalized = normalizeFacilities(arr);
-      if (arr.length > 0 && normalized.length === 0) {
-        const sample = arr[0] && typeof arr[0] === 'object' ? Object.keys(arr[0] as object).join(',') : typeof arr[0];
-        throw new Error(`/facilities items missing id/name fields (first item keys: ${sample})`);
-      }
-      return normalized;
+      return res.data;
     },
     { ttlMs: 30 * 60_000, persist: true, ...opts },
   );
@@ -241,7 +91,7 @@ export interface GridComponent {
   id: string;
   facility_id: string;
   name: string;
-  spannungsebene?: string | null;
+  class_name?: string | null;
 }
 
 export async function getComponentsByFacility(facilityId: string, opts?: CacheOptions): Promise<GridComponent[]> {
@@ -340,30 +190,12 @@ function flattenMeta(d: TimeseriesData): TimeseriesData {
   return d;
 }
 
-export async function getDateRange(
-  componentId: string,
-  measurementType: string,
-  opts?: CacheOptions,
-): Promise<{ min_date: string | null; max_date: string | null }> {
-  return withCache(
-    // Backend range is currently component-wide; measurementType stays in
-    // the URL only for compatibility, so key by component to prevent P/Q/S
-    // from firing duplicate slow range requests.
-    `range|${componentId}`,
-    async () => {
-      const res = await api.get(`/timeseries/${componentId}/${measurementType}/range`);
-      return res.data;
-    },
-    opts,
-  );
-}
-
 export type AggregationFn = 'AVG' | 'MIN' | 'MAX' | 'SUM';
 
 /**
  * Raw, native-resolution measurements. Never aggregates or downsamples.
  * Oversized ranges throw `RawRangeTooLargeError` (422 RAW_RANGE_TOO_LARGE)
- * instead of being silently verdichtet.
+ * instead of being silently thinned out.
  */
 // Upper bound on keyset pages followed per window. The backend refuses
 // ranges estimated above RAW_RANGE_MAX_POINTS (≈200k) up front, so at the
@@ -414,7 +246,7 @@ export async function getRawTimeseries(
     };
     if (e.response?.status === 422 && e.response.data?.error_code === 'RAW_RANGE_TOO_LARGE') {
       throw new RawRangeTooLargeError(
-        e.response.data.message || 'Zeitraum zu groß',
+        e.response.data.message || 'Time range too large',
         e.response.data.details,
         e.response.data.suggested_action,
       );
@@ -540,102 +372,10 @@ export async function getResolutions(): Promise<ResolutionInfo[]> {
   );
 }
 
-// --- Statistics ---
-export interface Statistics {
-  component_name: string;
-  measurement_type: string;
-  unit: string;
-  count: number;
-  mean: number;
-  min: number;
-  max: number;
-  std_dev: number | null;
-}
-
-export async function getStatistics(
-  componentId: string,
-  measurementType: string,
-  start?: string,
-  end?: string,
-  opts?: CacheOptions,
-): Promise<Statistics> {
-  const params: Record<string, string | undefined> = { start, end };
-  return withCache(
-    `stats|${componentId}|${measurementType}|${paramsKey(params as Record<string, unknown>)}`,
-    async () => {
-      const res = await api.get(`/timeseries/${componentId}/${measurementType}/stats`, { params });
-      return res.data;
-    },
-    opts,
-  );
-}
-
 // --- Analytics ---
-// Historical analytics data changes rarely; 30-minute TTL lets
-// repeated tab visits or page refreshes (via sessionStorage) feel instant.
+// Saved simulation results do not change while a dashboard is open; a 30-minute TTL lets repeated
+// visits or page refreshes (via sessionStorage) feel instant.
 const ANALYTICS_TTL_MS = 30 * 60_000;
-
-export interface HeatmapCell {
-  day_of_week: number;
-  hour: number;
-  value: number;
-}
-
-export interface HeatmapData {
-  component_name: string;
-  measurement_type: string;
-  unit: string;
-  data: HeatmapCell[];
-}
-
-export async function getHeatmap(
-  componentId: string,
-  measurementType: string,
-  start?: string,
-  end?: string,
-  opts?: CacheOptions,
-): Promise<HeatmapData> {
-  const params: Record<string, string | undefined> = { start, end };
-  return withCache(
-    `heatmap|${componentId}|${measurementType}|${paramsKey(params as Record<string, unknown>)}`,
-    async () => {
-      const res = await api.get(`/analytics/${componentId}/${measurementType}/heatmap`, { params });
-      return res.data;
-    },
-    { ttlMs: ANALYTICS_TTL_MS, ...opts },
-  );
-}
-
-export interface BandPoint {
-  timestamp: string;
-  min: number;
-  mean: number;
-  max: number;
-}
-
-export interface VoltageBandData {
-  component_name: string;
-  unit: string;
-  weekday: BandPoint[];
-  weekend: BandPoint[];
-}
-
-export async function getVoltageBand(
-  componentId: string,
-  start?: string,
-  end?: string,
-  opts?: CacheOptions,
-): Promise<VoltageBandData> {
-  const params: Record<string, string | undefined> = { start, end };
-  return withCache(
-    `voltage-band|${componentId}|${paramsKey(params as Record<string, unknown>)}`,
-    async () => {
-      const res = await api.get(`/analytics/${componentId}/voltage-band`, { params });
-      return res.data;
-    },
-    { ttlMs: ANALYTICS_TTL_MS, ...opts },
-  );
-}
 
 export interface DurationCurvePoint {
   percent: number;
@@ -667,38 +407,6 @@ export async function getDurationCurve(
   );
 }
 
-export interface DailyProfilePoint {
-  hour: number;
-  value: number;
-  std_dev: number | null;
-}
-
-export interface DailyProfileData {
-  component_name: string;
-  measurement_type: string;
-  unit: string;
-  weekday_avg: DailyProfilePoint[];
-  weekend_avg: DailyProfilePoint[];
-}
-
-export async function getDailyProfile(
-  componentId: string,
-  measurementType: string,
-  start?: string,
-  end?: string,
-  opts?: CacheOptions,
-): Promise<DailyProfileData> {
-  const params: Record<string, string | undefined> = { start, end };
-  return withCache(
-    `daily-profile|${componentId}|${measurementType}|${paramsKey(params as Record<string, unknown>)}`,
-    async () => {
-      const res = await api.get(`/analytics/${componentId}/${measurementType}/daily-profile`, { params });
-      return res.data;
-    },
-    { ttlMs: ANALYTICS_TTL_MS, ...opts },
-  );
-}
-
 // --- Correlation ---
 export interface CorrelationPoint {
   x: number;
@@ -722,35 +430,9 @@ export interface CorrelationScatterData {
   method?: CorrelationMethod;
   /** Minutes Y was shifted relative to X for this computation. */
   lag_minutes: number;
-  /** Short German hint surfaced beside the scatter plot. */
+  /** Short hint surfaced beside the scatter plot. */
   interpretation: string;
   data: CorrelationPoint[];
-}
-
-export async function getCorrelation(
-  componentId: string,
-  typeX: string,
-  typeY: string,
-  start?: string,
-  end?: string,
-  lagMinutes: number = 0,
-  opts?: CacheOptions,
-): Promise<CorrelationScatterData> {
-  const params: Record<string, string | number | undefined> = {
-    type_x: typeX,
-    type_y: typeY,
-    start,
-    end,
-    ...(lagMinutes !== 0 ? { lag_minutes: lagMinutes } : {}),
-  };
-  return withCache(
-    `correlation|${componentId}|${typeX}|${typeY}|${lagMinutes}|${paramsKey(params as Record<string, unknown>)}`,
-    async () => {
-      const res = await api.get(`/analytics/${componentId}/correlation`, { params });
-      return res.data;
-    },
-    { ttlMs: ANALYTICS_TTL_MS, ...opts },
-  );
 }
 
 // --- Correlation Matrix ---
@@ -819,145 +501,6 @@ export async function getBoxPlot(
   );
 }
 
-// --- Power Factor ---
-export interface PowerFactorPoint {
-  timestamp: string;
-  cos_phi: number | null;
-  tan_phi: number | null;
-  p: number;
-  q: number;
-  s: number;
-}
-
-export interface PowerFactorData {
-  component_name: string;
-  data: PowerFactorPoint[];
-  histogram_bins: number[];
-  histogram_counts: number[];
-}
-
-export async function getPowerFactor(
-  componentId: string,
-  start?: string,
-  end?: string,
-  downsampleMinutes?: number,
-  opts?: CacheOptions,
-): Promise<PowerFactorData> {
-  const params: Record<string, string | number | undefined> = {};
-  if (start) params.start = start;
-  if (end) params.end = end;
-  if (downsampleMinutes) params.downsample_minutes = downsampleMinutes;
-  return withCache(
-    `power-factor|${componentId}|${paramsKey(params)}`,
-    async () => {
-      const res = await api.get(`/analytics/${componentId}/power-factor`, { params });
-      return res.data;
-    },
-    { ttlMs: ANALYTICS_TTL_MS, ...opts },
-  );
-}
-
-// --- Quality View ---
-export interface QualityDayCount {
-  day: string;
-  measurement_type: string;
-  count: number;
-  expected: number;
-  missing_pct: number;
-}
-
-export interface QualityGapCell {
-  day: string;
-  hour: number;
-  measurement_type: string;
-  count: number;
-}
-
-export interface QualityData {
-  component_name: string;
-  daily_counts: QualityDayCount[];
-  gap_heatmap: QualityGapCell[];
-  measurement_types: string[];
-}
-
-export async function getQuality(
-  componentId: string,
-  start?: string,
-  end?: string,
-  opts?: CacheOptions,
-): Promise<QualityData> {
-  const params: Record<string, string | undefined> = { start, end };
-  return withCache(
-    `quality|${componentId}|${paramsKey(params as Record<string, unknown>)}`,
-    async () => {
-      const res = await api.get(`/analytics/${componentId}/quality`, { params });
-      return res.data;
-    },
-    { ttlMs: ANALYTICS_TTL_MS, ...opts },
-  );
-}
-
-// --- DST Events ---
-export interface DSTEvent {
-  date: string;
-  type: string;
-  affected_hour: number;
-  measurement_count: number;
-}
-
-export interface DSTData {
-  component_name: string;
-  events: DSTEvent[];
-}
-
-export async function getDSTEvents(
-  componentId: string,
-  start?: string,
-  end?: string,
-  opts?: CacheOptions,
-): Promise<DSTData> {
-  const params: Record<string, string | undefined> = { start, end };
-  return withCache(
-    `dst|${componentId}|${paramsKey(params as Record<string, unknown>)}`,
-    async () => {
-      const res = await api.get(`/analytics/${componentId}/dst-events`, { params });
-      return res.data;
-    },
-    { ttlMs: ANALYTICS_TTL_MS, ...opts },
-  );
-}
-
-// --- Season Radar ---
-export interface SeasonRadarSeries {
-  measurement_type: string;
-  unit: string;
-  monthly_medians: number[];
-}
-
-export interface SeasonRadarData {
-  component_name: string;
-  months: string[];
-  series: SeasonRadarSeries[];
-}
-
-export async function getSeasonRadar(
-  componentId: string,
-  start?: string,
-  end?: string,
-  types?: string,
-  opts?: CacheOptions,
-): Promise<SeasonRadarData> {
-  const params: Record<string, string | undefined> = { start, end, types };
-  return withCache(
-    `season-radar|${componentId}|${paramsKey(params as Record<string, unknown>)}`,
-    async () => {
-      const res = await api.get(`/analytics/${componentId}/season-radar`, { params });
-      return res.data;
-    },
-    { ttlMs: ANALYTICS_TTL_MS, ...opts },
-  );
-}
-
 // --- Exceedance Analysis ---
 export interface ExceedanceDay {
   day: string;
@@ -995,35 +538,4 @@ export async function getExceedance(
     },
     { ttlMs: ANALYTICS_TTL_MS, ...opts },
   );
-}
-
-// -- Background prefetch -----------------------------------------------
-
-/**
- * Silently warm the analytics cache for a given component + date window.
- *
- * Called 2 s after the user picks a component so by the time they navigate
- * to the Auswertung or Erweitert tab, results are already cached and the
- * tab switch feels instant. Errors are swallowed — this is best-effort.
- *
- * Requests are staggered by 250 ms each to be gentle on the local result store.
- */
-export function prefetchAnalytics(
-  componentId: string,
-  measurementType: string,
-  start: string | undefined,
-  end: string | undefined,
-): void {
-  const bg = (fn: () => Promise<unknown>) => fn().catch(() => {});
-  const calls: (() => Promise<unknown>)[] = [
-    () => getStatistics(componentId, measurementType, start, end),
-    () => getHeatmap(componentId, measurementType, start, end),
-    () => getVoltageBand(componentId, start, end),
-    () => getDurationCurve(componentId, measurementType, start, end),
-    () => getDailyProfile(componentId, measurementType, start, end),
-    () => getPowerFactor(componentId, start, end),
-    () => getQuality(componentId, start, end),
-    () => getSeasonRadar(componentId, start, end),
-  ];
-  calls.forEach((fn, i) => setTimeout(() => bg(fn), i * 250));
 }

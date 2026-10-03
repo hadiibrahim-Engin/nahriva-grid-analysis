@@ -1,4 +1,4 @@
-const CHART_NUMBER_FORMATTER = new Intl.NumberFormat('de-DE', {
+const CHART_NUMBER_FORMATTER = new Intl.NumberFormat('en-GB', {
   maximumFractionDigits: 3,
 });
 
@@ -92,7 +92,7 @@ function sanitizeNamePart(part: string): string {
  * names shown, and the covered date range — so a downloaded PNG says what it
  * is without opening it. Falls back gracefully when parts are missing.
  *
- * Example: "Zeitreihen-Overlay_Trafo-1-P_Trafo-1-Q_2026-06-01_2026-07-01"
+ * Example: "Time-series-overlay_Transformer-1-P_Transformer-1-Q_2026-06-01_2026-07-01"
  */
 export function buildChartExportName(opts: {
   base: string;

@@ -25,7 +25,7 @@ export interface ResultScenario {
 }
 
 export function isSynthetic(provenance: ResultProvenance) {
-  return Boolean(provenance.dummy_qds_version) || /synthetic|synthetisch|dummy/i.test(provenance.data_source ?? '');
+  return Boolean(provenance.dummy_qds_version) || /synthetic|dummy/i.test(provenance.data_source ?? '');
 }
 
 export function resultContexts(scenarios: ResultScenario[], catalog: ResultProvenance | null) {
@@ -58,7 +58,7 @@ export function resultContexts(scenarios: ResultScenario[], catalog: ResultProve
 }
 
 export function provenancePeriod(period?: ResultProvenance['period']) {
-  if (!period || period.some(value => value === null || !Number.isFinite(value))) return 'Nicht erfasst';
-  const formatter = new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'short', timeZone: 'UTC' });
+  if (!period || period.some(value => value === null || !Number.isFinite(value))) return 'Not recorded';
+  const formatter = new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short', timeZone: 'UTC' });
   return `${formatter.format(new Date(period[0]! * 1000))} – ${formatter.format(new Date(period[1]! * 1000))} UTC`;
 }

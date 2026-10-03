@@ -48,13 +48,6 @@ class InvalidRequestError(DashboardError):
     http_status = 400
 
 
-class InvalidDateRangeError(InvalidRequestError):
-    """Raised when start/end are missing or start is not before end."""
-
-    error_code = "INVALID_DATE_RANGE"
-    http_status = 422
-
-
 class RawRangeTooLargeError(DashboardError):
     """Raised when an unpaginated raw request would exceed the point cap.
 
@@ -68,20 +61,13 @@ class RawRangeTooLargeError(DashboardError):
     def __init__(self, *, estimated_points: int, max_points: int) -> None:
         super().__init__(
             (
-                f"Der angeforderte Rohdaten-Zeitraum umfasst ca. {estimated_points:,} "
-                f"Messpunkte und überschreitet das Limit von {max_points:,}. "
-                "Rohdaten werden nicht automatisch verdichtet."
-            ).replace(",", "."),
+                f"The requested raw time range covers about {estimated_points:,} "
+                f"points and exceeds the limit of {max_points:,}. "
+                "Raw data is never thinned out automatically."
+            ),
             details={"estimated_points": estimated_points, "max_points": max_points},
             suggested_action=(
-                "Zeitraum verkleinern, mit Cursor seitenweise laden (limit/cursor), "
-                "exportieren, oder bewusst die Aggregation (/aggregate) wählen."
+                "Narrow the time range, load page by page with the cursor (limit/cursor), "
+                "or choose aggregation (/aggregate) deliberately."
             ),
         )
-
-
-class UnsupportedAggregationError(InvalidRequestError):
-    """Raised when an aggregation bucket or method is not supported."""
-
-    error_code = "UNSUPPORTED_BUCKET"
-    http_status = 422

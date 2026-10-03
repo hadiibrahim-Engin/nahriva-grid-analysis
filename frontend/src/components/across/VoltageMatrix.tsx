@@ -1,11 +1,8 @@
 import { ASSESSMENT } from '../../config/assessment';
 import { SUMMARY_IDS, type AcrossBus, type ScenarioStats } from '../../util/acrossScenarios';
-import { CAUSE_LABEL, busBand, voltageResult } from '../../util/freischaltung';
+import { CAUSE_LABEL, busBand, voltageResult } from '../../util/outageAssessment';
+import { formatVoltage as volt, isPerUnit, unitLabel } from '../../util/voltage';
 import { ScenarioTag, SectionCard } from './shared';
-
-const isPu = (unit: string | null | undefined) => /^p\.?u\.?$/i.test((unit ?? '').trim());
-const volt = (v: number | null | undefined, unit: string | null | undefined) =>
-  v == null ? '–' : v.toLocaleString('de-DE', isPu(unit) ? { minimumFractionDigits: 3, maximumFractionDigits: 3 } : { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 /** Busbar × scenario: the voltage value closest to a limit, coloured by distance to the band. */
 export default function VoltageMatrix({ buses, scenarios, selectedId, onSelect }: {
@@ -19,17 +16,17 @@ export default function VoltageMatrix({ buses, scenarios, selectedId, onSelect }
   return (
     <SectionCard
       id={SUMMARY_IDS.voltage}
-      title="Spannungshaltung Sammelschienen"
-      hint={`Spannung in ${unit} im Ausfallfenster; angezeigt wird der Wert mit dem kleineren Abstand zum Band (▼ untere, ▲ obere Grenze). ${isPu(unit) ? `Band ${ASSESSMENT.voltageBandPu.lower.toLocaleString('de-DE', { minimumFractionDigits: 2 })}–${ASSESSMENT.voltageBandPu.upper.toLocaleString('de-DE', { minimumFractionDigits: 2 })} p.u. (zentral konfiguriert). Nahe der Grenze: Abstand < ${ASSESSMENT.voltageMarginPu.toLocaleString('de-DE')} p.u.` : 'Band: die mit den Ergebnissen gespeicherten Grenzen.'}`}
+      title="Busbar voltage"
+      hint={`Voltage in ${unit} in the outage window; the value closest to the band is shown (▼ lower, ▲ upper limit). ${isPerUnit(unit) ? `Band ${ASSESSMENT.voltageBandPu.lower.toLocaleString('en-GB', { minimumFractionDigits: 2 })}–${ASSESSMENT.voltageBandPu.upper.toLocaleString('en-GB', { minimumFractionDigits: 2 })} p.u. (configured centrally). Near the limit: distance < ${ASSESSMENT.voltageMarginPu.toLocaleString('en-GB')} p.u.` : 'Band: the limits saved with the results.'}`}
     >
-      <ul className="ab-legend" aria-label="Spannungsstatus" style={{ marginBottom: 8 }}>
-        <li><span className="ab-swatch ab-fill--ok" /><span className="ab-legend__label">im Band</span></li>
-        <li><span className="ab-swatch ab-fill--high" /><span className="ab-legend__label">nahe der Grenze</span></li>
-        <li><span className="ab-swatch ab-fill--severe ab-cell--caused" /><span className="ab-legend__label">Band verlassen durch Freischaltung</span></li>
-        <li><span className="ab-swatch ab-fill--clear ab-cell--pre" /><span className="ab-legend__label">Vorbelastung (schon in REF)</span></li>
+      <ul className="ab-legend" aria-label="Voltage status" style={{ marginBottom: 8 }}>
+        <li><span className="ab-swatch ab-fill--ok" /><span className="ab-legend__label">in band</span></li>
+        <li><span className="ab-swatch ab-fill--high" /><span className="ab-legend__label">near the limit</span></li>
+        <li><span className="ab-swatch ab-fill--severe ab-cell--caused" /><span className="ab-legend__label">Band left because of the outage</span></li>
+        <li><span className="ab-swatch ab-fill--clear ab-cell--pre" /><span className="ab-legend__label">Pre-existing (already in REF)</span></li>
       </ul>
       {withLimits.length === 0 ? (
-        <div className="ab-empty">Für die Sammelschienen sind keine Spannungsgrenzen hinterlegt; es wird keine Verletzung abgeleitet.</div>
+        <div className="ab-empty">No voltage limits are stored for the busbars; no violation is derived.</div>
       ) : (
         <div className="ab-scroll" style={{ padding: 4 }}>
           <table className="ab-heat" style={{ minWidth: `calc(20rem + ${scenarios.length * 5.5}rem)` }}>
@@ -40,7 +37,7 @@ export default function VoltageMatrix({ buses, scenarios, selectedId, onSelect }
             </colgroup>
             <thead>
               <tr>
-                <th className="ab-heat__line" scope="col">Sammelschiene</th>
+                <th className="ab-heat__line" scope="col">Busbar</th>
                 <th scope="col">Band</th>
                 {scenarios.map((s) => (
                   <th key={s.scenario.id} scope="col">
@@ -55,7 +52,7 @@ export default function VoltageMatrix({ buses, scenarios, selectedId, onSelect }
               {withLimits.map((bus) => (
                 <tr key={bus.id}>
                   <td className="ab-heat__line" title={bus.name}>{bus.name}</td>
-                  <td className="ab-heat__cell ab-heat__cell--none" title={`Spannungsband in ${bus.unit ?? unit}`}>{volt(busBand(bus)?.[0], bus.unit)}–{volt(busBand(bus)?.[1], bus.unit)}</td>
+                  <td className="ab-heat__cell ab-heat__cell--none" title={`Voltage band in ${unitLabel(bus.unit ?? unit)}`}>{volt(busBand(bus)?.[0], bus.unit)}–{volt(busBand(bus)?.[1], bus.unit)}</td>
                   {scenarios.map((s) => {
                     const cell = bus.cells[s.scenario.id];
                     const result = voltageResult(bus, cell);
@@ -69,11 +66,11 @@ export default function VoltageMatrix({ buses, scenarios, selectedId, onSelect }
                       : 'ab-fill--severe ab-ink--severe ab-cell--caused';
                     const tip = [
                       `${bus.name} · ${s.code} ${s.scenario.name}`,
-                      `Spannung im Fenster: ${volt(cell.out[0], bus.unit)} – ${volt(cell.out[1], bus.unit)} ${bus.unit ?? unit}`,
-                      `REF im selben Fenster: ${volt(cell.ref?.[0], bus.unit)} – ${volt(cell.ref?.[1], bus.unit)} ${bus.unit ?? unit}`,
-                      `Abstand zur Grenze: ${volt(result.margin, bus.unit)} ${bus.unit ?? unit}`,
+                      `Voltage in the window: ${volt(cell.out[0], bus.unit)} – ${volt(cell.out[1], bus.unit)} ${unitLabel(bus.unit ?? unit)}`,
+                      `REF in the same window: ${volt(cell.ref?.[0], bus.unit)} – ${volt(cell.ref?.[1], bus.unit)} ${unitLabel(bus.unit ?? unit)}`,
+                      `Distance to the limit: ${volt(result.margin, bus.unit)} ${unitLabel(bus.unit ?? unit)}`,
                       result.cause ? CAUSE_LABEL[result.cause] : '',
-                      cell.hours_outside ? `Außerhalb des Bandes: ${cell.hours_outside.toLocaleString('de-DE', { maximumFractionDigits: 1 })} h` : '',
+                      cell.hours_outside ? `Outside the band: ${cell.hours_outside.toLocaleString('en-GB', { maximumFractionDigits: 1 })} h` : '',
                     ].filter(Boolean).join('\n');
                     return (
                       <td key={s.scenario.id} className={`ab-heat__cell ${cls}`} title={tip}>

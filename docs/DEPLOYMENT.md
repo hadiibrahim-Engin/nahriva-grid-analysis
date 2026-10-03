@@ -1,98 +1,109 @@
-# Produktiver Betrieb
+# Operation on the PowerFactory PC
 
-PowerFactory, das Skript und die Ergebnisdatenbank liegen auf **einem** PC (dem PowerFactory-PC).
-Der Dashboard-Server läuft dort neben der Datenbank und ist im Netz erreichbar; auf anderen PCs
-genügt ein Browser. Es wird nichts kopiert oder synchronisiert, und die SQLite-Datei wird nicht über
-eine Netzfreigabe geöffnet (SQLite verträgt das nicht zuverlässig).
+PowerFactory, the script and the results database are on **one** PC. The dashboard server runs there,
+next to the database, and listens on `127.0.0.1` on a single port. Nothing outside the project
+folder is changed: **no administrator rights, no firewall rule, no service, no extra port.** Nothing
+is copied or synchronised, and the SQLite file is never opened over a network share (SQLite does not
+tolerate that reliably).
 
 ```mermaid
 flowchart LR
-    subgraph PC[PowerFactory-PC]
+    subgraph PC[PowerFactory PC, normal user]
         PF[PowerFactory] --> Script[start_assessment.py]
-        Script -->|schreibt| DB[(Ergebnisdatenbank)]
-        Server[Dashboard-Server, Nur-Lese-Betrieb] -->|liest| DB
-        Auto[Autostart] -.startet.-> Server
+        Script -->|writes| DB[(Results database)]
+        Server[Dashboard server 127.0.0.1:8765] -->|reads| DB
+        Auto[Optional per-user autostart] -.starts.-> Server
     end
-    Browser[Browser auf anderen PCs] -->|http://PC-Name:8765| Server
+    Browser[Browser on the same PC] --> Server
 ```
 
-## Einmal einrichten (auf dem PowerFactory-PC)
+## One-time setup (on the PowerFactory PC)
 
-1. **Release-Paket entpacken**, z. B. nach `C:\OutageAssessment`
-   (erstellt auf einem Entwicklungsrechner mit `python scripts/package_release.py`).
-2. **Python 3.12 oder neuer** installieren (python.org, „Add python.exe to PATH“ anhaken).
-3. **PowerShell als Administrator** öffnen und ausführen:
+1. **Copy the project** (or unpack the release package) to the PC, for example to `C:\OutageAssessment`.
+   A release package is built with `.\setup.ps1 -Package` and already contains the finished frontend.
+2. **Python is optional:** `setup.ps1` uses Python 3.12+ if it finds it; otherwise it downloads the portable
+   `uv` into `.tools\` and lets it install Python for the current user.
+3. **Run the setup** by double-clicking `setup.cmd`, or in a normal PowerShell (not as administrator):
 
    ```powershell
    cd C:\OutageAssessment
-   powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1 -Database D:\OutageAssessment\freischaltungen.sqlite3
+   powershell -ExecutionPolicy Bypass -File setup.ps1 -Autostart -Database D:\OutageAssessment\outages.sqlite3
    ```
 
-   Das Skript legt die Python-Umgebung an, schreibt `outage-assessment.config.json`, öffnet den Port
-   **nur für das lokale Netz**, richtet den Autostart ein und testet den Server. Am Ende stehen die
-   Adressen für andere PCs. Ohne Internet: `-Wheelhouse <Ordner>` (Paket mit
-   `python scripts/package_release.py --wheelhouse` erstellen).
-4. **In PowerFactory** ein externes ComPython-Skript anlegen und auf
-   `C:\OutageAssessment\powerfactory\start_assessment.py` verweisen. Bei Bedarf oben `SCENARIOS`
-   setzen (Standard: ein Szenario je Planned Outage im QDS-Zeitraum).
+   The script creates the Python environment in `backend\.venv`, builds the frontend if `frontend\dist` is
+   missing (it uses Node 22.13+ or downloads a portable Node into `.tools\`), writes
+   `outage-assessment.config.json`, optionally registers the per-user task and tests the server. Run it again at
+   any time; finished steps are skipped.
+   Without internet access use `-Wheelhouse <folder>` (build the package with
+   `python scripts/package_release.py --wheelhouse`). `-Autostart` is optional: without it the
+   PowerFactory script starts the dashboard after the calculation, and
+   `backend\.venv\Scripts\python.exe scripts\serve.py` starts it by hand.
+4. **In PowerFactory** create an external ComPython script that points to
+   `C:\OutageAssessment\powerfactory\start_assessment.py`. Set `SCENARIOS` at the top if needed
+   (default: one scenario per Planned Outage in the QDS period).
 
-## Täglicher Ablauf
+## Daily use
 
-- **PowerFactory-PC:** Projekt und Study Case aktivieren, das Skript ausführen. Fertig.
-  Es prüft Speicher und Ordner, nutzt den laufenden Dashboard-Server (oder startet einen), berechnet
-  die Szenarien nacheinander und speichert jedes sofort.
-- **Andere PCs:** `http://<PC-Name>:8765` im Browser öffnen. Neue Szenarien erscheinen von selbst;
-  oben steht, was PowerFactory gerade berechnet.
-- **Später:** Das Dashboard bleibt mit allen gespeicherten Ergebnissen erreichbar, auch wenn
-  PowerFactory geschlossen ist.
+- **Calculate:** activate project and study case, run the script. It checks folder and free space,
+  calculates the scenarios one after another and saves each one at once.
+- **View:** when the calculation is finished the script starts the dashboard (or reuses a running one) and
+  opens `http://127.0.0.1:8765` in the browser. Even if a calculation fails, the scenarios saved so far are shown.
+- **Later:** the dashboard stays available with all saved results, also when PowerFactory is closed
+  (with autostart; otherwise run the script again or start `serve.py`).
 
-## Einstellungen
+## Settings
 
-`outage-assessment.config.json` im Programmordner (Vorlage: `outage-assessment.config.example.json`):
+`outage-assessment.config.json` in the project folder (template:
+`outage-assessment.config.example.json`):
 
-| Schlüssel | Bedeutung | Standard |
+| Key | Meaning | Default |
 |---|---|---|
-| `database` | Pfad der Ergebnisdatenbank | `backend\data\outage-assessment.sqlite3` |
-| `host` | `0.0.0.0` im Netz erreichbar, `127.0.0.1` nur dieser PC | `0.0.0.0` |
-| `port` | Port des Dashboards | `8765` |
+| `database` | path of the results database | `backend\data\outage-assessment.sqlite3` |
+| `host` | `127.0.0.1` = this PC only | `127.0.0.1` |
+| `port` | port of the dashboard | `8765` |
 
-Umgebungsvariablen `OA_DATABASE`, `OA_HOST`, `OA_PORT` haben Vorrang. Dieselbe Datei gilt für das
-Skript in PowerFactory und für den Autostart, beide arbeiten also mit derselben Datenbank.
+The environment variables `OA_DATABASE`, `OA_HOST`, `OA_PORT` take precedence. The same file applies
+to the PowerShell script, the PowerFactory script and the autostart, so all use the same database.
 
-## Betrieb und Wartung
+### Optional: other PCs
 
-| Aufgabe | Wie |
+Other PCs can reach the dashboard only if the server listens beyond the local PC. That is deliberately
+not set up by the installer, because it needs a Windows Firewall permission (administrator rights).
+If your IT department allows it, set `"host": "0.0.0.0"` and let IT open the port for the internal
+subnet. The server then runs read-only (see "Security"). Never forward the port to the internet.
+
+## Operation and maintenance
+
+| Task | How |
 |---|---|
-| Status prüfen | `Invoke-RestMethod http://localhost:8765/api/health/ready` |
-| Server neu starten | `Stop-ScheduledTask OutageAssessmentDashboard; Start-ScheduledTask OutageAssessmentDashboard` |
-| Logs | neben der Datenbank: `<name>.server.log` (Autostart) und `<name>.dashboard.log` (vom Skript gestartet), werden bei 5 MB rotiert |
-| Sicherung | Datenbank bei laufendem Server kopieren ist nicht sicher (WAL). Besser `sqlite3 ergebnisse.sqlite3 ".backup sicherung.sqlite3"` oder den Server kurz anhalten |
-| Aktualisieren | neues Release-Paket über den Ordner entpacken (Konfiguration und Datenbank bleiben), `install.ps1` erneut ausführen, Aufgabe neu starten |
-| Entfernen | `deploy\windows\uninstall.ps1` (Datenbank bleibt) |
+| Check status | `Invoke-RestMethod http://127.0.0.1:8765/api/health/ready` |
+| Restart the server | `Stop-ScheduledTask OutageAssessmentDashboard; Start-ScheduledTask OutageAssessmentDashboard` |
+| Logs | next to the database: `<name>.server.log` (autostart) and `<name>.dashboard.log` (started by the script), rotated at 5 MB |
+| Backup | copying the database while the server runs is not safe (WAL). Better `sqlite3 results.sqlite3 ".backup backup.sqlite3"` or stop the server briefly |
+| Update | unpack the new release package over the folder (configuration and database stay), run `setup.ps1` again, restart the task |
+| Remove | `deploy\windows\uninstall.ps1` (removes the task; the database stays) |
 
-## Fehlersuche
+## Troubleshooting
 
-| Beobachtung | Ursache und Abhilfe |
+| Observation | Cause and remedy |
 |---|---|
-| Skript meldet „Backend fehlt“ oder „Frontend-Build fehlt“ | `install.ps1` ausführen bzw. vollständiges Release-Paket verwenden |
-| Skript meldet „nicht beschreibbar“ oder „zu wenig Speicher“ | Datenbankordner prüfen; mindestens 2 GB frei |
-| Anderer PC erreicht das Dashboard nicht | Server läuft? (`Status prüfen`), Firewall-Regel vorhanden (`Get-NetFirewallRule -DisplayName "Outage Assessment Dashboard"`), beide PCs im selben Subnetz, Netzwerkprofil „Privat“ oder „Domäne“ |
-| Hinweis „Port belegt“ | anderer Prozess nutzt den Port; `port` in der Konfiguration ändern |
-| Meldung „Nur-Lese-Betrieb“ bzw. 403 | gewollt: im Netz kann niemand etwas ändern oder die Datenbank wechseln |
-| Server stoppt nach Abmelden | Autostart eingerichtet? Ohne ihn hängt der vom Skript gestartete Server am PowerFactory-Prozess |
+| Script reports "Backend is missing" or "Frontend build is missing" | run `setup.ps1` or use the complete release package |
+| Script reports "not writable" or "not enough free space" | check the database folder; at least 2 GB free |
+| Note "Port is in use" | another process uses the port; change `port` in the configuration |
+| Message "read-only" or 403 | intended in network mode: nobody can switch the database |
+| Server stops after logoff | without autostart the server started by the script is tied to the PowerFactory process; use `-Autostart` |
 
-## Sicherheit
+## Security
 
-- Das Dashboard hat **keine Anmeldung** und ist für das **interne Netz** gedacht. Die Firewall-Regel
-  erlaubt nur das lokale Subnetz; den Port **nie** ins Internet weiterleiten.
-- Im Netz ist es schreibgeschützt: kein Wechsel der Datenbank, keine Aufträge, kein Speichern von
-  Ansichten. Rückgabe sind nur Ergebnisse, keine Dateien beliebiger Pfade.
-- Wer zusätzlich eine Anmeldung braucht, schaltet einen Reverse-Proxy mit Authentifizierung davor und
-  setzt `host` auf `127.0.0.1`.
+- The dashboard has **no login**. By default it is reachable on this PC only.
+- When the host is not `127.0.0.1` the backend runs with `APP_ENV=production`: no database switching
+  and protective headers. The API has no write endpoints for visitors.
+- If a login is needed, put a reverse proxy with authentication in front and keep `host` at
+  `127.0.0.1`.
 
-## Nicht auf der echten Umgebung geprüft
+## Not verified on the real environment
 
-Die Abläufe sind mit Tests und echten Serverprozessen auf macOS geprüft. Auf dem PowerFactory-PC
-ist einmal zu bestätigen: der Windows-Installer (nur syntaktisch geprüft), dass der vom Skript
-gestartete Server den PowerFactory-Prozess überlebt (sonst Autostart nutzen), das Verhalten der
-Firewall im Firmennetz und die LODF-Variablen (siehe `docs/ASSESSMENT.md`).
+The flows are verified with tests and real server processes on macOS. On the PowerFactory PC please
+confirm once: the Windows installer (only checked syntactically), that the server started by the
+script survives the PowerFactory process (otherwise use autostart), and the LODF variables (see
+`docs/ASSESSMENT.md`).

@@ -54,7 +54,7 @@ export default function ScenarioProfile({ scenarioId, label, refreshKey }: { sce
         extraCssText: 'max-width: 360px;',
         formatter: (params: { dataIndex: number; seriesName: string; seriesIndex: number; color: string }[]) => {
           const index = params[0]?.dataIndex ?? 0;
-          const when = new Date(stamps[index]).toLocaleString('de-DE', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' });
+          const when = new Date(stamps[index]).toLocaleString('en-GB', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' });
           const rows = profile.series.map((s, i) => {
             const out = s.out[index];
             const ref = s.ref[index];
@@ -83,7 +83,7 @@ export default function ScenarioProfile({ scenarioId, label, refreshKey }: { sce
             markArea: {
               silent: true,
               itemStyle: { color: withAlpha(colors.lodf, theme.isLight ? 0.08 : 0.14) },
-              label: { show: true, position: 'insideTopLeft', color: theme.mutedText, fontSize: 10, formatter: 'Freischaltung' },
+              label: { show: true, position: 'insideTopLeft', color: theme.mutedText, fontSize: 10, formatter: 'Outage' },
               data: profile.windows.map(([a, b]) => [{ xAxis: a * 1000 }, { xAxis: b * 1000 }]),
             },
           } : {}),
@@ -106,12 +106,12 @@ export default function ScenarioProfile({ scenarioId, label, refreshKey }: { sce
   return (
     <SectionCard
       id={SUMMARY_IDS.profile}
-      title={`Belastungsverlauf · ${label}`}
-      hint="Die fünf am höchsten belasteten Betriebsmittel in Betrieb über den Simulationszeitraum. Durchgezogen: mit Freischaltung, gestrichelt: Referenz (REF). Die Fläche markiert das Ausfallfenster; freigeschaltete Betriebsmittel fehlen."
+      title={`Loading profile · ${label}`}
+      hint="The five most heavily loaded equipment items in service over the simulation period. Solid: with outage, dashed: reference (REF). The shaded area marks the outage window; switched-off equipment is missing."
     >
-      {failed === scenarioId && !profile && <div className="ab-empty">Der Verlauf konnte nicht geladen werden.</div>}
-      {!profile && failed !== scenarioId && <div className="ab-empty" aria-busy>Verlauf wird geladen …</div>}
-      {profile && profile.series.length === 0 && <div className="ab-empty">Für dieses Szenario liegen keine Betriebsmittelverläufe vor.</div>}
+      {failed === scenarioId && !profile && <div className="ab-empty">The profile could not be loaded.</div>}
+      {!profile && failed !== scenarioId && <div className="ab-empty" aria-busy>Loading profile …</div>}
+      {profile && profile.series.length === 0 && <div className="ab-empty">There are no equipment profiles for this scenario.</div>}
       {legendOption && <ReactECharts echarts={echarts} option={legendOption} notMerge style={{ height: 330 }} />}
     </SectionCard>
   );

@@ -3,7 +3,7 @@
  * the automatic top N. Also the voltage value per busbar and scenario that the voltage charts plot.
  * Pure functions on the across-scenarios payload.
  */
-import { busBand } from './freischaltung.ts';
+import { busBand } from './outageAssessment.ts';
 import type { AcrossBus, AcrossBusCell, AcrossData, AcrossLine, AcrossScenario } from './acrossScenarios.ts';
 
 export interface SelectionConfig {
@@ -33,7 +33,7 @@ export function restrictScenarios(data: AcrossData, ids?: readonly string[]): Ac
 /** Exactly the chosen items, in name order; items that no longer exist are ignored. */
 export function pickChosen<T extends { id: string; name: string }>(items: readonly T[], ids: readonly string[] = []): T[] {
   const wanted = new Set(ids);
-  return items.filter((item) => wanted.has(item.id)).sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  return items.filter((item) => wanted.has(item.id)).sort((a, b) => a.name.localeCompare(b.name, 'en'));
 }
 
 export interface BusValue {
@@ -89,7 +89,7 @@ export function pickBuses(
 ): AcrossBus[] {
   if (isSelecting(config)) return pickChosen(buses, config.elementIds);
   return [...buses]
-    .sort((a, b) => tightestMargin(a, scenarios) - tightestMargin(b, scenarios) || a.name.localeCompare(b.name, 'de'))
+    .sort((a, b) => tightestMargin(a, scenarios) - tightestMargin(b, scenarios) || a.name.localeCompare(b.name, 'en'))
     .slice(0, config.topN && config.topN > 0 ? config.topN : 12);
 }
 

@@ -61,8 +61,8 @@ export default function ColorSwatchPicker({ value, onChange, label }: ColorSwatc
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="relative h-3 w-3 shrink-0 overflow-hidden rounded-full border border-[var(--grid-border)]"
-        title={`${label} Farbe`}
-        aria-label={`${label} Farbe`}
+        title={`${label} colour`}
+        aria-label={`${label} colour`}
         aria-haspopup="dialog"
         aria-expanded={open}
       >
@@ -72,7 +72,7 @@ export default function ColorSwatchPicker({ value, onChange, label }: ColorSwatc
       {open && (
         <div
           role="dialog"
-          aria-label={`${label} Farbe wählen`}
+          aria-label={`${label} choose colour`}
           className="absolute left-0 top-5 z-[1000] w-36 rounded-lg border p-2 shadow-2xl"
           style={{ background: 'var(--grid-surface)', borderColor: 'var(--grid-border)' }}
         >
@@ -89,12 +89,12 @@ export default function ColorSwatchPicker({ value, onChange, label }: ColorSwatc
                   outlineOffset: 1,
                 }}
                 title={c}
-                aria-label={`Farbe ${c}`}
+                aria-label={`Colour ${c}`}
               />
             ))}
           </div>
           <label className="mt-2 flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--grid-muted)' }}>
-            Eigene
+            Custom
             <input
               type="text"
               value={customHex}

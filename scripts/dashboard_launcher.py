@@ -25,11 +25,11 @@ def validate_installation(root=ROOT, python=None):
     interpreter = Path(python) if python else dashboard_python(root)
     if not interpreter.is_file():
         raise RuntimeError(
-            "Backend fehlt. Zuerst start-app.cmd oder start-demo.command ausführen."
+            "Backend is missing. Run setup.ps1 (Windows) or start-dashboard.command (macOS) first."
         )
     if not (root / "frontend/dist/index.html").is_file():
         raise RuntimeError(
-            "Frontend-Build fehlt. Im Ordner frontend: npm ci und npm run build ausführen."
+            "Frontend build is missing. In the frontend folder run: npm ci and npm run build."
         )
     return interpreter
 
@@ -95,6 +95,49 @@ def _detached_options():
     return {"creationflags": flags | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)}
 
 
+def _choose_port(host, port, notes):
+    """The fixed port when it is free, otherwise any free one (noted in `notes`)."""
+    with socket.socket() as sock:
+        try:
+            sock.bind((host, port))
+            return sock.getsockname()[1]
+        except OSError:
+            if not port:
+                raise
+    notes.append(f"Port {port} is in use; a free port is used instead.")
+    with socket.socket() as sock:
+        sock.bind((host, 0))
+        return sock.getsockname()[1]
+
+
+def _spawn_server(command, root, env, log, notes):
+    options = dict(cwd=root / "backend", env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+    try:
+        return subprocess.Popen(command, **options, **_detached_options())
+    except OSError:
+        # Breaking away from the caller's job object can be forbidden; retry as a plain child.
+        fallback = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+        process = subprocess.Popen(command, **options, **fallback)
+        notes.append("The server is tied to the calling process; set up autostart for permanent operation.")
+        return process
+
+
+def _wait_until_serving(process, url, database, log_path):
+    """Block until the server answers for `database`; stop it and raise when it cannot."""
+    try:
+        for _ in range(150):
+            if process.poll() is not None:
+                raise RuntimeError("Dashboard stopped. Log: " + str(log_path))
+            if serves_database(url, database, timeout=0.5):
+                return
+            time.sleep(0.1)
+        raise RuntimeError("Dashboard did not start in time. Log: " + str(log_path))
+    except BaseException:
+        process.terminate()
+        process.wait(timeout=5)
+        raise
+
+
 def launch_dashboard(
     database_path,
     *,
@@ -115,7 +158,7 @@ def launch_dashboard(
     interpreter = validate_installation(root, python)
     database = Path(database_path).expanduser().resolve()
     if not database.is_file():
-        raise RuntimeError("Ergebnisdatenbank existiert nicht: " + str(database))
+        raise RuntimeError("Results database does not exist: " + str(database))
     notes = []
     local = lambda number: f"http://127.0.0.1:{number}"  # noqa: E731
     log_path = database.parent / (database.stem + ".dashboard.log")
@@ -139,58 +182,16 @@ def launch_dashboard(
             return result(int(state["port"]), state.get("pid"), None, True)
         if port and serves_database(local(port), database):
             return result(port, None, None, True)
-    # Choose the port: the fixed one when it is free, otherwise any free one.
-    chosen = None
-    with socket.socket() as sock:
-        try:
-            sock.bind((host, port))
-            chosen = sock.getsockname()[1]
-        except OSError:
-            if not port:
-                raise
-            notes.append(f"Port {port} ist belegt; es wird ein freier Port verwendet.")
-    if chosen is None:
-        with socket.socket() as sock:
-            sock.bind((host, 0))
-            chosen = sock.getsockname()[1]
+
+    chosen = _choose_port(host, port, notes)
     env = {**os.environ, "ANALYSIS_MODE": "sqlite", "ANALYSIS_DB_PATH": str(database)}
     if production:
         env["APP_ENV"] = "production"
     _rotate(log_path)
+    command = [str(interpreter), "-m", "uvicorn", "app.main:app", "--host", host, "--port", str(chosen)]
     with log_path.open("a", encoding="utf-8") as log:
-        command = [str(interpreter), "-m", "uvicorn", "app.main:app", "--host", host, "--port", str(chosen)]
-        try:
-            process = subprocess.Popen(command, cwd=root / "backend", env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, **_detached_options())
-        except OSError:
-            # Breaking away from the caller's job object can be forbidden; retry as a plain child.
-            fallback = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
-            process = subprocess.Popen(command, cwd=root / "backend", env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, **fallback)
-            notes.append("Der Server ist an den aufrufenden Prozess gebunden; für Dauerbetrieb den Autostart einrichten.")
-    try:
-        for _ in range(150):
-            if process.poll() is not None:
-                raise RuntimeError("Dashboard beendet. Log: " + str(log_path))
-            if serves_database(local(chosen), database, timeout=0.5):
-                break
-            time.sleep(0.1)
-        else:
-            raise RuntimeError("Dashboard startet nicht rechtzeitig. Log: " + str(log_path))
-    except BaseException:
-        process.terminate()
-        process.wait(timeout=5)
-        raise
-    (database.parent / (database.stem + ".dashboard.json")).write_text(
-        json.dumps(
-            {
-                "pid": process.pid,
-                "url": local(chosen),
-                "port": chosen,
-                "host": host,
-                "database": str(database),
-                "log": str(log_path),
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+        process = _spawn_server(command, root, env, log, notes)
+    _wait_until_serving(process, local(chosen), database, log_path)
+    state = {"pid": process.pid, "url": local(chosen), "port": chosen, "host": host, "database": str(database), "log": str(log_path)}
+    (database.parent / (database.stem + ".dashboard.json")).write_text(json.dumps(state, indent=2), encoding="utf-8")
     return result(chosen, process.pid, process, False)

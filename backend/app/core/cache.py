@@ -2,7 +2,7 @@
 
 HTTP Cache-Control lets one browser dodge repeats; this layer dodges
 database work when *different* users hit the same window in quick
-succession (common when multiple operators inspect the same trafo).
+succession (common when multiple operators inspect the same transformer).
 
 Keep the TTL short — minutes, not hours — so freshly-arrived
 measurements still surface within a tab switch.

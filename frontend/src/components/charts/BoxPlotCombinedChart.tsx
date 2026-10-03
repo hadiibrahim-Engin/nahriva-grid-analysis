@@ -52,7 +52,7 @@ export default function BoxPlotCombinedChart({ seriesList, ...yScale }: Props & 
   const theme = useChartTheme();
 
   if (seriesList.every(({ data }) => data.items.length === 0)) {
-    return <div className="h-[350px] flex items-center justify-center text-gray-500">Keine Daten</div>;
+    return <div className="h-[350px] flex items-center justify-center text-gray-500">No data</div>;
   }
 
   // Category order: take it from whichever series has the most buckets (the
@@ -91,7 +91,7 @@ export default function BoxPlotCombinedChart({ seriesList, ...yScale }: Props & 
       textStyle: { color: theme.text },
       formatter: (params: { seriesName: string; name: string; value: (number | null)[] }) => {
         const v = params.value;
-        if (!v || v[1] == null) return `<b>${params.seriesName} · ${params.name}</b><br/>Keine Daten`;
+        if (!v || v[1] == null) return `<b>${params.seriesName} · ${params.name}</b><br/>No data`;
         return `<b>${params.seriesName} · ${params.name}</b><br/>
           Max: ${formatChartNumber(v[5] ?? v[4])}<br/>
           Q3: ${formatChartNumber(v[4] ?? v[3])}<br/>

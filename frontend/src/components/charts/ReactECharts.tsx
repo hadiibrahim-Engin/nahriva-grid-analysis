@@ -7,7 +7,6 @@ import {
   type Ref,
 } from 'react';
 import type { ECharts, EChartsCoreOption } from 'echarts/core';
-import { registerChartExportRoot, unregisterChartExportRoot } from './chartExportRegistry';
 
 type EChartsModule = {
   init: (
@@ -62,7 +61,6 @@ function ReactECharts(
     const initial = initPropsRef.current;
     const inst = echarts.init(container, theme ?? null, initial.opts);
     instanceRef.current = inst;
-    registerChartExportRoot(container, inst);
     inst.setOption(initial.option, { notMerge: initial.notMerge, lazyUpdate: initial.lazyUpdate });
 
     const ro = new ResizeObserver(() => inst.resize());
@@ -70,7 +68,6 @@ function ReactECharts(
 
     return () => {
       ro.disconnect();
-      unregisterChartExportRoot(container);
       inst.dispose();
       instanceRef.current = null;
     };

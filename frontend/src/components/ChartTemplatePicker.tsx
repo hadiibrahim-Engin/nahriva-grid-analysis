@@ -2,12 +2,11 @@
  * ChartTemplatePicker — the "Add chart" window.
  *
  * Step 1 (gallery): a searchable, category-grouped catalogue of every chart
- * template from the registry. Live templates are selectable; "coming soon"
- * templates render greyed-out for discoverability.
+ * template from the registry.
  *
  * Step 2 (config): once a template is chosen, the user wires up the source
  * signal(s) and any template-specific parameters (threshold, aggregation,
- * resolution). The global dashboard date range is inherited and shown read-only.
+ * resolution).
  * "Generate" hands a DashboardChartConfig back to the dashboard, which mounts a
  * DynamicChartCard — that card shows the circular "Generating" loader while its
  * data resolves.
@@ -19,7 +18,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AggregationFn, ResolutionInfo } from '../api/client';
 import SearchableDropdown from './SearchableDropdown';
 import {
-  PICKER_TEMPLATES,
+  CHART_TEMPLATES,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
   ARITY_LABELS,
@@ -29,21 +28,19 @@ import { ChartPreview } from './charts/chartPreviews';
 import ScenarioOptions, { type ScenarioConfigPatch } from './across/ScenarioOptions';
 import {
   seriesLabel,
-  missingRequiredMeasurements,
   defaultThresholdLevelName,
   defaultThresholdLevelColor,
   normalizeThresholdLevelColor,
   normalizeThresholdLevelEntries,
-  MTYPE_LABELS,
   type DashboardSeries,
   type DynamicChartConfig,
 } from '../util/dynamicCharts';
 
 const AGG_LABELS: Record<AggregationFn, string> = {
-  AVG: 'Mittelwert',
+  AVG: 'Mean',
   MIN: 'Minimum',
   MAX: 'Maximum',
-  SUM: 'Summe',
+  SUM: 'Sum',
 };
 
 // Shared token-based class fragments so the controls match the dashboard.
@@ -125,7 +122,7 @@ export default function ChartTemplatePicker({
     return availableSeries.filter((s) => selected.measurements.includes(s.measurementType));
   }, [selected, availableSeries]);
 
-  // Component-level templates pick a Betriebsmittel, not a single measurement.
+  // Component-level templates pick a Equipment, not a single measurement.
   // One representative signal per distinct component identifies it.
   const componentOptions = useMemo(() => {
     const seen = new Map<string, DashboardSeries>();
@@ -169,8 +166,8 @@ export default function ChartTemplatePicker({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return PICKER_TEMPLATES;
-    return PICKER_TEMPLATES.filter((t) =>
+    if (!q) return CHART_TEMPLATES;
+    return CHART_TEMPLATES.filter((t) =>
       [t.name, t.question, t.measurements.join(' '), CATEGORY_LABELS[t.category]]
         .join(' ')
         .toLowerCase()
@@ -180,8 +177,8 @@ export default function ChartTemplatePicker({
 
   if (!open) return null;
 
-  const buildConfig = (): { ok: boolean; config: DynamicChartConfig; missingMeasurements: string[] } => {
-    if (!selected) return { ok: false, config: { sourceKeys: [] }, missingMeasurements: [] };
+  const buildConfig = (): { ok: boolean; config: DynamicChartConfig } => {
+    if (!selected) return { ok: false, config: { sourceKeys: [] } };
     let sourceKeys: string[] = [];
     let ok = false;
     if (selected.scenarioLevel) {
@@ -189,8 +186,8 @@ export default function ChartTemplatePicker({
       sourceKeys = [];
       ok = scenarioConfig.elementMode !== 'selected' || (scenarioConfig.elementIds?.length ?? 0) > 0;
     } else if (selected.componentLevel) {
-      // One representative signal key per chosen Betriebsmittel; the card derives
-      // the actually-needed measurements from the component automatically.
+      // One representative signal key per chosen equipment; the card derives
+      // the needed measurements from the component automatically.
       sourceKeys = multiKeys;
       ok = multiKeys.length > 0;
     } else if (selected.arity === 'one') {
@@ -206,11 +203,6 @@ export default function ChartTemplatePicker({
       sourceKeys = multiKeys;
       ok = multiKeys.length > 0;
     }
-    // Required measurements only gate signal-level charts; component-level
-    // charts auto-pull what they need (the backend rejects truly missing data).
-    const missingMeasurements = ok && !selected.componentLevel
-      ? missingRequiredMeasurements(selected.requiredComponentMeasurements, sourceKeys, availableSeries)
-      : [];
     const normalizedThresholdEntries = normalizeThresholdLevelEntries(
       thresholdLevels,
       thresholdLevelNames,
@@ -218,8 +210,7 @@ export default function ChartTemplatePicker({
     );
     const thresholdLevelsOk = !selected.needsThresholdLevels || normalizedThresholdEntries.length >= 2;
     return {
-      ok: ok && missingMeasurements.length === 0 && thresholdLevelsOk,
-      missingMeasurements,
+      ok: ok && thresholdLevelsOk,
       config: {
         sourceKeys,
         ...(selected.needsThreshold ? { threshold } : {}),
@@ -236,7 +227,7 @@ export default function ChartTemplatePicker({
     };
   };
 
-  const { ok: canGenerate, config, missingMeasurements } = buildConfig();
+  const { ok: canGenerate, config } = buildConfig();
 
   const handleGenerate = () => {
     if (!selected || !canGenerate) return;
@@ -265,17 +256,17 @@ export default function ChartTemplatePicker({
                 onClick={() => setSelected(null)}
                 className="rounded border border-[var(--grid-border)] bg-[var(--grid-control)] px-2 py-1 text-xs text-[var(--grid-text-soft)] transition-colors hover:bg-[var(--grid-control-hover)]"
               >
-                ← Zurück
+                ← Back
               </button>
             )}
             <h2 id="chart-picker-title" className="text-sm font-semibold tracking-wide text-[var(--grid-text)]">
-              {selected ? selected.name : 'Diagramm hinzufügen'}
+              {selected ? selected.name : 'Add chart'}
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Schließen"
+            aria-label="Close"
             className="text-[var(--grid-muted)] transition-colors hover:text-[var(--grid-text)]"
           >
             ✕
@@ -325,7 +316,6 @@ export default function ChartTemplatePicker({
             scenarioConfig={scenarioConfig}
             setScenarioConfig={setScenarioConfig}
             canGenerate={canGenerate}
-            missingMeasurements={missingMeasurements}
             onGenerate={handleGenerate}
           />
         )}
@@ -352,7 +342,7 @@ function Gallery({ query, setQuery, templates, onSelect }: GalleryProps) {
           autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Diagramme durchsuchen (Name, Frage, Messgröße)…"
+          placeholder="Search charts (name, question, measurement)…"
           className="grid-form-input w-full"
         />
       </div>
@@ -374,7 +364,7 @@ function Gallery({ query, setQuery, templates, onSelect }: GalleryProps) {
           );
         })}
         {templates.length === 0 && (
-          <div className="py-12 text-center text-sm text-[var(--grid-muted)]">Keine passenden Diagramme gefunden.</div>
+          <div className="py-12 text-center text-sm text-[var(--grid-muted)]">No matching charts found.</div>
         )}
       </div>
     </>
@@ -382,30 +372,16 @@ function Gallery({ query, setQuery, templates, onSelect }: GalleryProps) {
 }
 
 function TemplateCard({ template, onSelect }: { template: ChartTemplate; onSelect: (t: ChartTemplate) => void }) {
-  const disabled = !!template.comingSoon;
   return (
     <button
       type="button"
-      disabled={disabled}
       onClick={() => onSelect(template)}
-      className={`flex flex-col rounded-lg border p-3 text-left transition-colors ${
-        disabled
-          ? 'cursor-not-allowed border-[var(--grid-border-soft)] bg-[var(--grid-subpanel)] opacity-55'
-          : 'border-[var(--grid-border)] bg-[var(--grid-surface-strong)] hover:border-[var(--grid-primary)] hover:shadow-[0_0_0_1px_var(--grid-primary)]'
-      }`}
+      className="flex flex-col rounded-lg border border-[var(--grid-border)] bg-[var(--grid-surface-strong)] p-3 text-left transition-colors hover:border-[var(--grid-primary)] hover:shadow-[0_0_0_1px_var(--grid-primary)]"
     >
       {/* Visual preview */}
       <ChartPreview kind={template.kind} />
 
-      {/* Name + coming-soon badge */}
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-sm font-medium text-[var(--grid-text)]">{template.name}</span>
-        {template.comingSoon && (
-          <span className="shrink-0 rounded-full bg-[var(--grid-control)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--grid-muted)]">
-            Bald
-          </span>
-        )}
-      </div>
+      <span className="text-sm font-medium text-[var(--grid-text)]">{template.name}</span>
 
       {/* Engineering question */}
       <p className="mt-1 flex-1 text-xs leading-relaxed text-[var(--grid-muted)]">{template.question}</p>
@@ -465,7 +441,6 @@ interface ConfigPanelProps {
   scenarioConfig: ScenarioConfigPatch;
   setScenarioConfig: (patch: Partial<ScenarioConfigPatch>) => void;
   canGenerate: boolean;
-  missingMeasurements: string[];
   onGenerate: () => void;
 }
 
@@ -515,13 +490,13 @@ function ThresholdLevelsEditor({
   return (
     <div className="w-full max-w-[520px]">
       <div className="mb-1 flex items-center justify-between gap-3">
-        <label className="text-xs text-[var(--grid-muted)]">Schwellenstufen</label>
+        <label className="text-xs text-[var(--grid-muted)]">Threshold levels</label>
         <button
           type="button"
           onClick={addLevel}
           className="rounded border border-[var(--grid-border)] bg-[var(--grid-control)] px-2 py-1 text-xs text-[var(--grid-text-soft)] transition-colors hover:bg-[var(--grid-control-hover)]"
         >
-          + Stufe
+          + Level
         </button>
       </div>
       <div className="space-y-2 rounded border border-[var(--grid-border)] bg-[var(--grid-subpanel)] p-2">
@@ -531,7 +506,7 @@ function ThresholdLevelsEditor({
           const tone = normalizeThresholdLevelColor(colors[index], index, levels.length);
           return (
             <div key={index} className="flex items-center gap-2">
-              <label className="relative h-7 w-7 shrink-0 overflow-hidden rounded-full border border-[var(--grid-border)]" title={`${label} Farbe`}>
+              <label className="relative h-7 w-7 shrink-0 overflow-hidden rounded-full border border-[var(--grid-border)]" title={`${label} colour`}>
                 <span
                   aria-hidden
                   className="absolute inset-0"
@@ -542,7 +517,7 @@ function ThresholdLevelsEditor({
                   value={tone}
                   onChange={(e) => updateColor(index, e.target.value)}
                   className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                  aria-label={`${label} Farbe`}
+                  aria-label={`${label} colour`}
                 />
               </label>
               <input
@@ -550,7 +525,7 @@ function ThresholdLevelsEditor({
                 value={label}
                 onChange={(e) => updateName(index, e.target.value)}
                 className={`${CONTROL_CLASS} w-36`}
-                aria-label={`${fallbackLabel} Name`}
+                aria-label={`${fallbackLabel} name`}
               />
               <input
                 type="number"
@@ -563,16 +538,16 @@ function ThresholdLevelsEditor({
                 type="button"
                 onClick={() => removeLevel(index)}
                 className="rounded border border-[var(--grid-border)] px-2 py-1 text-xs text-[var(--grid-muted)] transition-colors hover:bg-[var(--grid-control-hover)] hover:text-[var(--grid-text)]"
-                aria-label={`${label} entfernen`}
+                aria-label={`${label} remove`}
               >
-                Entfernen
+                Remove
               </button>
             </div>
           );
         })}
       </div>
       <p className="mt-1 text-xs text-[var(--grid-muted-2)]">
-        Die Kurve bleibt bis zur ersten Schwelle normal, wird danach orange und ab der letzten Schwelle rot.
+        The curve stays normal up to the first threshold, turns orange after it and red from the last threshold.
       </p>
     </div>
   );
@@ -587,10 +562,10 @@ function ConfigPanel(props: ConfigPanelProps) {
     thresholdLevelColors, setThresholdLevelColors,
     aggregation, setAggregation, resolutionMinutes, setResolutionMinutes,
     scenarioConfig, setScenarioConfig,
-    canGenerate, missingMeasurements, onGenerate,
+    canGenerate, onGenerate,
   } = props;
 
-  // Component-level templates choose Betriebsmittel; everything else chooses signals.
+  // Component-level templates choose equipment; everything else chooses signals.
   const pickList = template.componentLevel ? componentOptions : sourceOptions;
   const noSources = availableSeriesCount === 0;
   const noMatchingSources = pickList.length === 0;
@@ -612,25 +587,25 @@ function ConfigPanel(props: ConfigPanelProps) {
           <ScenarioOptions kind={template.kind} config={scenarioConfig} onChange={setScenarioConfig} />
         ) : noSources ? (
           <div className="rounded border border-[var(--grid-warning)]/40 bg-[var(--grid-danger-soft)] px-4 py-3 text-sm text-[var(--grid-warning)]">
-            Zuerst Zeitreihen über die Dropdowns oben hinzufügen, dann steht dieses Diagramm als Quelle zur Verfügung.
+            First add time series with the dropdowns above; they then become available as the source of this chart.
           </div>
         ) : noMatchingSources ? (
           <div className="rounded border border-[var(--grid-warning)]/40 bg-[var(--grid-danger-soft)] px-4 py-3 text-sm text-[var(--grid-warning)]">
-            Keine passende Messgröße in der Auswahl. Dieses Diagramm benötigt: {template.measurements.join(', ')}.
+            No suitable measurement in the selection. This chart needs: {template.measurements.join(', ')}.
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Component-level: pick Betriebsmittel; needed measurements auto-pulled. */}
+            {/* Component-level: pick equipment; needed measurements are pulled automatically. */}
             {template.componentLevel && (
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <label className="text-xs text-[var(--grid-muted)]">Betriebsmittel ({multiKeys.length} gewählt)</label>
+                  <label className="text-xs text-[var(--grid-muted)]">Equipment ({multiKeys.length} selected)</label>
                   <button
                     type="button"
                     onClick={toggleAll}
                     className="text-xs text-[var(--grid-info)] transition-colors hover:text-[var(--grid-primary)]"
                   >
-                    {allSelected ? 'Keine' : 'Alle'}
+                    {allSelected ? 'None' : 'All'}
                   </button>
                 </div>
                 <div className="max-h-44 space-y-1 overflow-y-auto rounded border border-[var(--grid-border)] bg-[var(--grid-subpanel)] p-2">
@@ -650,44 +625,44 @@ function ConfigPanel(props: ConfigPanelProps) {
                   ))}
                 </div>
                 <p className="mt-1 text-xs text-[var(--grid-muted-2)]">
-                  Die benötigten Messgrößen werden automatisch herangezogen. Mehrere Betriebsmittel ergeben je ein Diagramm.
+                  The needed measurements are used automatically. Several equipment items give one chart each.
                 </p>
               </div>
             )}
             {/* Source selectors */}
             {!template.componentLevel && template.arity === 'one' && (
               <SearchableDropdown
-                label="Quelle"
+                label="Source"
                 items={sourceOptions}
                 idOf={(s) => s.key}
                 labelOf={(s) => seriesLabel(s)}
                 value={primaryKey}
                 onChange={setPrimaryKey}
-                placeholder="Zeitreihe wählen"
-                emptyHint="Keine Zeitreihen"
+                placeholder="Choose time series"
+                emptyHint="No time series"
                 className="min-w-[280px] max-w-[460px]"
               />
             )}
             {template.arity === 'two' && (
               <div className="flex flex-wrap gap-3">
                 <SearchableDropdown
-                  label="X-Zeitreihe"
+                  label="X time series"
                   items={sourceOptions}
                   idOf={(s) => s.key}
                   labelOf={(s) => seriesLabel(s)}
                   value={primaryKey}
                   onChange={setPrimaryKey}
-                  placeholder="X wählen"
+                  placeholder="Choose X"
                   className="min-w-[260px]"
                 />
                 <SearchableDropdown
-                  label="Y-Zeitreihe"
+                  label="Y time series"
                   items={sourceOptions}
                   idOf={(s) => s.key}
                   labelOf={(s) => seriesLabel(s)}
                   value={secondaryKey}
                   onChange={setSecondaryKey}
-                  placeholder="Y wählen"
+                  placeholder="Choose Y"
                   className="min-w-[260px]"
                 />
               </div>
@@ -695,33 +670,33 @@ function ConfigPanel(props: ConfigPanelProps) {
             {template.arity === 'three' && (
               <div className="flex flex-wrap gap-3">
                 <SearchableDropdown
-                  label="X-Zeitreihe"
+                  label="X time series"
                   items={sourceOptions}
                   idOf={(s) => s.key}
                   labelOf={(s) => seriesLabel(s)}
                   value={primaryKey}
                   onChange={setPrimaryKey}
-                  placeholder="X wählen"
+                  placeholder="Choose X"
                   className="min-w-[260px]"
                 />
                 <SearchableDropdown
-                  label="Y-Zeitreihe"
+                  label="Y time series"
                   items={sourceOptions}
                   idOf={(s) => s.key}
                   labelOf={(s) => seriesLabel(s)}
                   value={secondaryKey}
                   onChange={setSecondaryKey}
-                  placeholder="Y wählen"
+                  placeholder="Choose Y"
                   className="min-w-[260px]"
                 />
                 <SearchableDropdown
-                  label={template.kind === 'correlationScatter3d' ? 'Z-Zeitreihe' : 'Farbe (Z-Zeitreihe)'}
+                  label={template.kind === 'correlationScatter3d' ? 'Z time series' : 'Colour (Z time series)'}
                   items={sourceOptions}
                   idOf={(s) => s.key}
                   labelOf={(s) => seriesLabel(s)}
                   value={tertiaryKey}
                   onChange={setTertiaryKey}
-                  placeholder="Z wählen"
+                  placeholder="Choose Z"
                   className="min-w-[260px]"
                 />
               </div>
@@ -729,13 +704,13 @@ function ConfigPanel(props: ConfigPanelProps) {
             {template.arity === 'multi' && (
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <label className="text-xs text-[var(--grid-muted)]">Quellen ({multiKeys.length} gewählt)</label>
+                  <label className="text-xs text-[var(--grid-muted)]">Sources ({multiKeys.length} selected)</label>
                   <button
                     type="button"
                     onClick={toggleAll}
                     className="text-xs text-[var(--grid-info)] transition-colors hover:text-[var(--grid-primary)]"
                   >
-                    {allSelected ? 'Keine' : 'Alle'}
+                    {allSelected ? 'None' : 'All'}
                   </button>
                 </div>
                 <div className="max-h-44 space-y-1 overflow-y-auto rounded border border-[var(--grid-border)] bg-[var(--grid-subpanel)] p-2">
@@ -771,7 +746,7 @@ function ConfigPanel(props: ConfigPanelProps) {
               )}
               {template.needsResolution && (
                 <div>
-                  <label className="mb-1 block text-xs text-[var(--grid-muted)]">Auflösung</label>
+                  <label className="mb-1 block text-xs text-[var(--grid-muted)]">Resolution</label>
                   <select value={resolutionMinutes} onChange={(e) => setResolutionMinutes(Number(e.target.value))} className={CONTROL_CLASS}>
                     {resolutions.filter((r) => r.minutes > 0).map((r) => (
                       <option key={r.minutes} value={r.minutes}>{r.label}</option>
@@ -781,7 +756,7 @@ function ConfigPanel(props: ConfigPanelProps) {
               )}
               {template.needsThreshold && (
                 <div>
-                  <label className="mb-1 block text-xs text-[var(--grid-muted)]">{template.thresholdLabel ?? 'Schwellwert'}</label>
+                  <label className="mb-1 block text-xs text-[var(--grid-muted)]">{template.thresholdLabel ?? 'Threshold'}</label>
                   <input
                     type="number"
                     value={threshold}
@@ -803,7 +778,7 @@ function ConfigPanel(props: ConfigPanelProps) {
               {template.needsVoltageBand && (
                 <>
                   <div>
-                    <label className="mb-1 block text-xs text-[var(--grid-muted)]">Min. Spannung (%)</label>
+                    <label className="mb-1 block text-xs text-[var(--grid-muted)]">Min. voltage (%)</label>
                     <input
                       type="number"
                       min={0}
@@ -814,7 +789,7 @@ function ConfigPanel(props: ConfigPanelProps) {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-[var(--grid-muted)]">Max. Spannung (%)</label>
+                    <label className="mb-1 block text-xs text-[var(--grid-muted)]">Max. voltage (%)</label>
                     <input
                       type="number"
                       min={0}
@@ -828,24 +803,12 @@ function ConfigPanel(props: ConfigPanelProps) {
               )}
             </div>
 
-            {/* Required-measurement gate: name exactly which physical inputs
-                are missing so the user knows what to load. */}
-            {missingMeasurements.length > 0 && (
-              <div
-                role="alert"
-                className="rounded border border-[var(--grid-warning)]/40 bg-[var(--grid-danger-soft)] px-4 py-3 text-sm text-[var(--grid-warning)]"
-              >
-                Für diese Auswertung fehlen Messgrößen am Betriebsmittel:{' '}
-                <strong>{missingMeasurements.map((m) => MTYPE_LABELS[m] ?? m).join(', ')}</strong>.
-                Bitte zuerst diese Zeitreihe(n) über die Dropdowns oben hinzufügen.
-              </div>
-            )}
             {template.needsThresholdLevels && normalizeThresholdLevels(thresholdLevels).length < 2 && (
               <div
                 role="alert"
                 className="rounded border border-[var(--grid-warning)]/40 bg-[var(--grid-danger-soft)] px-4 py-3 text-sm text-[var(--grid-warning)]"
               >
-                Bitte mindestens zwei Schwellen eintragen: eine Warnstufe und eine Überschreitungsstufe.
+                Please enter at least two thresholds: a warning level and an exceedance level.
               </div>
             )}
           </div>
@@ -854,18 +817,14 @@ function ConfigPanel(props: ConfigPanelProps) {
 
       {/* Footer */}
       <div className="flex items-center justify-between gap-3 border-t border-[var(--grid-border)] bg-[var(--grid-header)] px-5 py-3">
-        <span className="text-xs text-[var(--grid-muted)]">
-          {missingMeasurements.length > 0
-            ? `Fehlende Größe(n): ${missingMeasurements.map((m) => MTYPE_LABELS[m] ?? m).join(', ')}`
-            : ''}
-        </span>
+        <span />
         <button
           type="button"
           onClick={onGenerate}
           disabled={!canGenerate}
           className="rounded bg-[var(--grid-primary)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--grid-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Generieren
+          Generate
         </button>
       </div>
     </>

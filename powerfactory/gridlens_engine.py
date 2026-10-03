@@ -588,14 +588,6 @@ def apply_reference(results, reference_id=REFERENCE_ID):
 def converged(results):
     return [result for result in results if result['status'] == CONVERGED]
 
-def critical_keys(results, category):
-    keys = set()
-    for result in converged(results):
-        for item, stats in result['by_category'][category]:
-            if is_critical(item, stats):
-                keys.add((category, item['key']))
-    return keys
-
 # Each element once, REF and OUTAGE side by side. Deltas and the status below
 # only ever compare the same element (same full PowerFactory path).
 STATUS_NEW = 'NEW'

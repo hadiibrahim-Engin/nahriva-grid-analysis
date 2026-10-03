@@ -219,24 +219,8 @@ def scenario_cells(store, scenario_id, limits=DEFAULT_LIMITS):
     return _CELLS_CACHE.get_or_compute(key, lambda: _scenario_cells(store, scenario_id, limits))
 
 
-def _scenario_cells(store, scenario_id, limits):
-    db = store.db
-    row = db.execute("SELECT * FROM pf_scenarios WHERE id=?", (scenario_id,)).fetchone()
-    runs = _runs(db, scenario_id) if row else {}
-    if row is None or "REF" not in runs or "OUTAGE" not in runs:
-        return None
-    ids, _chosen, windows, equipment = _outage_context(store, row)
-    scenario_lodf = {
-        r["element_id"]: r["lodf"]
-        for r in db.execute("SELECT element_id, lodf FROM pf_lodf WHERE outage_key=?", (outage_key(ids),))
-    }
-    elements = {
-        e["id"]: e
-        for e in db.execute("SELECT id, name, className, type FROM analysis_elements WHERE run_id=?", (runs["OUTAGE"],))
-    }
-    ref = _loading_stats(db, runs["REF"], windows, limits)
-    out = _loading_stats(db, runs["OUTAGE"], windows, limits)
-
+def _branch_rows(elements, ref, out, equipment, lodf):
+    """Branch cells of one scenario and the simulated period; busbars are handled separately."""
     lines, period_hours = [], 0.0
     for element_id, ref_stats in ref.items():
         element = elements.get(element_id)
@@ -260,16 +244,18 @@ def _scenario_cells(store, scenario_id, limits):
                     "value": None if outaged else value,
                     "window_base": base,
                     "delta": None if outaged or value is None or base is None else value - base,
-                    "lodf": scenario_lodf.get(element_id),
+                    "lodf": lodf.get(element_id),
                 },
             }
         )
+    return lines, period_hours
 
+
+def _bus_rows(db, runs, windows, elements, equipment, unit):
     volt_ref = _voltage_range(db, runs["REF"], windows)
     volt_out = _voltage_range(db, runs["OUTAGE"], windows)
     volt_hours = _hours_outside(db, runs["OUTAGE"])
     band = _voltage_limits(db, runs["OUTAGE"])
-    unit = _voltage_unit(db, runs["OUTAGE"])
     buses = []
     for element_id, rng in volt_out.items():
         element = elements.get(element_id)
@@ -291,12 +277,34 @@ def _scenario_cells(store, scenario_id, limits):
                 },
             }
         )
+    return buses
+
+
+def _scenario_cells(store, scenario_id, limits):
+    db = store.db
+    row = db.execute("SELECT * FROM pf_scenarios WHERE id=?", (scenario_id,)).fetchone()
+    runs = _runs(db, scenario_id) if row else {}
+    if row is None or "REF" not in runs or "OUTAGE" not in runs:
+        return None
+    ids, _chosen, windows, equipment = _outage_context(store, row)
+    lodf = {
+        r["element_id"]: r["lodf"]
+        for r in db.execute("SELECT element_id, lodf FROM pf_lodf WHERE outage_key=?", (outage_key(ids),))
+    }
+    elements = {
+        e["id"]: e
+        for e in db.execute("SELECT id, name, className, type FROM analysis_elements WHERE run_id=?", (runs["OUTAGE"],))
+    }
+    ref = _loading_stats(db, runs["REF"], windows, limits)
+    out = _loading_stats(db, runs["OUTAGE"], windows, limits)
+    lines, period_hours = _branch_rows(elements, ref, out, equipment, lodf)
+    unit = _voltage_unit(db, runs["OUTAGE"])
     return {
         "scenario_id": scenario_id,
         "period_hours": period_hours,
         "voltage_unit": unit,
         "lines": lines,
-        "buses": buses,
+        "buses": _bus_rows(db, runs, windows, elements, equipment, unit),
     }
 
 

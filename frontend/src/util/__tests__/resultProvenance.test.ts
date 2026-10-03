@@ -21,6 +21,6 @@ test('synthetic legacy runs remain clearly distinct from actual PowerFactory res
   const [context] = resultContexts([{ id: 'dummy', name: 'Dummy', runs: [{ run_id: 'r', kind: 'REF', source: 'Dummy QDS (synthetic)' }] }], null);
   assert.equal(isSynthetic(context.provenance), true);
   assert.equal(isSynthetic({ data_source: 'PowerFactory' }), false);
-  assert.equal(provenancePeriod([null, null]), 'Nicht erfasst');
+  assert.equal(provenancePeriod([null, null]), 'Not recorded');
   assert.match(provenancePeriod([1769817600, 1769821200]), /UTC$/);
 });

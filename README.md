@@ -1,148 +1,102 @@
 # Outage Assessment
 
-Lokales Dashboard für einen Nutzer auf der PowerFactory-VM. Die Diagramme,
-Auswahlleiste und Themes stammen aus `DashB/Api-main/frontend`. Anmeldung,
-Benutzerverwaltung, Footer und Dashboard-Datumsfilter sind entfernt. Jeder Plot
-zeigt die vollständige gespeicherte Simulationsreihe seiner Auswahl.
+Dashboard for assessing planned outages calculated in PowerFactory. A single PowerFactory script
+calculates the outage scenarios and stores REF and OUTAGE results in a SQLite file; the dashboard
+reads that file and shows, per scenario, whether the outage is permissible, conditionally
+permissible or not permissible, with the reasons.
 
-## Mac: sofort mit einer kleinen Dummy-QDS-Datenbank testen
+Everything runs on one PC, as a normal user: no administrator rights, no firewall rule, no
+service and no extra network port. The dashboard listens on `127.0.0.1` on one port (default 8765).
+One script sets everything up (`setup.cmd`), one script runs in PowerFactory (`powerfactory/start_assessment.py`).
 
-Voraussetzungen: Node.js >=22.13, npm und uv.
+## Quick start (Windows, PowerFactory PC)
 
-Im Finder **`start-demo.command` doppelklicken**, oder im Projektordner:
+1. Copy the project folder (or unpack the release package) to the PC, for example to
+   `C:\OutageAssessment`.
+2. Double-click **`setup.cmd`** (or run `.\setup.ps1` in a normal PowerShell). It sets up everything
+   from A to Z by itself, without administrator rights and inside the folder only:
+   - Python 3.12+ (uses yours; otherwise it downloads the portable `uv`, which installs Python for you),
+   - the backend environment and packages,
+   - the frontend build (needs Node 22.13+; if Node is missing it downloads a portable Node; a release
+     package already contains the finished build),
+   - `outage-assessment.config.json`, an optional per-user autostart (`-Autostart`) and a self-test.
+3. In PowerFactory add **one** script: create a `ComPython` object (external script file) that points to
 
-```bash
-./start-demo.command
-```
+   ```
+   C:\OutageAssessment\powerfactory\start_assessment.py
+   ```
 
-Der Starter synchronisiert Python-Abhängigkeiten, installiert npm-Abhängigkeiten
-bei Bedarf, baut das Frontend, erstellt eine SQLite-Datei mit Dummy-QDS-Ergebnissen
-und öffnet den Browser. Der lokale Port wird automatisch gewählt; die URL steht
-im Terminal. **Ctrl+C** beendet den gestarteten Server.
+   Activate the project and study case and execute it. The script checks folder and free space,
+   calculates the scenarios one after another and saves each one. **When the calculation is finished it
+   starts the dashboard and opens it in your browser** (default `http://127.0.0.1:8765`).
 
-Testdaten: acht benannte Freischaltszenarien mit jeweils REF und OUTAGE, sieben
-Tage mit 15-Minuten-Schritten, acht Leitungen, zwei Trafos, drei Sammelschienen sowie
-synthetische LODF-Werte. Ältere Testdateien (drei Szenarien, ohne LODF) bleiben
-lesbar; zum Neuaufbau die Datei löschen. Je Messreihe
-werden alle 672 Punkte gespeichert. Sie sind im Dashboard als synthetisch markiert.
-Standarddatei: `backend/data/outage-assessment-demo.sqlite3`. Wiederholte Starts
-verwenden vorhandene Dummy-Daten; andere Ergebnisse werden nicht überschrieben.
+Build a release package for other PCs with `.\setup.ps1 -Package`
+(`release\outage-assessment-<version>.zip`). More options: `Get-Help .\setup.ps1 -Detailed`.
 
-Eigene Testdatei oder fester Port:
+## Quick start (macOS, development)
 
-```bash
-./start-demo.command --db /tmp/assessment-test.sqlite3 --port 18017
-```
-
-Unter **Szenario** REF auswählen, dann Betriebsmittel und Messgröße wählen und
-**Hinzufügen** drücken. Danach OUTAGE desselben Szenarios/Betriebsmittels hinzufügen.
-Die ursprünglichen DashB-Plots zeigen beide vollständigen Reihen. Unter
-**Szenariodetails** stehen die gespeicherten Ausfallfenster und der Datenbankpfad.
-
-## Auswertung und Freischaltbewertung
-
-Standardansicht ist die **Zusammenfassung**: Kennzahlen, Freigabe-Bewertung je Szenario
-(zulässig, bedingt, nicht zulässig, mit Begründung), Verlauf des gewählten Szenarios, Spannung
-der Sammelschienen, Matrix aller Betriebsmittel (Leitungen und Transformatoren) und
-Vergleichsgrafiken. Eine Navigationsleiste führt in dieser Reihenfolge durch die Abschnitte.
-
-- **Wenig Text:** Erklärungen sind aus. Je Karte öffnet **i** den Hinweis, **Erläuterungen**
-  blendet alle ein.
-- **Große Datenbanken:** Die Daten laden Szenario für Szenario, schwere Abschnitte erst beim
-  Scrollen dorthin.
-- Zeitreihen-Overlay, Heatmap und Peak Demand sind keine Standardansichten mehr; sie lassen sich
-  unter der Zusammenfassung hinzufügen.
-- Die Vergleichsgrafiken lassen sich auch über **Diagramm hinzufügen → Szenarioauswertung** erzeugen
-  (Anzahl und Betriebsmitteltyp wählbar).
-- Schwellen und Kriterien stehen zentral in `frontend/src/config/`.
-
-Definitionen, Kriterien, LODF, API und Anpassung: [docs/ASSESSMENT.md](docs/ASSESSMENT.md).
-
-## Vorhandene Ergebnisdatenbank auswählen
-
-Im Header den runden Datenbank-Button (Tooltip **Datenbank hinzufügen**) anklicken und den absoluten SQLite-Dateipfad
-auf dem Rechner des Dashboard-Servers eingeben. **Datenbank laden** prüft die
-vorhandene Datei und lädt das Dashboard mit ihren Ergebnissen neu. Bei ungültigen
-Pfaden bleibt die bisherige Datenbank aktiv. Die Auswahl gilt für diesen
-Server-Prozess; beim nächsten Start gilt wieder der angegebene Startpfad.
-
-Auf dem Mac direkt mit einer bestehenden Datenbank starten:
+Requirements: Node.js >= 22.13, npm and uv.
 
 ```bash
-./start-dashboard.command --db /absoluter/pfad/ergebnisse.sqlite3
+./start-dashboard.command --db /path/to/results.sqlite3 --port 18017
 ```
 
-Per Doppelklick fragt dieser Starter den Pfad im Terminal ab. Er erzeugt keine
-Dummy-Daten. Der PowerFactory-Starter verwendet weiterhin `DATABASE_DIRECTORY`
-und `DATABASE_NAME`. Logo, Query Monitor sowie CSV-/PDF-/Teilen-Buttons sind aus
-dem Dashboard entfernt.
+Double-clicking `start-dashboard.command` asks for the path instead. The starter installs the
+dependencies, builds the frontend, checks the database (it never creates or overwrites it) and opens
+the browser. **Ctrl+C** stops the server.
 
-Die visuelle Überarbeitung verwendet ausschließlich Light-Mode-CSS: bestehende
-Variablen, weiße Cards, dezente Schatten, Purple für Auswahl sowie Grün/Gelb/Rot
-für Status. Layout und Dark-Mode-Regeln bleiben erhalten. Alle geänderten Regeln
-stehen zum Nachlesen in [docs/LIGHT_MODE.css](docs/LIGHT_MODE.css); die Anwendung
-verwendet weiterhin `frontend/src/index.css`.
+## What the dashboard shows
 
-## Auf Windows vorbereiten
+The standard view is the **summary**: key figures, an assessment per scenario with reasons, the
+profile of the chosen scenario, busbar voltage, a matrix of all equipment (lines and transformers),
+comparison charts, a radar plot and a detail table. A navigation bar follows this reading order.
 
-`start-app.cmd` richtet Backend und Frontend-Abhängigkeiten ein und startet die
-Entwicklungsansicht. Für den Start aus PowerFactory zusätzlich einmal im
-Frontend-Ordner `npm run build` ausführen. Die Backend-Umgebung liegt unter
-`backend/.venv/Scripts/python.exe`; PowerFactory verwendet sie für den separaten
-Dashboard-Prozess, während die QDS selbst in PowerFactory läuft.
+- **Little text:** explanations are off. The **i** on a card opens its explanation; **Explanations**
+  shows all of them.
+- **Large databases:** data loads scenario by scenario, heavy sections only when they are scrolled
+  into view.
+- The **time series overlay** is an optional view under the summary. Further charts of selected
+  signals or of all scenarios come from **Add chart** (see [docs/ASSESSMENT.md](docs/ASSESSMENT.md)).
+- Thresholds and criteria are central in `frontend/src/config/`.
+- Light and dark themes; the database button in the header loads another results file (only when
+  the server is not exposed to the network).
 
-## Aus PowerFactory starten und berechnen
+Definitions, criteria, LODF, API and customisation: [docs/ASSESSMENT.md](docs/ASSESSMENT.md).
 
-Ein externes ComPython-Skript **Outage Assessment** anlegen und auf
-`powerfactory/start_assessment.py` verweisen. Das ist das einzige Skript, das in PowerFactory
-ausgeführt wird: Es prüft Speicher und Ordner, startet (oder nutzt) den Dashboard-Server, berechnet
-die Szenarien nacheinander und speichert jedes sofort. Das Dashboard zeigt sie ohne Neuladen, auch
-auf anderen PCs im Netz (die Adresse steht im PowerFactory-Ausgabefenster).
+## Scenarios
 
-`SCENARIOS=None` berechnet jedes auswertbare Planned-Outage-Objekt im aktiven QDS-Zeitraum einzeln
-unter seinem vorhandenen Namen. Alternativ benannte Kombinationen in der Skriptdatei angeben:
+`SCENARIOS = None` in `powerfactory/start_assessment.py` calculates every eligible Planned Outage in
+the active QDS period, each under its own name. Alternatively define named combinations:
 
 ```python
 SCENARIOS = [
-    {"name": "Freischaltung Nord", "outages": ["Wartung Leitung Nord"]},
-    {"name": "Nord mit Trafo", "outages": ["Wartung Leitung Nord", "Wartung Trafo Nord"]},
+    {"name": "Outage North", "outages": ["Maintenance Line North"]},
+    {"name": "North with transformer", "outages": ["Maintenance Line North", "Maintenance Transformer North"]},
 ]
 ```
 
-Bei mehrdeutigen Ausfallnamen vollständige PowerFactory-Objektpfade verwenden. Simulationszeitraum,
-Schrittweite, Profile und Ergebnisvariablen kommen aus dem aktiven `ComStatsim`. Das Skript
-stellt den nativen Zustand verifiziert wieder her und erzeugt keine `IntScenario`-Objekte.
+Use full PowerFactory object paths when names are ambiguous. Period, step size, profiles and result
+variables come from the active `ComStatsim`. The script restores the native state (verified) and
+creates no `IntScenario` objects. Details: [docs/POWERFACTORY.md](docs/POWERFACTORY.md).
 
-Datenbank, Adresse und Port stehen in `outage-assessment.config.json`
-(Vorlage: `outage-assessment.config.example.json`). Einrichtung des dauerhaften Betriebs auf dem
-PowerFactory-PC (Autostart, Firewall, Release-Paket), Wartung und Fehlersuche:
-**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Im Netz ist das Dashboard schreibgeschützt und ohne Anmeldung
-für das interne Netz gedacht.
+## Settings
 
-## Entwicklung und Prüfungen
+`outage-assessment.config.json` in the project folder (template:
+`outage-assessment.config.example.json`) sets `database`, `host` and `port`. The environment
+variables `OA_DATABASE`, `OA_HOST` and `OA_PORT` take precedence. The PowerFactory script and the
+autostart use the same file, so both work on the same database.
+
+## Development and checks
 
 ```bash
-bash scripts/dev.sh
-bash scripts/check.sh
+bash scripts/dev.sh                                 # API and Vite dev server, both on 127.0.0.1
+bash scripts/check.sh                               # ruff, pytest, frontend checks, npm audit
 backend/.venv/bin/python scripts/smoke_production.py
 ```
 
-`scripts/dev.sh` verwendet ohne abweichendes `ANALYSIS_DB_PATH` eine leere normale
-SQLite-Datei; der Mac-Dummy-Starter verwendet seine eigene Testdatei.
-`backend/.env.example` zeigt die verbleibende lokale Konfiguration. Native
-Worker-Funktionen benötigen nur die Standardbibliothek und das PowerFactory-Modul.
+Backend tests use a synthetic results database (`backend/tests/qds_fixture.py`) and a native API
+replacement for PowerFactory. A real PowerFactory 2026 run on Windows is still required; the mapping
+of ElmRes timestamps to outage windows is part of that acceptance.
 
-Die Übersicht „Outage Management“ zeigt die Herkunft der gespeicherten Ergebnisse:
-Modell/Projekt, Studie/Study Case und die tatsächlich vom nativen
-`powerfactory.__version__` gemeldete Build-Version. Neue Berechnungen speichern
-diesen Kontext zusammen mit Zeitraum, QDS-Kommando und verfügbaren Netz- und
-Betriebsszenarioangaben pro Szenario. Ein späterer Projektwechsel überschreibt
-diese Herkunft nicht. Bei Bestandsdaten bleiben nicht gespeicherte Angaben als
-„Nicht erfasst“ gekennzeichnet; Dummy-QDS verwendet keine PowerFactory-Version.
-
-Ein echter PowerFactory-2026-Lauf auf Windows ist noch erforderlich. Die Tests
-auf dem Mac verwenden Dummy-Ergebnisse und eine API-Nachbildung. Die fachliche
-Zuordnung der ElmRes-Zeitstempel zu Ausfallfenstern bleibt Teil der nativen Abnahme.
-
-[Big Picture mit Ablaufdiagrammen](BIG_PICTURE.md) ·
-[PowerFactory-Details](docs/POWERFACTORY.md) · [Validierung](docs/VALIDATION.md).
+More: [Big picture with diagrams](BIG_PICTURE.md) · [Deployment](docs/DEPLOYMENT.md) ·
+[PowerFactory details](docs/POWERFACTORY.md) · [Troubleshooting](backend/DEBUGGING.md).

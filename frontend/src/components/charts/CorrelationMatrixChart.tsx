@@ -56,7 +56,7 @@ export default function CorrelationMatrixChart({ data }: Props) {
       textStyle: { color: theme.text },
       formatter: (params: { value: [number, number, number | null] }) => {
         const [x, y, r] = params.value;
-        const rText = r == null ? 'keine Daten' : formatChartNumber(r);
+        const rText = r == null ? 'no data' : formatChartNumber(r);
         return `${labels[y]} vs ${labels[x]}<br/>r = <b>${rText}</b>`;
       },
     },
