@@ -13,6 +13,7 @@
  */
 
 export type ChartCategory =
+  | 'scenarioEvaluation'
   | 'timeseries'
   | 'distribution'
   | 'powerQuality'
@@ -22,6 +23,7 @@ export type ChartCategory =
   | 'dataQuality';
 
 export const CATEGORY_LABELS: Record<ChartCategory, string> = {
+  scenarioEvaluation: 'Szenarioauswertung',
   timeseries: 'Zeitreihen',
   distribution: 'Verteilung',
   powerQuality: 'Netzqualität',
@@ -33,6 +35,7 @@ export const CATEGORY_LABELS: Record<ChartCategory, string> = {
 
 /** Fixed display order of categories in the picker. */
 export const CATEGORY_ORDER: ChartCategory[] = [
+  'scenarioEvaluation',
   'timeseries',
   'distribution',
   'powerQuality',
@@ -43,9 +46,10 @@ export const CATEGORY_ORDER: ChartCategory[] = [
 ];
 
 /** How many source signals the template consumes. */
-export type SignalArity = 'one' | 'two' | 'three' | 'multi';
+export type SignalArity = 'none' | 'one' | 'two' | 'three' | 'multi';
 
 export const ARITY_LABELS: Record<SignalArity, string> = {
+  none: 'Alle Szenarien',
   one: 'Ein Signal',
   two: 'Zwei Signale',
   three: 'Drei Signale',
@@ -54,6 +58,11 @@ export const ARITY_LABELS: Record<SignalArity, string> = {
 
 /** Discriminator consumed by DynamicChartCard to pick the fetch + render path. */
 export type ChartKind =
+  // Across-scenarios evaluation (no signals needed; reads the saved scenario results):
+  | 'acrossLoading'
+  | 'acrossTime'
+  | 'acrossDelta'
+  | 'acrossLodf'
   | 'overlay'
   | 'aggTrend'
   | 'histogram'
@@ -109,6 +118,13 @@ export interface ChartTemplate {
    */
   componentLevel?: boolean;
   arity: SignalArity;
+  /**
+   * Evaluates the saved scenarios as a whole instead of selected signals: no source selection,
+   * the chart reads the scenario results itself (see components/across/AcrossChartBody).
+   */
+  scenarioLevel?: boolean;
+  /** Show the equipment-count and equipment-type options of the scenario evaluation charts. */
+  needsScenarioOptions?: boolean;
   /** Show a numeric threshold input in the config panel. */
   needsThreshold?: boolean;
   /** Show a configurable list of threshold levels. */
@@ -145,6 +161,51 @@ export interface ChartTemplate {
 }
 
 export const CHART_TEMPLATES: ChartTemplate[] = [
+  // -- Scenario evaluation: the saved outage scenarios compared as a whole ------
+  {
+    id: 'across-loading-range',
+    kind: 'acrossLoading',
+    name: 'Höchste Auslastung je Betriebsmittel',
+    question: 'Welche Betriebsmittel erreichen über alle Szenarien die höchste Auslastung (Base bis Maximum)?',
+    category: 'scenarioEvaluation',
+    measurements: [],
+    arity: 'none',
+    scenarioLevel: true,
+    needsScenarioOptions: true,
+  },
+  {
+    id: 'across-overload-time',
+    kind: 'acrossTime',
+    name: 'Überlastdauer (Overload Rate)',
+    question: 'Wie lange und wie stark sind Betriebsmittel im Simulationszeitraum überlastet?',
+    category: 'scenarioEvaluation',
+    measurements: [],
+    arity: 'none',
+    scenarioLevel: true,
+    needsScenarioOptions: true,
+  },
+  {
+    id: 'across-delta',
+    kind: 'acrossDelta',
+    name: 'Änderung der Auslastung',
+    question: 'Welche Betriebsmittel ändern ihre Auslastung durch eine Freischaltung am stärksten (pp gegenüber REF)?',
+    category: 'scenarioEvaluation',
+    measurements: [],
+    arity: 'none',
+    scenarioLevel: true,
+    needsScenarioOptions: true,
+  },
+  {
+    id: 'across-lodf',
+    kind: 'acrossLodf',
+    name: 'LODF und Änderung der Auslastung',
+    question: 'Wo treffen ein hoher LODF und eine große Mehrbelastung zusammen?',
+    category: 'scenarioEvaluation',
+    measurements: [],
+    arity: 'none',
+    scenarioLevel: true,
+    needsScenarioOptions: true,
+  },
   // -- Live templates (backed by existing API + chart components) ----------
   {
     id: 'timeseries-overlay',

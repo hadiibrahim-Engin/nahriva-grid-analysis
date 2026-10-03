@@ -43,7 +43,7 @@ export default function AcrossKpis({ kpis, scenarios, assessments }: Props) {
   const byId = new Map<string, ScenarioStats>(scenarios.map((s) => [s.scenario.id, s]));
   const where = (id: string | null) => {
     const stats = id ? byId.get(id) : undefined;
-    return stats ? `${stats.code} · ${stats.scenario.name}` : '';
+    return stats ? stats.code : '';
   };
   const place = (line: { name: string }, scenarioId: string | null) =>
     [line.name, where(scenarioId)].filter(Boolean).join(' · ');

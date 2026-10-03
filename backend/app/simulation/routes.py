@@ -15,6 +15,12 @@ class DatabaseRequest(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
 
 
+def writable():
+    """Read-only operation: in production visitors of the dashboard cannot change anything."""
+    if settings.PRODUCTION:
+        raise HTTPException(403, "Der Dashboard-Server arbeitet im Nur-Lese-Betrieb.")
+
+
 @router.get("/database")
 def database():
     return {"path": settings.ANALYSIS_DB_PATH}
@@ -22,6 +28,8 @@ def database():
 
 @router.post("/database")
 def change_database(body: DatabaseRequest):
+    if not settings.ALLOW_DB_SWITCH:
+        raise HTTPException(403, "Das Wechseln der Datenbank ist in diesem Betrieb deaktiviert.")
     try:
         return {"path": select_database(body.path.strip())}
     except ValueError as exc:
@@ -48,6 +56,7 @@ def capabilities():
     return {
         "mode": settings.ANALYSIS_MODE,
         "powerfactory_bridge": settings.ANALYSIS_MODE == "sqlite",
+        "database_switch": settings.ALLOW_DB_SWITCH,
     }
 
 
@@ -61,6 +70,25 @@ def overview(db=Depends(store)):
         "database_path": settings.ANALYSIS_DB_PATH,
         "mode": settings.ANALYSIS_MODE,
     }
+
+
+@router.get("/across-scenarios/index")
+def across_index(db=Depends(store)):
+    """Scenarios and what they switch off; reads no samples, so it answers at once on any database size."""
+    return across.scenario_index(db)
+
+
+@router.get("/across-scenarios/{scenario_id}/cells")
+def across_cells(
+    scenario_id: str,
+    over: list[float] = Query(list(across.DEFAULT_LIMITS), min_length=1, max_length=5),
+    db=Depends(store),
+):
+    """Reduced values of one scenario, loaded on demand and cached."""
+    result = across.scenario_cells(db, scenario_id, tuple(over))
+    if result is None:
+        raise HTTPException(404, "Szenario nicht gefunden.")
+    return result
 
 
 @router.get("/across-scenarios")
@@ -84,7 +112,7 @@ def scenario_profile(
     return result
 
 
-@router.post("/outage-management/sync", status_code=202)
+@router.post("/outage-management/sync", status_code=202, dependencies=[Depends(writable)])
 def sync(db=Depends(store)):
     if settings.ANALYSIS_MODE != "sqlite":
         raise HTTPException(409, "PowerFactory-Aufträge benötigen den SQLite-Modus.")
@@ -94,7 +122,7 @@ def sync(db=Depends(store)):
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.post("/scenarios", status_code=202)
+@router.post("/scenarios", status_code=202, dependencies=[Depends(writable)])
 def create_scenario(body: ScenarioRequest, db=Depends(store)):
     catalog = db.catalog()
     if settings.ANALYSIS_MODE != "sqlite" or not catalog:
@@ -133,7 +161,7 @@ def create_scenario(body: ScenarioRequest, db=Depends(store)):
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.post("/jobs/{job_id}/cancel")
+@router.post("/jobs/{job_id}/cancel", dependencies=[Depends(writable)])
 def cancel(job_id: str, db=Depends(store)):
     with db.db:
         changed = db.db.execute(
@@ -283,7 +311,7 @@ class ShareRequest(BaseModel):
     payload: dict
 
 
-@router.post("/shares")
+@router.post("/shares", dependencies=[Depends(writable)])
 def create_share(body: ShareRequest, db=Depends(store)):
     identifier = uuid.uuid4().hex
     encoded = json.dumps(body.payload)

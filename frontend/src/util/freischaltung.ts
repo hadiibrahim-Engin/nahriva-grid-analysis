@@ -26,6 +26,11 @@ export const EQUIPMENT_PLURAL: Record<EquipmentKind, string> = {
 /** One-letter marker next to a name; lines (the common case) get none. */
 export const EQUIPMENT_MARK: Record<EquipmentKind, string> = { line: '', transformer: 'T', other: '·' };
 
+/** Branch equipment of the chosen kind; 'all' keeps everything. */
+export function filterByEquipment<T extends { type: string }>(items: readonly T[], kind: 'all' | EquipmentKind): T[] {
+  return kind === 'all' ? [...items] : items.filter((item) => equipmentKind(item.type) === kind);
+}
+
 // -- Cause of a violation --------------------------------------------------------
 
 export type Cause = 'caused' | 'aggravated' | 'preexisting';

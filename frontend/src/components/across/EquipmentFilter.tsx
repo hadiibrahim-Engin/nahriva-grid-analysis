@@ -1,3 +1,4 @@
+import { useHelp } from './help';
 import { EQUIPMENT_PLURAL, type EquipmentKind } from '../../util/freischaltung';
 
 export type EquipmentFilterValue = 'all' | EquipmentKind;
@@ -8,6 +9,7 @@ export default function EquipmentFilter({ value, onChange, counts }: {
   onChange: (value: EquipmentFilterValue) => void;
   counts: Record<EquipmentKind, number>;
 }) {
+  const help = useHelp();
   const kinds = (Object.keys(counts) as EquipmentKind[]).filter((kind) => counts[kind] > 0);
   const total = kinds.reduce((sum, kind) => sum + counts[kind], 0);
   if (kinds.length < 2) return null;
@@ -20,7 +22,7 @@ export default function EquipmentFilter({ value, onChange, counts }: {
           {EQUIPMENT_PLURAL[kind]} {counts[kind]}
         </button>
       ))}
-      <span className="ab-filter__note">Die Freigabe-Bewertung berücksichtigt immer alle Betriebsmittel und Sammelschienen.</span>
+      {help && <span className="ab-filter__note">Die Freigabe-Bewertung berücksichtigt immer alle Betriebsmittel und Sammelschienen.</span>}
     </div>
   );
 }

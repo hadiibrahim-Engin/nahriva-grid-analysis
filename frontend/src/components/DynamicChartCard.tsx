@@ -41,6 +41,7 @@ import {
   type DSTData,
   type SeasonRadarData,
 } from '../api/client';
+import ScenarioOptions from './across/ScenarioOptions';
 import ErrorBoundary from './ErrorBoundary';
 import GeneratingLoader from './ui/GeneratingLoader';
 import ColorSwatchPicker from './ui/ColorSwatchPicker';
@@ -69,6 +70,7 @@ import {
 import { getTemplate, ARITY_LABELS, type ChartTemplate } from './charts/chartTemplates';
 import type { PeakDemandPeriod } from './charts/PeakDemandChart';
 
+const AcrossChartBody = lazy(() => import('./across/AcrossChartBody'));
 const TimeseriesChart = lazy(() => import('./charts/TimeseriesChart'));
 const TimeseriesHistogramChart = lazy(() => import('./charts/TimeseriesHistogramChart'));
 const HistogramCombinedChart = lazy(() => import('./charts/HistogramCombinedChart'));
@@ -172,7 +174,8 @@ function LiveConfigControls({
     || template.needsHistogramMode
     || template.needsBoxplotGroupBy
     || template.needsBoxplotMode
-    || template.needsCorrelationMethod;
+    || template.needsCorrelationMethod
+    || template.needsScenarioOptions;
 
   if (!hasControls) return null;
 
@@ -233,6 +236,15 @@ function LiveConfigControls({
               ))}
             </select>
           </label>
+        )}
+
+        {template.needsScenarioOptions && (
+          <ScenarioOptions
+            compact
+            topN={config.topN ?? 12}
+            equipment={config.equipment ?? 'all'}
+            onChange={(next) => patch(next)}
+          />
         )}
 
         {template.needsResolution && (
@@ -516,6 +528,7 @@ export default function DynamicChartCard({
 
   const missing = useMemo(() => {
     if (!template) return false;
+    if (template.scenarioLevel) return false;
     if (template.componentLevel) return presentSources.length === 0;
     if (template.arity === 'two') return !resolvedSources[0] || !resolvedSources[1];
     if (template.arity === 'three') return !resolvedSources[0] || !resolvedSources[1] || !resolvedSources[2];
@@ -707,6 +720,14 @@ export default function DynamicChartCard({
           .map((m) => MTYPE_LABELS[m] ?? m)
           .join(', ')}. Diese Auswertung benötigt sie für eine korrekte Berechnung.`}
       />
+    );
+  } else if (template.scenarioLevel) {
+    body = (
+      <ErrorBoundary label={template.name}>
+        <Suspense fallback={CHART_FALLBACK}>
+          <AcrossChartBody kind={template.kind} config={config} />
+        </Suspense>
+      </ErrorBoundary>
     );
   } else if (isFetchKind) {
     if (error) {

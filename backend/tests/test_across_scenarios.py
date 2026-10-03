@@ -123,3 +123,57 @@ def test_store_can_be_closed_from_another_thread(tmp_path):
     thread.start()
     thread.join()
     assert errors == []
+
+
+def test_index_reads_no_samples_and_cells_are_cached(tmp_path):
+    from app.simulation import across
+
+    store = ScenarioStore(str(create_dummy_database(tmp_path / "demo.sqlite3")))
+    statements = []
+    store.db.set_trace_callback(statements.append)
+    index = across.scenario_index(store)
+    assert len(index["scenarios"]) == 8 and index["has_lodf"]
+    assert not any("analysis_samples" in sql for sql in statements)  # nothing heavy for the overview
+    store.db.set_trace_callback(None)
+
+    across._CELLS_CACHE.hits = 0
+    first = across.scenario_cells(store, index["scenarios"][0]["id"])
+    again = across.scenario_cells(store, index["scenarios"][0]["id"])
+    assert again is first and across._CELLS_CACHE.hits == 1
+    assert across.scenario_cells(store, "missing") is None
+    store.close()
+
+
+def test_per_scenario_cells_compose_to_the_combined_payload(tmp_path):
+    from app.simulation import across
+
+    store = ScenarioStore(str(create_dummy_database(tmp_path / "demo.sqlite3")))
+    index = across.scenario_index(store)
+    parts = {s["id"]: across.scenario_cells(store, s["id"]) for s in index["scenarios"]}
+    # Merging the parts of only the first scenarios (progressive loading) keeps their order and values.
+    first_two = {k: v for k, v in list(parts.items())[:2]}
+    partial = across.merge_cells(index, first_two)
+    full = across.across_scenarios(store)
+    assert [s["id"] for s in partial["scenarios"]] == [s["id"] for s in index["scenarios"][:2]]
+    assert len(full["scenarios"]) == 8 and len(full["lines"]) == 10 and len(full["buses"]) == 3
+    line = next(item for item in full["lines"] if item["name"] == "Leitung Nord–Ost")
+    sid = next(s["id"] for s in full["scenarios"] if s["name"] == "Freischaltung Leitung Nord")
+    assert round(line["cells"][sid]["value"], 1) == 128.2 and line["base"] == 64.0
+    store.close()
+
+
+def test_lazy_endpoints_serve_index_and_cells(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.simulation import settings
+
+    path = create_dummy_database(tmp_path / "demo.sqlite3")
+    monkeypatch.setattr(settings, "ANALYSIS_MODE", "sqlite")
+    monkeypatch.setattr(settings, "ANALYSIS_DB_PATH", str(path))
+    with TestClient(app) as client:
+        index = client.get("/api/simulation/across-scenarios/index").json()
+        first = index["scenarios"][0]["id"]
+        cells = client.get(f"/api/simulation/across-scenarios/{first}/cells").json()
+        assert client.get("/api/simulation/across-scenarios/missing/cells").status_code == 404
+    assert cells["scenario_id"] == first and len(cells["lines"]) == 10 and len(cells["buses"]) == 3
+    assert "cell" in cells["lines"][0] and "ref_full" in cells["lines"][0]

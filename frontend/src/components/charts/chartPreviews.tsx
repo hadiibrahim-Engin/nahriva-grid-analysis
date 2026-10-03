@@ -488,6 +488,10 @@ function ComingSoonPreview() {
 type PreviewFn = () => React.JSX.Element;
 
 const PREVIEW_MAP: Record<ChartKind, PreviewFn> = {
+  acrossLoading:      PeakDemandPreview,
+  acrossTime:         ExceedancePreview,
+  acrossDelta:        PeakDemandPreview,
+  acrossLodf:         CorrelationScatterPreview,
   overlay:            OverlayPreview,
   aggTrend:           AggTrendPreview,
   histogram:          HistogramPreview,

@@ -60,6 +60,7 @@ import { fallbackGridTopology } from '../api/gridTopology';
 import { applyGridThemeMode, storedThemeMode, type ThemeMode } from '../util/theme';
 import AnimatedButton from '../components/ui/AnimatedButton';
 import OutageManagement from '../components/OutageManagement';
+import { CHART_TEMPLATES } from '../components/charts/chartTemplates';
 import { SectionCard } from '../components/across/shared';
 import AcrossScenarios from '../components/across/AcrossScenarios';
 import { openSection, type SummarySection } from '../util/acrossScenarios';
@@ -1746,7 +1747,7 @@ export default function DashboardPage() {
                           <path d="M12 8v8M8 12h8" />
                         </svg>
                         <span className="text-sm font-semibold">Diagramm hinzufügen</span>
-                        <span className="text-xs opacity-60">15 Analyse-Vorlagen aus 7 Kategorien</span>
+                        <span className="text-xs opacity-60">{CHART_TEMPLATES.filter((t) => !t.comingSoon).length} Analyse-Vorlagen aus {new Set(CHART_TEMPLATES.filter((t) => !t.comingSoon).map((t) => t.category)).size} Kategorien</span>
                       </button>
 
                     </SectionCard>

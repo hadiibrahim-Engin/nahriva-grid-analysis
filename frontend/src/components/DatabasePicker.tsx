@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Database } from 'lucide-react';
 import api, { clearCache } from '../api/client';
 import { clearLocalView } from '../util/shareView';
@@ -9,6 +9,13 @@ export default function DatabasePicker() {
   const [path, setPath] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // In network operation the database is fixed by the server; switching is only offered where it is allowed.
+  const [allowed, setAllowed] = useState(true);
+  useEffect(() => {
+    api.get<{ database_switch?: boolean }>('/capabilities')
+      .then((response) => setAllowed(response.data.database_switch !== false))
+      .catch(() => undefined);
+  }, []);
 
   async function open() {
     setError('');
@@ -38,6 +45,7 @@ export default function DatabasePicker() {
     }
   }
 
+  if (!allowed) return null;
   return <>
     <button type="button" className="db-circle" onClick={open} aria-label="Datenbank hinzufügen" aria-haspopup="dialog" title="Datenbank hinzufügen">
       <Database size={18} strokeWidth={1.9} aria-hidden />

@@ -29,6 +29,7 @@ def outage_key(outage_ids):
 class ScenarioStore:
     def __init__(self, path):
         Path(path).resolve().parent.mkdir(parents=True, exist_ok=True)
+        self.path = str(path)
         # One store per request or per script run; FastAPI may close it from another worker thread.
         self.db = sqlite3.connect(path, timeout=30, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
@@ -217,7 +218,7 @@ class ScenarioStore:
         jobs = [
             dict(row)
             for row in self.db.execute(
-                "SELECT id,kind,status,created_at,started_at,finished_at,message FROM pf_jobs ORDER BY created_at DESC LIMIT 20"
+                "SELECT id,kind,status,created_at,started_at,finished_at,message,json_extract(payload,'$.name') AS name FROM pf_jobs ORDER BY created_at DESC LIMIT 20"
             )
         ]
         scenarios = []

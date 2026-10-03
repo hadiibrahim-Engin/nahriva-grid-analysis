@@ -19,3 +19,8 @@ CORS_ORIGINS = [
 ]
 if ANALYSIS_MODE not in ("sqlite", "demo"):
     raise RuntimeError("ANALYSIS_MODE must be sqlite or demo.")
+
+# Production: the dashboard server runs next to the results database and is reachable in the network.
+PRODUCTION = APP_ENV == "production"
+# In production the dashboard is read-only for visitors: no switching of the database, no job queue.
+ALLOW_DB_SWITCH = os.getenv("OA_ALLOW_DB_SWITCH", "0" if PRODUCTION else "1") == "1"

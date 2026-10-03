@@ -1,6 +1,6 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import api from '../../api/client';
-import { SUMMARY_IDS, analyse, compareScenarioCriticality, summarySections, type AcrossData, type SummarySection } from '../../util/acrossScenarios';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { useAcrossData } from '../../hooks/useAcrossData';
+import { SUMMARY_IDS, analyse, compareScenarioCriticality, summarySections, type SummarySection } from '../../util/acrossScenarios';
 import { assessScenario, compareVerdict, equipmentKind, type EquipmentKind } from '../../util/freischaltung';
 import ErrorBoundary from '../ErrorBoundary';
 import EquipmentFilter, { type EquipmentFilterValue } from './EquipmentFilter';
@@ -10,34 +10,40 @@ import LineSummaryTable from './LineSummaryTable';
 import ScenarioDetails from './ScenarioDetails';
 import ScenarioOverview from './ScenarioOverview';
 import VoltageMatrix from './VoltageMatrix';
+import { HelpContext } from './help';
+import LazySection from './LazySection';
 import { SectionCard } from './shared';
 
 const AcrossCharts = lazy(() => import('./AcrossCharts'));
 const ScenarioRadar = lazy(() => import('./ScenarioRadar'));
 const ScenarioProfile = lazy(() => import('./ScenarioProfile'));
 
+const HELP_KEY = 'across-help';
+const readHelp = (): boolean => {
+  try { return localStorage.getItem(HELP_KEY) === '1'; } catch { return false; }
+};
+
 /**
- * Across-scenarios evaluation. Order follows the reading path: overall state
- * first (KPIs, scenario overview), then the charts, the lines × scenarios
- * heatmap, and finally the collapsible detail table and scenario details.
+ * Across-scenarios evaluation, ordered like an outage assessment: result and verdicts first (always
+ * loaded), then the chosen scenario, voltage, loading matrix, comparison and the reference table.
+ * Everything below the verdicts mounts only when it is scrolled near, and the data arrives scenario
+ * by scenario, so a very large database never blocks the first view.
  */
 export default function AcrossScenarios({ refreshKey, onSectionsChange }: {
   refreshKey: number;
   /** Reports the sections currently on screen, for the navigation bar. */
   onSectionsChange?: (sections: SummarySection[]) => void;
 }) {
-  const [data, setData] = useState<AcrossData | null>(null);
-  const [error, setError] = useState('');
+  const { data, total, shown, failed, loading, error } = useAcrossData(refreshKey);
   const [selected, setSelected] = useState<string | null>(null);
   const [kind, setKind] = useState<EquipmentFilterValue>('all');
-
-  useEffect(() => {
-    let active = true;
-    api.get<AcrossData>('/across-scenarios')
-      .then((response) => { if (active) { setData(response.data); setError(''); } })
-      .catch(() => { if (active) setError('Die Auswertung über alle Szenarien konnte nicht geladen werden.'); });
-    return () => { active = false; };
-  }, [refreshKey]);
+  const [help, setHelp] = useState(readHelp);
+  const toggleHelp = useCallback(() => {
+    setHelp((value) => {
+      try { localStorage.setItem(HELP_KEY, value ? '0' : '1'); } catch { /* storage unavailable: keep it for this visit */ }
+      return !value;
+    });
+  }, []);
 
   const buses = useMemo(() => data?.buses ?? [], [data]);
   // The assessment parts (key figures, verdicts, profile, details) always cover all equipment ...
@@ -74,48 +80,80 @@ export default function AcrossScenarios({ refreshKey, onSectionsChange }: {
   const selectedId = selected && full?.scenarios.some((s) => s.scenario.id === selected) ? selected : defaultId;
   const selectedScenario = full?.scenarios.find((s) => s.scenario.id === selectedId) ?? null;
 
-  if (error) return <p role="alert" className="mt-4 text-sm text-[var(--grid-danger)]">{error}</p>;
+  if (error && !data) return <p role="alert" className="mt-4 text-sm text-[var(--grid-danger)]">{error}</p>;
   if (!analysis || !full || full.scenarios.length === 0) {
-    return full ? (
-      <p className="mt-4 text-sm text-[var(--grid-muted)]">Noch keine berechneten Szenarien für die Auswertung über alle Szenarien.</p>
-    ) : null;
+    if (loading || (data && total > 0 && shown === 0 && failed < total)) {
+      return <p className="mt-4 text-sm text-[var(--grid-muted)]" aria-busy>Szenarien werden geladen …</p>;
+    }
+    return <p className="mt-4 text-sm text-[var(--grid-muted)]">Noch keine berechneten Szenarien.</p>;
   }
   const periodHours = data!.period_hours;
   return (
-    <div className="across-scope mt-4 grid gap-3" aria-label="Across-Scenarios-Auswertung">
-      {/* 1 · Result first: key figures and the verdict per scenario, always over all equipment */}
-      <SectionCard id={SUMMARY_IDS.kpis} title="Kennzahlen" summary={`${full.scenarios.length} Szenarien · ${full.lines.length} Betriebsmittel${buses.length ? ` · ${buses.length} Sammelschienen` : ''}`}>
-        <AcrossKpis kpis={full.kpis} scenarios={full.scenarios} assessments={assessments} />
-      </SectionCard>
-      <ScenarioOverview scenarios={full.scenarios} assessments={assessments} selectedId={selectedId} onSelect={setSelected} periodHours={periodHours} period={data!.period} />
-      {/* 2 · The chosen scenario in detail: when is it critical, what does it contain */}
-      {selectedScenario && (
-        <ErrorBoundary label="Belastungsverlauf">
-          <Suspense fallback={<div className="ab-empty" aria-busy>Verlauf wird geladen …</div>}>
-            <ScenarioProfile scenarioId={selectedScenario.scenario.id} label={`${selectedScenario.code} ${selectedScenario.scenario.name}`} refreshKey={refreshKey} />
-          </Suspense>
-        </ErrorBoundary>
-      )}
-      <ScenarioDetails scenarios={full.scenarios} selectedId={selectedId} onSelect={setSelected} />
-      {/* 3 · Voltage, then loading of all equipment across the scenarios */}
-      {buses.length > 0 && <VoltageMatrix buses={buses} scenarios={full.scenarios} selectedId={selectedId} onSelect={setSelected} />}
-      <EquipmentFilter value={kind} onChange={setKind} counts={kindCounts} />
-      <LineScenarioHeatmap lines={analysis.lines} scenarios={analysis.scenarios} selectedId={selectedId} onSelect={setSelected} />
-      {/* 4 · Comparison across the scenarios */}
-      <div id={SUMMARY_IDS.charts}>
-        <ErrorBoundary label="Auswertungsdiagramme">
-          <Suspense fallback={<div className="ab-empty" aria-busy>Diagramme werden geladen …</div>}>
-            <AcrossCharts lines={analysis.lines} scenarios={analysis.scenarios} periodHours={periodHours} hasLodf={data!.has_lodf} />
-          </Suspense>
-        </ErrorBoundary>
+    <HelpContext.Provider value={help}>
+      <div className="across-scope mt-4 grid gap-3" aria-label="Across-Scenarios-Auswertung">
+        <div className="ab-toolbar">
+          {loading && shown < total ? (
+            <div className="ab-progress" role="status" aria-live="polite">
+              <span className="ab-progress__bar" aria-hidden><span style={{ width: `${(shown / Math.max(total, 1)) * 100}%` }} /></span>
+              Szenarien {shown} / {total}
+            </div>
+          ) : failed > 0 ? (
+            <span className="ab-progress" role="status">{failed} von {total} Szenarien konnten nicht geladen werden.</span>
+          ) : <span />}
+          <button type="button" className="ab-chip" aria-pressed={help} onClick={toggleHelp} title="Erläuterungen zu allen Abschnitten ein- oder ausblenden">Erläuterungen</button>
+        </div>
+        {/* 1 · Result first: key figures and the verdict per scenario, always over all equipment */}
+        <SectionCard id={SUMMARY_IDS.kpis} title="Kennzahlen" summary={`${full.scenarios.length} Szenarien · ${full.lines.length} Betriebsmittel${buses.length ? ` · ${buses.length} Sammelschienen` : ''}`}>
+          <AcrossKpis kpis={full.kpis} scenarios={full.scenarios} assessments={assessments} />
+        </SectionCard>
+        <ScenarioOverview scenarios={full.scenarios} assessments={assessments} selectedId={selectedId} onSelect={setSelected} periodHours={periodHours} period={data!.period} />
+        {/* 2 · The chosen scenario in detail: when is it critical, what does it contain */}
+        {selectedScenario && (
+          <LazySection id={SUMMARY_IDS.profile} label="Belastungsverlauf" minHeight={160}>
+            <ErrorBoundary label="Belastungsverlauf">
+              <Suspense fallback={<div className="ab-empty" aria-busy>Verlauf wird geladen …</div>}>
+                <ScenarioProfile scenarioId={selectedScenario.scenario.id} label={`${selectedScenario.code} ${selectedScenario.scenario.name}`} refreshKey={refreshKey} />
+              </Suspense>
+            </ErrorBoundary>
+          </LazySection>
+        )}
+        <LazySection id={SUMMARY_IDS.details} label="Szenariodetails" minHeight={64}>
+          <ScenarioDetails scenarios={full.scenarios} selectedId={selectedId} onSelect={setSelected} />
+        </LazySection>
+        {/* 3 · Voltage, then loading of all equipment across the scenarios */}
+        {buses.length > 0 && (
+          <LazySection id={SUMMARY_IDS.voltage} label="Spannungshaltung" minHeight={120}>
+            <VoltageMatrix buses={buses} scenarios={full.scenarios} selectedId={selectedId} onSelect={setSelected} />
+          </LazySection>
+        )}
+        <LazySection id={SUMMARY_IDS.heatmap} label="Betriebsmittel × Szenario" minHeight={200}>
+          <div className="grid gap-3">
+            <EquipmentFilter value={kind} onChange={setKind} counts={kindCounts} />
+            <LineScenarioHeatmap lines={analysis.lines} scenarios={analysis.scenarios} selectedId={selectedId} onSelect={setSelected} />
+          </div>
+        </LazySection>
+        {/* 4 · Comparison across the scenarios */}
+        <LazySection id={SUMMARY_IDS.charts} label="Grafiken" minHeight={200}>
+          <div id={SUMMARY_IDS.charts}>
+            <ErrorBoundary label="Auswertungsdiagramme">
+              <Suspense fallback={<div className="ab-empty" aria-busy>Diagramme werden geladen …</div>}>
+                <AcrossCharts lines={analysis.lines} scenarios={analysis.scenarios} periodHours={periodHours} hasLodf={data!.has_lodf} />
+              </Suspense>
+            </ErrorBoundary>
+          </div>
+        </LazySection>
+        <LazySection id={SUMMARY_IDS.radar} label="Szenariovergleich · Radar" minHeight={120}>
+          <ErrorBoundary label="Szenario-Radarplot">
+            <Suspense fallback={<div className="ab-empty" aria-busy>Radarplot wird geladen …</div>}>
+              <ScenarioRadar scenarios={analysis.scenarios} selectedId={selectedId} onSelect={setSelected} />
+            </Suspense>
+          </ErrorBoundary>
+        </LazySection>
+        {/* 5 · Reference: every number */}
+        <LazySection id={SUMMARY_IDS.table} label="Detailtabelle" minHeight={64}>
+          <LineSummaryTable lines={analysis.lines} scenarios={analysis.scenarios} hasLodf={data!.has_lodf} periodHours={periodHours} />
+        </LazySection>
       </div>
-      <ErrorBoundary label="Szenario-Radarplot">
-        <Suspense fallback={<div className="ab-empty" aria-busy>Radarplot wird geladen …</div>}>
-          <ScenarioRadar scenarios={analysis.scenarios} selectedId={selectedId} onSelect={setSelected} />
-        </Suspense>
-      </ErrorBoundary>
-      {/* 5 · Reference: every number */}
-      <LineSummaryTable lines={analysis.lines} scenarios={analysis.scenarios} hasLodf={data!.has_lodf} periodHours={periodHours} />
-    </div>
+    </HelpContext.Provider>
   );
 }

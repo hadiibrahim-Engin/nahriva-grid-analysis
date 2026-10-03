@@ -135,17 +135,14 @@ export default function ScenarioOverview({ scenarios, assessments, selectedId, o
                   );
                 })}
               </span></td>
-              <td><span className="ab-ov__facts">
+              <td title={[
+                s.longestOverloadHours > 0 ? `Längste Überlastung ${fmtHours(s.longestOverloadHours)} (${fmtShare(periodHours > 0 ? s.longestOverloadHours / periodHours : 0)} des Zeitraums)` : 'keine Überlastung',
+                `Max Δ ${fmtPp(s.maxDelta)} · |LODF| ${fmtLodf(s.maxAbsLodf)}`,
+                `wirkt auf ${s.affected} Betriebsmittel (≥ ${ANALYSIS.affectedDeltaPp} pp)`,
+              ].join('\n')}><span className="ab-ov__facts">
                 {assess && <span><VerdictBadge verdict={assess.verdict} /></span>}
                 {assess?.reasons.slice(0, 2).map((reason) => <span key={reason} className="ab-ov__reason">{reason}</span>)}
                 <span>Max <strong className={`ab-text--${band}`}>{fmtPct(s.maxValue)}</strong>{s.maxLine ? ` · ${s.maxLine.name}` : ''}</span>
-                <span>
-                  {s.longestOverloadHours > 0
-                    ? <>Längste Überlastung <strong>{fmtHours(s.longestOverloadHours)}</strong> ({fmtShare(periodHours > 0 ? s.longestOverloadHours / periodHours : 0)})</>
-                    : s.n100 > 0 ? 'Überlastdauer nicht erfasst' : 'keine Überlastung'}
-                </span>
-                <span>Max Δ <strong>{fmtPp(s.maxDelta)}</strong> · |LODF| <strong>{fmtLodf(s.maxAbsLodf)}</strong></span>
-                <span>wirkt auf <strong>{s.affected}</strong> Betriebsmittel (≥ {ANALYSIS.affectedDeltaPp} pp)</span>
               </span></td>
             </tr>
           );

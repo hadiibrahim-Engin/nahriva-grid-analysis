@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import { SectionCard } from './across/shared';
 import { isSynthetic, provenancePeriod, resultContexts, type ResultProvenance, type ResultScenario } from '../util/resultProvenance';
-interface Overview { catalog: ResultProvenance | null; scenarios: ResultScenario[]; database_path: string; }
+interface Job { id: string; status: string; name?: string | null; message?: string }
+interface Overview { catalog: ResultProvenance | null; scenarios: ResultScenario[]; database_path: string; jobs?: Job[]; }
 export default function OutageManagement({ onResultsChanged }: { onResultsChanged: () => void }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState('');
@@ -26,7 +27,19 @@ export default function OutageManagement({ onResultsChanged }: { onResultsChange
   }, []);
   const catalog = overview?.catalog;
   const contexts = resultContexts(overview?.scenarios ?? [], catalog ?? null);
-  return <SectionCard title="Outage Management">
+  const first = contexts[0]?.provenance;
+  const summary = contexts.length
+    ? [`${overview?.scenarios.length ?? 0} Szenarien`, first?.project, first?.study_case].filter(Boolean).join(' · ')
+    : 'Noch keine Ergebnisse';
+  const running = overview?.jobs?.find((job) => job.status === 'running' || job.status === 'queued');
+  return <>
+    {running && (
+      <div className="ab-progress" role="status" aria-live="polite">
+        <span className="ab-live" aria-hidden />
+        PowerFactory berechnet{running.name ? `: ${running.name}` : ''}
+      </div>
+    )}
+  <SectionCard title="Outage Management" defaultOpen={false} summary={summary}>
     <p className="text-xs text-[var(--grid-muted)]">{contexts.length ? `${overview?.scenarios.length ?? 0} gespeicherte Freischaltszenarien · ${overview?.scenarios.length ? 'Herkunft der gespeicherten Ergebnisse' : 'Synchronisierter Berechnungskontext · noch keine Ergebnisse'}` : 'Noch keine Ergebnisse. Das PowerFactory-Skript startet die Berechnung und dieses Dashboard.'}</p>
     {contexts.map(({ provenance: p, count, lastResult }, index) => {
       const synthetic = isSynthetic(p);
@@ -56,5 +69,6 @@ export default function OutageManagement({ onResultsChanged }: { onResultsChange
     })}
     {overview?.database_path && <p className="mt-3 break-all text-[11px] text-[var(--grid-muted)]" title="Aktive Ergebnisdatenbank">Datenbank: {overview.database_path}</p>}
     {error && <p role="alert" className="mt-2 text-sm text-red-400">{error}</p>}
-  </SectionCard>;
+  </SectionCard>
+  </>;
 }

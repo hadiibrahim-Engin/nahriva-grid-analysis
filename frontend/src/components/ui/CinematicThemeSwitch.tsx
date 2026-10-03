@@ -86,13 +86,11 @@ export default function CinematicThemeSwitch({
         onClick={handleToggle}
         className={`relative flex items-center overflow-hidden rounded-full transition-colors duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--grid-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--grid-bg)] ${dims.track}`}
         style={{
-          background: isDark
-            ? 'linear-gradient(135deg, #07111d 0%, #172232 100%)'
-            : 'linear-gradient(135deg, #ffffff 0%, #dce7f2 100%)',
+          background: 'linear-gradient(135deg, var(--grid-header) 0%, var(--grid-control) 100%)',
           boxShadow: isDark
             ? 'inset 0 1px 4px rgba(0,0,0,0.72), 0 4px 12px rgba(0,0,0,0.22)'
             : 'inset 0 1px 4px rgba(91,110,130,0.24), 0 4px 12px rgba(15,23,42,0.1)',
-          border: isDark ? '1px solid rgba(58,78,105,0.82)' : '1px solid rgba(196,208,222,0.95)',
+          border: '1px solid var(--grid-border)',
         }}
         aria-label={isDark ? 'Helles Design aktivieren' : 'Dunkles Design aktivieren'}
         aria-checked={isDark}
@@ -103,7 +101,7 @@ export default function CinematicThemeSwitch({
           aria-hidden
           className={`absolute inset-0 flex items-center justify-between ${dims.pad}`}
           style={{
-            color: isDark ? 'rgba(191,219,254,0.7)' : 'rgba(59,75,94,0.58)',
+            color: 'var(--grid-muted)',
           }}
         >
           <Sun className={dims.icon} />
@@ -115,7 +113,7 @@ export default function CinematicThemeSwitch({
           className="pointer-events-none absolute inset-0 rounded-full"
           style={{
             background: isDark
-              ? 'radial-gradient(circle at 30% 20%, rgba(47,128,255,0.28), transparent 45%)'
+              ? 'radial-gradient(circle at 30% 20%, rgba(112,152,241,0.12), transparent 45%)'
               : 'radial-gradient(circle at 25% 15%, rgba(255,255,255,0.95), transparent 42%)',
           }}
         />
@@ -124,12 +122,12 @@ export default function CinematicThemeSwitch({
           className={`relative z-10 flex items-center justify-center overflow-hidden rounded-full ${dims.thumb}`}
           style={{
             background: isDark
-              ? 'linear-gradient(145deg, #2f80ff 0%, #1457c7 100%)'
-              : 'linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)',
+              ? 'linear-gradient(145deg, #4675bb 0%, #244c89 100%)'
+              : 'linear-gradient(145deg, var(--grid-surface) 0%, var(--grid-control-hover) 100%)',
             boxShadow: isDark
-              ? '0 0 14px rgba(47,128,255,0.55), 0 4px 10px rgba(0,0,0,0.36)'
+              ? '0 0 14px rgba(112,152,241,0.18), 0 4px 10px rgba(0,0,0,0.36)'
               : '0 4px 10px rgba(15,23,42,0.18), inset 0 1px 2px rgba(255,255,255,1)',
-            border: isDark ? '1px solid rgba(147,197,253,0.42)' : '1px solid rgba(255,255,255,0.95)',
+            border: isDark ? '1px solid rgba(112,152,241,0.35)' : '1px solid rgba(255,255,255,0.95)',
           }}
           animate={{ x: isDark ? dims.travel : 0 }}
           transition={shouldReduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 310, damping: 21 }}
@@ -150,9 +148,7 @@ export default function CinematicThemeSwitch({
                 style={{
                   width: 10,
                   height: 10,
-                  background: isDark
-                    ? 'radial-gradient(circle, rgba(147,197,253,0.42) 0%, rgba(147,197,253,0) 70%)'
-                    : 'radial-gradient(circle, rgba(251,191,36,0.44) 0%, rgba(251,191,36,0) 70%)',
+                  background: 'radial-gradient(circle, var(--grid-primary-soft) 0%, transparent 70%)',
                 }}
                 initial={{ scale: 0, opacity: 0 }}
                 animate={{ scale: isDark ? 5.5 : 7, opacity: [0, 1, 0] }}
@@ -164,7 +160,7 @@ export default function CinematicThemeSwitch({
           {isDark ? (
             <Moon className={`${dims.icon} relative z-10 text-white`} />
           ) : (
-            <Sun className={`${dims.icon} relative z-10 text-amber-500`} />
+            <Sun className={`${dims.icon} relative z-10 text-[var(--grid-warning-text)]`} />
           )}
         </motion.div>
       </motion.button>

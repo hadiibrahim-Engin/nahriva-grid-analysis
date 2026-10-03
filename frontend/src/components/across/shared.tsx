@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react';
 import { OPEN_SECTION_EVENT } from '../../util/acrossScenarios';
 import { LOADING_BANDS } from '../../config/loadingBands';
+import { useHelp } from './help';
 import type { AcrossScenario } from '../../util/acrossScenarios';
 
 export function SectionCard({ title, hint, actions, children, collapsible = true, defaultOpen = true, summary, id, className = '' }: {
@@ -18,6 +19,9 @@ export function SectionCard({ title, hint, actions, children, collapsible = true
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const bodyId = useId();
+  const help = useHelp();
+  const [hintOpen, setHintOpen] = useState(false);
+  const showHint = help || hintOpen;
   useEffect(() => {
     if (!id) return;
     const open = (event: Event) => { if ((event as CustomEvent<string>).detail === id) setOpen(true); };
@@ -28,7 +32,7 @@ export function SectionCard({ title, hint, actions, children, collapsible = true
   const heading = (
     <div className="min-w-0">
       <h3 className="across-card__title">{title}</h3>
-      {expanded && hint && <p className="across-card__hint">{hint}</p>}
+      {expanded && hint && showHint && <p className="across-card__hint">{hint}</p>}
       {!expanded && summary && <p className="across-card__hint">{summary}</p>}
     </div>
   );
@@ -41,7 +45,14 @@ export function SectionCard({ title, hint, actions, children, collapsible = true
             {heading}
           </button>
         ) : heading}
-        {expanded && actions && <div className="across-card__actions">{actions}</div>}
+        {expanded && (hint || actions) && (
+          <div className="across-card__actions">
+            {hint && (
+              <button type="button" className="ab-info" aria-pressed={showHint} disabled={help} title="Erläuterung ein- oder ausblenden" aria-label={`Erläuterung zu ${title}`} onClick={() => setHintOpen((v) => !v)}>i</button>
+            )}
+            {actions}
+          </div>
+        )}
       </header>
       <div id={bodyId} hidden={!expanded}>{expanded && children}</div>
     </section>

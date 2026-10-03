@@ -26,3 +26,7 @@ output/
 .playwright-cli/
 coverage/
 backend/data/
+
+backend/.env
+release/
+outage-assessment.config.json

@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as echarts from 'echarts/core';
 import { LineChart } from 'echarts/charts';
-import { GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from 'echarts/components';
+import { GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import api from '../../api/client';
 import ReactECharts from '../charts/ReactECharts';
 import { useChartTheme } from '../../hooks/useChartTheme';
-import { LOADING_LIMITS } from '../../config/loadingBands';
 import { escapeHtml, readAcrossColors, withAlpha } from '../../util/acrossColors';
 import { SUMMARY_IDS, fmtPct } from '../../util/acrossScenarios';
 import { SectionCard } from './shared';
 
-echarts.use([LineChart, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([LineChart, GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent, CanvasRenderer]);
 
 interface Profile {
   scenario_id: string;
@@ -86,13 +85,6 @@ export default function ScenarioProfile({ scenarioId, label, refreshKey }: { sce
               itemStyle: { color: withAlpha(colors.lodf, theme.isLight ? 0.08 : 0.14) },
               label: { show: true, position: 'insideTopLeft', color: theme.mutedText, fontSize: 10, formatter: 'Freischaltung' },
               data: profile.windows.map(([a, b]) => [{ xAxis: a * 1000 }, { xAxis: b * 1000 }]),
-            },
-            markLine: {
-              silent: true, symbol: 'none', label: { position: 'insideEndTop', color: theme.mutedText, fontSize: 10 },
-              data: [
-                { yAxis: LOADING_LIMITS.overload, label: { formatter: '100 %' }, lineStyle: { color: colors.bands.severe, type: 'dashed', width: 1.2 } },
-                { yAxis: LOADING_LIMITS.warning, label: { formatter: '80 %' }, lineStyle: { color: colors.bands.high, type: 'dotted', width: 1 } },
-              ],
             },
           } : {}),
         };

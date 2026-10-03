@@ -71,9 +71,9 @@ const scenarioName = (scenarios: ScenarioStats[], id: string | null) => {
 };
 
 /** Base → maximum loading per line on top of the loading bands. */
-function LoadingRangeChart({ lines, scenarios }: { lines: LineStats[]; scenarios: ScenarioStats[] }) {
+export function LoadingRangeChart({ lines, scenarios, top = TOP }: { lines: LineStats[]; scenarios: ScenarioStats[]; top?: number }) {
   const { theme, colors } = useAcrossTheme();
-  const rows = useMemo(() => [...lines].filter((s) => s.max !== null).sort((a, b) => b.priority - a.priority).slice(0, TOP), [lines]);
+  const rows = useMemo(() => [...lines].filter((s) => s.max !== null).sort((a, b) => b.priority - a.priority).slice(0, top), [lines, top]);
   const option = useMemo(() => {
     const names = rows.map((r) => r.line.name);
     const max = Math.ceil(Math.max(LOADING_LIMITS.severe + 10, ...rows.map((r) => (r.max ?? 0) + 8)) / 10) * 10;
@@ -111,11 +111,6 @@ function LoadingRangeChart({ lines, scenarios }: { lines: LineStats[]; scenarios
               { xAxis: bounds[i + 1] },
             ]),
           },
-          markLine: {
-            silent: true, symbol: 'none', label: { show: false },
-            lineStyle: { color: colors.bands.severe, type: 'dashed', width: 1 },
-            data: [{ xAxis: LOADING_LIMITS.overload }],
-          },
         },
         {
           type: 'bar', stack: 'range', barWidth: 6,
@@ -142,9 +137,9 @@ function LoadingRangeChart({ lines, scenarios }: { lines: LineStats[]; scenarios
 }
 
 /** Time above the limits, as share of the simulation period (worst scenario per line). */
-function OverloadTimeChart({ lines, scenarios, periodHours }: { lines: LineStats[]; scenarios: ScenarioStats[]; periodHours: number }) {
+export function OverloadTimeChart({ lines, scenarios, periodHours, top = TOP }: { lines: LineStats[]; scenarios: ScenarioStats[]; periodHours: number; top?: number }) {
   const { theme, colors } = useAcrossTheme();
-  const rows = useMemo(() => [...lines].filter((s) => s.overloadHours > 0).sort((a, b) => b.overloadHours - a.overloadHours).slice(0, TOP), [lines]);
+  const rows = useMemo(() => [...lines].filter((s) => s.overloadHours > 0).sort((a, b) => b.overloadHours - a.overloadHours).slice(0, top), [lines, top]);
   const option = useMemo(() => {
     const names = rows.map((r) => r.line.name);
     const pct = (h: number) => (periodHours > 0 ? (h / periodHours) * 100 : 0);
@@ -191,9 +186,9 @@ function OverloadTimeChart({ lines, scenarios, periodHours }: { lines: LineStats
 }
 
 /** Largest changes of loading against REF in the same window, both directions. */
-function DeltaChart({ lines, scenarios }: { lines: LineStats[]; scenarios: ScenarioStats[] }) {
+export function DeltaChart({ lines, scenarios, top = TOP }: { lines: LineStats[]; scenarios: ScenarioStats[]; top?: number }) {
   const { theme, colors } = useAcrossTheme();
-  const rows = useMemo(() => [...lines].filter((s) => s.maxDelta !== null).sort((a, b) => Math.abs(b.maxDelta ?? 0) - Math.abs(a.maxDelta ?? 0)).slice(0, TOP), [lines]);
+  const rows = useMemo(() => [...lines].filter((s) => s.maxDelta !== null).sort((a, b) => Math.abs(b.maxDelta ?? 0) - Math.abs(a.maxDelta ?? 0)).slice(0, top), [lines, top]);
   const option = useMemo(() => {
     const names = rows.map((r) => r.line.name);
     const limit = Math.max(10, ...rows.map((r) => Math.abs(r.maxDelta ?? 0))) * 1.25;
@@ -234,7 +229,7 @@ function DeltaChart({ lines, scenarios }: { lines: LineStats[]; scenarios: Scena
 }
 
 /** Every line × scenario as a point: |LODF| against the change of loading, coloured by band. */
-function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; scenarios: ScenarioStats[]; hasLodf: boolean }) {
+export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; scenarios: ScenarioStats[]; hasLodf: boolean }) {
   const { theme, colors } = useAcrossTheme();
   const points = useMemo(() => {
     const result: { x: number; y: number; value: number; line: string; scenario: string; band: BandId }[] = [];

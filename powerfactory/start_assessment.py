@@ -1,6 +1,16 @@
-"""External ComPython script: calculate named outage scenarios, then open dashboard."""
+"""External ComPython script: the one script to run in PowerFactory.
+
+It starts the dashboard server (or reuses the one that already runs), then calculates the outage
+scenarios one after another and saves them in the results database next to it. The dashboard shows
+every scenario as soon as it is saved, also on other PCs in the network (open the printed address in
+a browser). Later, the saved results stay available: the server keeps serving the database, with or
+without PowerFactory (see docs/DEPLOYMENT.md for the permanent Autostart).
+
+Settings: constants below or outage-assessment.config.json in the project folder (database, host, port).
+"""
 
 from pathlib import Path
+import shutil
 import sys
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -8,7 +18,8 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 DATABASE_DIRECTORY = PROJECT_DIR / "backend/data"
 DATABASE_NAME = "outage-assessment.sqlite3"
 DASHBOARD_PYTHON = None  # default: backend/.venv/Scripts/python.exe
-DASHBOARD_PORT = 0  # 0 chooses an unused local port
+DASHBOARD_HOST = "0.0.0.0"  # reachable from other PCs; "127.0.0.1" = only this PC
+DASHBOARD_PORT = 8765  # fixed, so the address can be bookmarked; 0 chooses a free port
 OPEN_BROWSER = True
 
 # None: one scenario per eligible Planned Outage, using its exact loc_name.
@@ -21,6 +32,7 @@ SCENARIOS = None
 sys.path.insert(0, str(PROJECT_DIR / "powerfactory"))
 sys.path.insert(0, str(PROJECT_DIR / "scripts"))
 import analysis_worker as worker
+import appconfig
 from dashboard_launcher import launch_dashboard, validate_installation
 
 
@@ -85,6 +97,44 @@ def run_assessment(app, database_path, definitions=None):
     return [s["name"] for s in plan]
 
 
+def preflight(database):
+    """Fail early, in plain words, before an hours-long calculation starts."""
+    database.parent.mkdir(parents=True, exist_ok=True)
+    probe = database.parent / ".write-test"
+    try:
+        probe.write_text("ok")
+        probe.unlink()
+    except OSError as exc:
+        raise RuntimeError("Der Datenbankordner ist nicht beschreibbar: " + str(database.parent) + " (" + str(exc) + ")") from None
+    free_gb = shutil.disk_usage(database.parent).free / 1e9
+    if free_gb < 2:
+        raise RuntimeError(f"Zu wenig freier Speicher im Datenbankordner: {free_gb:.1f} GB.")
+    return free_gb
+
+
+def start_dashboard(app, database, config):
+    """Start (or reuse) the dashboard server; a problem here must not waste the calculation."""
+    try:
+        dashboard = launch_dashboard(
+            database,
+            host=config["host"],
+            port=config["port"],
+            python=DASHBOARD_PYTHON,
+            open_browser=OPEN_BROWSER,
+            reuse=True,
+            production=config["production"],
+        )
+    except Exception as exc:
+        app.PrintPlain("[Outage Assessment][WARN] Dashboard nicht gestartet: " + str(exc))
+        return None
+    app.PrintPlain("[Outage Assessment] Dashboard " + ("läuft bereits" if dashboard["reused"] else "gestartet") + ": " + dashboard["url"])
+    for url in dashboard["lan_urls"]:
+        app.PrintPlain("[Outage Assessment] Von anderen PCs im Netz: " + url)
+    for note in dashboard["notes"]:
+        app.PrintPlain("[Outage Assessment][HINWEIS] " + note)
+    return dashboard
+
+
 def main():
     import powerfactory
 
@@ -100,24 +150,18 @@ def main():
         raise ValueError(
             "DATABASE_NAME muss ein Dateiname sein; den Ordner über DATABASE_DIRECTORY angeben."
         )
-    database = directory / DATABASE_NAME
-    validate_installation(python=DASHBOARD_PYTHON)
+    config = appconfig.load(
+        PROJECT_DIR, database=directory / DATABASE_NAME, host=DASHBOARD_HOST, port=DASHBOARD_PORT
+    )
+    database = config["database"]
     try:
+        validate_installation(python=DASHBOARD_PYTHON)
+        free = preflight(database)
+        worker.ScenarioStore(str(database)).close()  # the dashboard needs the file before the first result
+        app.PrintPlain(f"[Outage Assessment] Datenbank: {database} ({free:.0f} GB frei)")
+        start_dashboard(app, database, config)
         names = run_assessment(app, database, SCENARIOS)
-        dashboard = launch_dashboard(
-            database,
-            port=DASHBOARD_PORT,
-            python=DASHBOARD_PYTHON,
-            open_browser=OPEN_BROWSER,
-        )
-        app.PrintPlain(
-            "[Outage Assessment] "
-            + str(len(names))
-            + " Szenarien gespeichert: "
-            + str(database)
-        )
-        app.PrintPlain("[Outage Assessment] Dashboard: " + dashboard["url"])
-        app.PrintPlain("[Outage Assessment] Server-PID: " + str(dashboard["pid"]))
+        app.PrintPlain("[Outage Assessment] " + str(len(names)) + " Szenarien gespeichert. Das Dashboard zeigt sie bereits.")
     except BaseException as exc:
         app.PrintPlain("[Outage Assessment][ERROR] " + str(exc))
         raise

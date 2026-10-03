@@ -4,7 +4,8 @@
 
 Ein Nutzer startet Outage Assessment lokal auf seiner PowerFactory-VM. Das
 ComPython-Skript berechnet Freischaltszenarien und speichert ihre Ergebnisse in
-SQLite. Das Dashboard zeigt diese Ergebnisse mit den übernommenen
+SQLite. Das Dashboard zeigt diese Ergebnisse als Zusammenfassung mit
+Freigabe-Bewertung je Szenario und, auf Wunsch, mit den übernommenen
 DashB-Diagrammen. Es gibt keine Anmeldung, keine Benutzerverwaltung, keinen
 Dashboard-Footer und keinen Datumsfilter für die Plots.
 
@@ -38,10 +39,14 @@ flowchart LR
 | `backend/app/simulation/data.py` | Rohreihen, explizite Aggregation und Analysen |
 | `frontend/src/pages/DashboardPage.tsx` | Auswahl von Szenario/Betriebsmittel/Messgröße und vollständige Ergebnisreihen |
 | `frontend/src/components/OutageManagement.tsx` | Kopf des Abschnitts: Projekt, Szenarioanzahl, Datenbankpfad |
-| `frontend/src/components/across/` | Zusammenfassung über alle Szenarien: KPIs, Szenarienübersicht, Diagramme, Heatmap, aufklappbare Tabelle und Szenariodetails |
+| `frontend/src/components/across/` | Zusammenfassung: Kennzahlen, Bewertung, Verlauf, Spannung, Matrix, Grafiken, Radar, Tabelle, Details |
+| `frontend/src/hooks/useAcrossData.ts`, `util/acrossLoad.ts` | Laden in Teilen: Index zuerst, dann Szenario für Szenario |
+| `frontend/src/components/across/LazySection.tsx` | Hängt einen Abschnitt erst ein, wenn er nahe ins Bild kommt |
+| `frontend/src/util/freischaltung.ts`, `config/assessment.ts` | Verursachung, Spannungsband und Freigabe-Urteil mit Kriterien |
 | `frontend/src/config/loadingBands.ts` | Zentrale Auslastungsbänder und Schwellen |
-| `backend/app/simulation/across.py` | Lesende Aggregation je Leitung und Szenario |
+| `backend/app/simulation/across.py` | Lesende Aggregation: Index, Werte je Szenario (zwischengespeichert), Verlauf |
 | `powerfactory/lodf.py` | LODF aus DC-Lastflüssen vor der ersten Simulation |
+| `docs/ASSESSMENT.md` | Definitionen, Kriterien, API und Anpassung der Auswertung |
 | `scripts/seed_dummy_qds.py` | Kleine synthetische QDS-Datenbank für Mac-Tests erzeugen |
 | `start-demo.command` | Mac-Test per Doppelklick oder Terminal starten |
 
@@ -64,7 +69,8 @@ flowchart TD
     Discover --> Validate[Alle Szenarionamen und Ausfallreferenzen prüfen]
     Validate --> Valid{Plan gültig?}
     Valid -->|Nein| Stop[Fehler anzeigen, keine native Rechnung]
-    Valid -->|Ja| Next[Nächstes benanntes Szenario]
+    Valid -->|Ja| Lodf[LODF je Szenario aus DC-Lastflüssen berechnen und in pf_lodf speichern]
+    Lodf --> Next[Nächstes benanntes Szenario]
     Next --> Job[Katalog veröffentlichen und Auftrag anlegen]
     Job --> Calc[Worker berechnet REF und OUTAGE]
     Calc --> Saved{Wiederherstellung und Import erfolgreich?}
@@ -74,6 +80,10 @@ flowchart TD
     More -->|Nein| Launch[Dashboard für diese SQLite-Datei starten]
     Launch --> View[Browser mit gespeicherten Szenarien öffnen]
 ```
+
+Die LODF-Berechnung läuft einmal vor der ersten Simulation und stellt jeden geänderten
+Zustand verifiziert wieder her. Schlägt sie fehl, folgt eine Warnung; die Szenarien laufen
+trotzdem.
 
 Bereits erfolgreich gespeicherte Szenarien bleiben erhalten, falls eine spätere
 Berechnung fehlschlägt. Jeder erneute Batch erzeugt neue Ergebnisläufe mit eigenen
@@ -252,28 +262,98 @@ abgeschnitten. Die native ElmRes-Auslese begrenzt ein Resultat auf 35.040 Zeilen
 die Simulation-API akzeptiert bis 200.000 Rohwerte je Auswahl und paginiert
 mit maximal 50.000 Werten je Seite.
 
-## 6. Dashboard-Prozess starten
+## 6. Auswertung über alle Szenarien
+
+Die Zusammenfassung ist die Standardansicht. Sie liest nur und verändert weder Berechnung noch
+Ergebnisse. Details und Definitionen: [docs/ASSESSMENT.md](docs/ASSESSMENT.md).
+
+### Laden in Teilen (große Datenbanken)
+
+```mermaid
+sequenceDiagram
+    participant UI as Dashboard
+    participant API as Simulation-API
+    participant DB as SQLite
+    UI->>API: GET across-scenarios/index
+    API->>DB: Szenarien und Ausfälle, keine Samples
+    API-->>UI: Index sofort
+    loop je Szenario, 3 gleichzeitig
+        UI->>API: GET across-scenarios/id/cells
+        API->>DB: Gruppierte Abfragen REF und OUTAGE, Spannung
+        API-->>UI: Reduzierte Werte, im Server zwischengespeichert
+        UI->>UI: Szenario in fester Reihenfolge anzeigen
+    end
+    UI->>UI: Abschnitte unterhalb der Bewertung erst beim Scrollen einhängen
+    UI->>API: GET across-scenarios/id/profile nur für das gewählte Szenario
+```
+
+Gespeicherte Szenarien ändern sich nie; ein Auffrischen lädt daher nur neue nach. Die Codes
+S01, S02 … bleiben stabil, weil Szenarien nur als Präfix der Reihenfolge erscheinen.
+
+### Freigabe-Urteil
 
 ```mermaid
 flowchart TD
-    DB[Ergebnisdatenbank angegeben] --> Check[Backend-Python und frontend/dist prüfen]
-    Check --> Port[Freien localhost-Port bestimmen]
-    Port --> Env[ANALYSIS_DB_PATH auf exakt diese Datei setzen]
-    Env --> Spawn[Uvicorn als eigenen Prozess starten]
-    Spawn --> Ready[Readiness pollen und Datenbankpfad abgleichen]
-    Ready --> OK{Server bereit und richtige DB?}
-    OK -->|Nein| Stop[Prozess stoppen, Logdatei melden]
-    OK -->|Ja| Record[URL und PID neben Datenbank speichern]
-    Record --> Open[Browser öffnen]
+    Cell[Betriebsmittel im Ausfallfenster: Szenariowert gegen REF] --> Over{Über 100 % bzw. Spannungsband verlassen?}
+    Over -->|Nein| Soft{Reserve unter 5 pp, Warnbereich neu oder Spannung nahe der Grenze?}
+    Over -->|Ja| Cause{REF im selben Fenster ebenfalls verletzt?}
+    Cause -->|Nein| Bad[verursacht]
+    Cause -->|Ja, mindestens 2 pp höher| Worse[verschärft]
+    Cause -->|Ja, unverändert| Pre[Vorbelastung]
+    Bad --> No[Nicht zulässig]
+    Worse --> No
+    Pre --> Cond[Bedingt zulässig]
+    Soft -->|Ja| Cond
+    Soft -->|Nein| Ok[Zulässig]
 ```
 
-Der HTTP-Prozess bindet an `127.0.0.1`. Der Standardport `0` bedeutet automatische
-Portwahl. Neben der Datenbank entstehen `<name>.dashboard.log` und
-`<name>.dashboard.json` mit URL und PID. Der native Dashboard-Prozess läuft nach
-Ende des ComPython-Skripts weiter. Er kann über seine PID beendet werden. Der
-Mac-Starter hält dagegen sein Terminal offen und beendet seinen Server bei Ctrl+C.
+Bewertet werden Leitungen und Transformatoren nach Auslastung, Sammelschienen nach Spannung
+(Band 0,90 bis 1,10 p.u. zentral konfiguriert). Das Urteil ist eine Entscheidungshilfe, keine
+Freigabe; die Kriterien stehen in `frontend/src/config/assessment.ts`.
 
-## 7. Mac-Test ohne PowerFactory
+### Lesereihenfolge und Text
+
+Kennzahlen, Bewertung, Verlauf und Szenariodetails, Spannung, Matrix, Vergleichsgrafiken und
+Radar, zuletzt die Detailtabelle. Eine Navigationsleiste folgt dieser Reihenfolge. Erklärende
+Texte sind aus; **i** an einer Karte oder **Erläuterungen** blendet sie ein. Zeitreihen-Overlay,
+Heatmap und Peak Demand sind optionale Ansichten unter der Zusammenfassung.
+
+## 7. Produktiver Betrieb und Dashboard-Prozess
+
+Alles liegt auf dem PowerFactory-PC: Skript, Ergebnisdatenbank und Dashboard-Server. Andere PCs
+brauchen nur einen Browser. Einrichtung und Wartung: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+```mermaid
+flowchart TD
+    Run[start_assessment.py in PowerFactory] --> Pre[Prüfen: Installation, Ordner beschreibbar, Speicher]
+    Pre --> Cfg[outage-assessment.config.json: Datenbank, Host, Port]
+    Cfg --> Reuse{Läuft ein Server für diese Datenbank?}
+    Reuse -->|Ja| Keep[Wiederverwenden]
+    Reuse -->|Nein| Start[Server starten: Nur-Lese-Betrieb, im Netz erreichbar]
+    Keep --> Calc[Szenarien nacheinander berechnen und speichern]
+    Start --> Calc
+    Calc --> Live[Dashboard zeigt jedes Szenario sofort, auch auf anderen PCs]
+    Auto[Autostart serve.py bei Anmeldung] -.hält Server dauerhaft bereit.-> Reuse
+```
+
+- **Konfiguration:** `scripts/appconfig.py` liest Umgebung, dann `outage-assessment.config.json`, dann
+  die Standardwerte. Skript und Autostart nutzen dieselbe Datei und damit dieselbe Datenbank.
+- **Server:** `scripts/dashboard_launcher.py` startet ihn aus dem Skript (fester Port 8765, bei Belegung
+  durch einen anderen Server ein freier Port mit Hinweis, laufender Server wird wiederverwendet, vom
+  PowerFactory-Prozess gelöst). `scripts/serve.py` ist derselbe Server als Dauerprozess mit rotierendem
+  Log; `deploy/windows/install.ps1` richtet Umgebung, Firewall-Regel (nur lokales Netz) und Autostart ein.
+- **Nur-Lese-Betrieb im Netz:** Ist der Host nicht `127.0.0.1`, läuft das Backend mit `APP_ENV=production`:
+  kein Wechsel der Datenbank, keine Aufträge, kein Speichern von Ansichten; zusätzliche
+  Schutz-Header. Das Dashboard hat keine Anmeldung und gehört nur ins interne Netz.
+- **Datenbank:** Das Skript schreibt, der Server liest, beide auf demselben PC über SQLite mit WAL.
+  Die Datei wird nie über eine Netzfreigabe geöffnet.
+- **Live-Anzeige:** Die Oberfläche liest den Jobstatus der Datenbank und zeigt „PowerFactory berechnet: …“
+  und lädt neue Szenarien nach, sobald sie gespeichert sind.
+- **Paket:** `scripts/package_release.py` baut ein ZIP mit Backend, fertigem Frontend, Skripten, Installer
+  und Doku, ohne Datenbanken, Logs und lokale Konfiguration.
+- **Mac-Entwicklung:** `start-demo.command` bindet weiterhin nur an `127.0.0.1` und hält das Terminal offen.
+
+## 8. Mac-Test ohne PowerFactory
 
 ```mermaid
 flowchart TD
@@ -283,7 +363,7 @@ flowchart TD
     Seed --> Exists{Datenbank schon befüllt?}
     Exists -->|Eigene Dummy-Version| Reuse[Vorhandene Testdaten wiederverwenden]
     Exists -->|Fremde Ergebnisse| Abort[Abbrechen, andere Datenbankdatei wählen]
-    Exists -->|Leer| Generate[Sechs benannte Szenarien: je REF und OUTAGE, dazu synthetische LODF]
+    Exists -->|Leer| Generate[Acht benannte Szenarien: je REF und OUTAGE, dazu synthetische LODF]
     Generate --> Store[672 Zeitpunkte pro Messreihe speichern]
     Store --> Launch[Lokales Dashboard starten]
     Reuse --> Launch
@@ -291,14 +371,15 @@ flowchart TD
     Browser --> Stop[Ctrl+C beendet den eigenen Server]
 ```
 
-Die Testdaten enthalten Leitungen, einen Transformator, Sammelschienen,
-Auslastungen, Spannungen sowie P/Q/Strom. Ausfallbedingte Unterschiede entstehen
+Die Testdaten enthalten acht Leitungen, zwei Transformatoren, drei Sammelschienen,
+Auslastungen, Spannungen (Band 0,90 bis 1,10 p.u.) sowie P/Q/Strom. Sie decken alle drei
+Urteile ab: zulässig, bedingt und nicht zulässig, auch durch Unter- und Überspannung. Ausfallbedingte Unterschiede entstehen
 nur in den jeweiligen Dummy-Ausfallfenstern. Sie sind synthetisch und werden als
 `Dummy QDS (synthetic)` gespeichert. Standarddatei:
 `backend/data/outage-assessment-demo.sqlite3`. Der echte PF-Standard verwendet
 `backend/data/outage-assessment.sqlite3`.
 
-## 8. Tests und reale Abnahme
+## 9. Tests und reale Abnahme
 
 ### Lokale Datenbank wechseln
 

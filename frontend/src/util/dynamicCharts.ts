@@ -28,6 +28,9 @@ export interface DynamicChartConfig {
   /** Ordered source series keys. [0] = primary, [1] = secondary (two-signal). */
   sourceKeys: string[];
   threshold?: number;
+  /** Scenario evaluation charts: how many equipment items to show, and of which kind. */
+  topN?: number;
+  equipment?: 'all' | 'line' | 'transformer';
   /** Multiple warning/exceedance levels rendered as constant reference lines. */
   thresholdLevels?: number[];
   /** Display names for thresholdLevels, matched by index before sorting. */

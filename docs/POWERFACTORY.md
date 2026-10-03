@@ -1,15 +1,14 @@
 # PowerFactory: Outage Assessment
 
-Der normale Einstieg ist das externe ComPython-Skript
-`powerfactory/start_assessment.py`. Datenbankordner und Dateiname werden dort
-mit `DATABASE_DIRECTORY` und `DATABASE_NAME` gesetzt. `SCENARIOS=None` bedeutet
-ein Szenario pro auswertbarem Planned Outage unter seinem vorhandenen Namen.
-Eine Liste mit `name` und `outages` definiert eigene Kombinationen. Sämtliche
-Referenzen und Namen werden vor dem ersten Rechenlauf geprüft.
+Der Einstieg ist das externe ComPython-Skript `powerfactory/start_assessment.py`, das einzige Skript,
+das in PowerFactory ausgeführt wird. Es startet bzw. nutzt den Dashboard-Server, berechnet die
+Szenarien nacheinander und speichert jedes sofort in die Ergebnisdatenbank, die das Dashboard (auch
+von anderen PCs im Netz) live anzeigt. `SCENARIOS=None` bedeutet ein Szenario pro auswertbarem
+Planned Outage unter seinem vorhandenen Namen; eine Liste mit `name` und `outages` definiert eigene
+Kombinationen. Alle Referenzen und Namen werden vor dem ersten Rechenlauf geprüft. Datenbank,
+Adresse und Port: `outage-assessment.config.json`; Betrieb: [DEPLOYMENT.md](DEPLOYMENT.md).
 
-Start, Ende, Schrittweite, Profile und Ergebnisvariablen stammen aus dem aktiven
-`ComStatsim`. Das Script verarbeitet die Szenarien nacheinander und öffnet am
-Ende Outage Assessment für exakt die konfigurierte SQLite-Datei.
+Start, Ende, Schrittweite, Profile und Ergebnisvariablen stammen aus dem aktiven `ComStatsim`.
 
 ## Anwendung der Ausfälle
 

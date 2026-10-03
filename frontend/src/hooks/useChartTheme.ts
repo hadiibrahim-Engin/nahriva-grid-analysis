@@ -27,7 +27,7 @@ export interface ChartTheme {
   tooltipBg: string;
   /** Tooltip border. */
   tooltipBorder: string;
-  /** Brand primary. */
+  /** Interaction accent. */
   primary: string;
   /** Status colours. */
   info: string;
@@ -42,12 +42,12 @@ export interface ChartTheme {
 
 /** Per-mode palettes. Same hues — different saturations for contrast. */
 const PALETTE_DARK = [
-  '#60a5fa', '#34d399', '#fbbf24', '#f87171',
-  '#a78bfa', '#22d3ee', '#fb7185', '#94a3b8',
+  '#78a6ef', '#58bfc6', '#b99ed6', '#85bd99',
+  '#f5ad70', '#e692a8', '#d9c17d', '#9aaabc',
 ];
 const PALETTE_LIGHT = [
-  '#2563eb', '#059669', '#d97706', '#dc2626',
-  '#7c3aed', '#0891b2', '#be123c', '#64748b',
+  '#c65722', '#277d91', '#426ed0', '#398265',
+  '#9464ac', '#9a6d46', '#c36d80', '#677382',
 ];
 
 function cssVar(name: string, fallback: string): string {
@@ -74,16 +74,14 @@ function buildTheme(): ChartTheme {
     mutedText: cssVar('--grid-muted', isLight ? '#64748b' : '#9aa7b8'),
     tooltipBg: cssVar('--grid-surface-strong', isLight ? '#eef2f7' : '#18212d'),
     tooltipBorder: cssVar('--grid-border', isLight ? '#d7dfea' : '#334155'),
-    primary: cssVar('--grid-primary', isLight ? '#2563eb' : '#3b82f6'),
-    info: cssVar('--grid-info', isLight ? '#0891b2' : '#22d3ee'),
-    success: cssVar('--grid-success', isLight ? '#16a34a' : '#22c55e'),
-    warning: cssVar('--grid-warning', isLight ? '#b7791f' : '#f59e0b'),
-    danger: cssVar('--grid-danger', isLight ? '#dc2626' : '#ef4444'),
+    primary: cssVar('--grid-primary', isLight ? '#bc4317' : '#78a6ef'),
+    info: cssVar('--grid-info', isLight ? '#277d91' : '#58bfc6'),
+    success: cssVar('--grid-success', isLight ? '#347551' : '#85bd99'),
+    warning: cssVar('--grid-warning', isLight ? '#bd8d32' : '#d8ae55'),
+    danger: cssVar('--grid-danger', isLight ? '#b44545' : '#f08c88'),
     // Translucent variant for glows / area fills. Keep alpha low so it
     // doesn't dominate against either background.
-    primarySoft: isLight
-      ? 'rgba(37, 99, 235, 0.2)'
-      : 'rgba(59, 130, 246, 0.3)',
+    primarySoft: cssVar('--grid-primary-soft', isLight ? 'rgba(188, 67, 23, 0.1)' : 'rgba(120, 166, 239, 0.12)'),
     isLight,
   };
 }

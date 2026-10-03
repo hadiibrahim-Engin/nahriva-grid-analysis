@@ -26,6 +26,7 @@ import {
   type ChartTemplate,
 } from './charts/chartTemplates';
 import { ChartPreview } from './charts/chartPreviews';
+import ScenarioOptions from './across/ScenarioOptions';
 import {
   seriesLabel,
   missingRequiredMeasurements,
@@ -90,6 +91,8 @@ export default function ChartTemplatePicker({
   const [voltageMaxPct, setVoltageMaxPct] = useState(110);
   const [aggregation, setAggregation] = useState<AggregationFn>('AVG');
   const [resolutionMinutes, setResolutionMinutes] = useState(60);
+  const [topN, setTopN] = useState(12);
+  const [equipment, setEquipment] = useState<NonNullable<DynamicChartConfig['equipment']>>('all');
 
   const defaultResolution = useMemo(
     () => resolutions.find((r) => r.minutes === 60)?.minutes ?? resolutions.find((r) => r.minutes > 0)?.minutes ?? 60,
@@ -153,6 +156,8 @@ export default function ChartTemplatePicker({
     setVoltageMaxPct(selected.voltageMaxPercentDefault ?? 110);
     setAggregation('AVG');
     setResolutionMinutes(defaultResolution);
+    setTopN(12);
+    setEquipment('all');
     setPrimaryKey(sourceOptionsRef.current[0]?.key ?? null);
     setSecondaryKey(sourceOptionsRef.current[1]?.key ?? null);
     setTertiaryKey(sourceOptionsRef.current[2]?.key ?? null);
@@ -180,7 +185,11 @@ export default function ChartTemplatePicker({
     if (!selected) return { ok: false, config: { sourceKeys: [] }, missingMeasurements: [] };
     let sourceKeys: string[] = [];
     let ok = false;
-    if (selected.componentLevel) {
+    if (selected.scenarioLevel) {
+      // Scenario evaluation needs no signals: it reads the saved scenario results itself.
+      sourceKeys = [];
+      ok = true;
+    } else if (selected.componentLevel) {
       // One representative signal key per chosen Betriebsmittel; the card derives
       // the actually-needed measurements from the component automatically.
       sourceKeys = multiKeys;
@@ -223,6 +232,7 @@ export default function ChartTemplatePicker({
         ...(selected.needsVoltageBand ? { voltageMinPct, voltageMaxPct } : {}),
         ...(selected.needsAggregation ? { aggregation } : {}),
         ...(selected.needsResolution ? { resolutionMinutes } : {}),
+        ...(selected.needsScenarioOptions ? { topN, equipment } : {}),
       },
     };
   };
@@ -313,6 +323,9 @@ export default function ChartTemplatePicker({
             setAggregation={setAggregation}
             resolutionMinutes={resolutionMinutes}
             setResolutionMinutes={setResolutionMinutes}
+            topN={topN}
+            equipment={equipment}
+            setScenarioOptions={(next) => { setTopN(next.topN); setEquipment(next.equipment); }}
             canGenerate={canGenerate}
             missingMeasurements={missingMeasurements}
             onGenerate={handleGenerate}
@@ -451,6 +464,9 @@ interface ConfigPanelProps {
   setAggregation: (a: AggregationFn) => void;
   resolutionMinutes: number;
   setResolutionMinutes: (n: number) => void;
+  topN: number;
+  equipment: NonNullable<DynamicChartConfig['equipment']>;
+  setScenarioOptions: (next: { topN: number; equipment: NonNullable<DynamicChartConfig['equipment']> }) => void;
   canGenerate: boolean;
   missingMeasurements: string[];
   onGenerate: () => void;
@@ -573,6 +589,7 @@ function ConfigPanel(props: ConfigPanelProps) {
     thresholdLevelNames, setThresholdLevelNames,
     thresholdLevelColors, setThresholdLevelColors,
     aggregation, setAggregation, resolutionMinutes, setResolutionMinutes,
+    topN, equipment, setScenarioOptions,
     canGenerate, missingMeasurements, onGenerate,
   } = props;
 
@@ -594,7 +611,11 @@ function ConfigPanel(props: ConfigPanelProps) {
       <div className="flex-1 overflow-y-auto px-5 py-4">
         <p className="mb-4 text-xs leading-relaxed text-[var(--grid-muted)]">{template.question}</p>
 
-        {noSources ? (
+        {template.scenarioLevel ? (
+          <div className="flex flex-wrap items-end gap-4">
+            <ScenarioOptions topN={topN} equipment={equipment} onChange={setScenarioOptions} />
+          </div>
+        ) : noSources ? (
           <div className="rounded border border-[var(--grid-warning)]/40 bg-[var(--grid-danger-soft)] px-4 py-3 text-sm text-[var(--grid-warning)]">
             Zuerst Zeitreihen über die Dropdowns oben hinzufügen, dann steht dieses Diagramm als Quelle zur Verfügung.
           </div>

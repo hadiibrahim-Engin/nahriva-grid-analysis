@@ -19,3 +19,8 @@ committet. Bereits gespeicherte Ergebnisse bleiben bei einem späteren Fehler er
 
 `scripts/start_demo.sh` und `scripts/run_demo.py` verwenden denselben Dashboard-
 Launcher mit einer separaten kleinen Dummy-QDS-Datenbank auf dem Mac.
+
+Die lesende Auswertung über alle Szenarien (Freischaltbewertung, LODF, Spannung, Laden in Teilen
+für große Datenbanken) ist in [ASSESSMENT.md](ASSESSMENT.md) beschrieben.
+
+Der produktive Betrieb (Dashboard-Server neben der Datenbank, Autostart, Netzzugriff, Wartung) steht in [DEPLOYMENT.md](DEPLOYMENT.md).
