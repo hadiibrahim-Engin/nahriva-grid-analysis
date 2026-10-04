@@ -191,3 +191,22 @@ def test_an_outage_without_branch_equipment_is_reported():
     messages = []
     assert lodf.calculate(app, [{"key": "k", "name": "Busbar", "equipment": []}], lambda b: b.loc_name, messages.append) == []
     assert any("Busbar" in m and "no line" in m for m in messages)
+
+
+def test_inspecting_the_commands_is_read_only_and_describes_the_distribution_factor_command():
+    import importlib.util
+
+    from tests.test_powerfactory_worker import ROOT
+
+    spec = importlib.util.spec_from_file_location("inspect_commands", ROOT / "powerfactory/inspect_commands.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    app = LodfApp()
+    sensitivity = PFObject("Distribution Factors", "ComSensitivity", iopt_mode=1)
+    app.study.GetContents = lambda *args: [app.ldf, sensitivity, app.qds]
+    printed = []
+    app.PrintPlain = printed.append
+    assert module.inspect(app) == (3, 2)  # 3 commands; the load flow and the sensitivity command are described
+    text = "\n".join(printed)
+    assert "ComSensitivity" in text and "iopt_mode" in text
+    assert app.ldf.iopt_net == 0 and sensitivity.iopt_mode == 1  # nothing was changed
