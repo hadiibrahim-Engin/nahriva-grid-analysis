@@ -263,12 +263,10 @@ def test_release_build_refuses_without_the_frontend_build(tmp_path):
 def test_a_broken_dashboard_step_never_hides_the_assessment_error(tmp_path, monkeypatch):
     import sqlite3
 
-    from tests.test_lodf import LockedLdf, LodfApp
+    from tests.test_lodf import LockedDistribution, NativeApp
 
     monkeypatch.setenv("OA_DATABASE", str(tmp_path / "r.sqlite3"))
-    app = LodfApp(status=1)
-    app.ldf = LockedLdf("Load Flow", "ComLdf", iopt_net=0)
-    app.ldf.Execute = lambda: (setattr(app.ldf, "locked", True), 1)[1]
+    app = NativeApp(distribution_class=LockedDistribution)  # lodflim is set to 0 for the LODF and cannot be put back
 
     def deleted(_message):
         raise RuntimeError("'powerfactory.Application' already deleted")

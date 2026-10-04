@@ -62,8 +62,11 @@ export default function ScenarioDetails({ scenarios, selectedId, onSelect }: Pro
               {current.maxDelta === null ? '–' : <>{fmtPp(current.maxDelta)}<span className="ab-kv__sub">{current.maxDeltaLine?.name}</span></>}
             </Row>
             <Row label="Max |LODF|">
-              {current.maxAbsLodf === null ? <span className="ab-kv__sub" style={{ marginLeft: 0 }}>not calculated</span> : <>{fmtLodf(current.maxAbsLodf)}<span className="ab-kv__sub">{current.maxLodfLine?.name}</span></>}
+              {current.maxAbsLodf === null
+                ? <span className="ab-kv__sub" style={{ marginLeft: 0 }} title={scenario.lodf_note ?? undefined}>{scenario.lodf_note ? 'no LODF' : 'not calculated'}</span>
+                : <>{fmtLodf(current.maxAbsLodf)}<span className="ab-kv__sub">{current.maxLodfLine?.name}</span></>}
             </Row>
+            {scenario.lodf_note && <Row label="LODF"><span className="ab-kv__sub" style={{ marginLeft: 0 }}>{scenario.lodf_note}</span></Row>}
             <Row label="Lines in service">{current.total}</Row>
           </tbody>
         </table>

@@ -169,6 +169,7 @@ def scenario_index(store):
     db = store.db
     catalog = store.catalog() or {}
     lodf_keys = {r["outage_key"] for r in db.execute("SELECT DISTINCT outage_key FROM pf_lodf")}
+    undefined = {r["outage_key"]: r["reason"] for r in db.execute("SELECT outage_key, reason FROM pf_lodf_undefined")}
     scenarios = []
     for row in _scenario_rows(db):
         runs = _runs(db, row["id"])
@@ -196,6 +197,8 @@ def scenario_index(store):
                 ],
                 "outaged_element_ids": outaged,
                 "has_lodf": outage_key(ids) in lodf_keys,
+                # why there is no LODF: not defined for this outage (and the reason), or None
+                "lodf_note": undefined.get(outage_key(ids)),
             }
         )
     return {

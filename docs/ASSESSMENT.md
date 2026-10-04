@@ -17,7 +17,7 @@ unchanged; the only addition is the LODF table `pf_lodf`.
    can declare a longer period than it simulates (e.g. *Time period* = one month around the Study Case
    time); then the script warns. A scenario whose window lies outside is skipped with a warning instead
    of being saved without values. Set the ComStatsim *Time period* so that it covers the planned outages.
-4. **LODF** for the equipment of the scenarios that are calculated (see below).
+4. **LODF** from PowerFactory's *Sensitivities / Distribution Factors* for the equipment of the scenarios (see below).
 5. **Scenarios:** per scenario a complete QDS over the whole period with only its planned outages
    enabled and the option *Planned Outages* on. PowerFactory takes the equipment out of service inside
    the outage window and keeps it in service before and after. After saving, one line reports the
@@ -105,15 +105,37 @@ Results in kV are judged against the limits stored with them; without limits no 
 
 ## LODF
 
-`powerfactory/lodf.py` calculates DC load flows (`ComLdf`, `iopt_net=2`) **before the first
-scenario simulation**: per scenario its outage objects are switched off together and
-`LODF = ΔP_equipment / ΣP_outaged,before` is determined (normalised with magnitudes for several
-outages; |LODF| is shown). The values are stored in `pf_lodf`, separate from the result runs. If the
-load flow fails there is a warning, the scenarios still run, and the dashboard shows "not calculated".
-Branches without a DC flow result (de-energised or isolated) are left out and named in the output;
-an outage that switches no line, transformer or coupler (e.g. a busbar) gets no LODF and is reported.
-To verify on the PowerFactory PC: the variables `m:P:bus1` / `m:P:bushv` and the assignment of outage
-objects to equipment.
+The LODF comes from **PowerFactory's own tool "Sensitivities / Distribution Factors"** (`ComVstab`, LODF on),
+which `powerfactory/lodf.py` executes **once before the first scenario simulation**. For every contingency of
+the Contingency Analysis the tool gives, per line, the change of its flow related to the flow the outaged
+equipment carried before (AC, as the Study Case calculates it). The values are signed fractions at the bus1 side
+of the line (PowerFactory: 73.6 % → 0.736); the dashboard shows |LODF|. They are stored in `pf_lodf`, separate
+from the result runs, together with the equipment they belong to.
+
+**What has to be in the Study Case:** the command *Sensitivities / Distribution Factors* (open it once so that
+it exists) and the equipment of the planned outages as **contingencies of the Contingency Analysis**
+(*Contingency Definition*). The script sets `lodflim` (the recording limit) to 0 for the run, because values below
+it are not written to PowerFactory's result file, switches LODF on, and puts both settings back.
+
+**How the result is read:** the result file `…_LODF` inside `ComVstab.pResult` has one row per contingency
+that converged. Its column `b:outid` is turned into the contingency by `ElmRes.GetObj`, and `ComOutage.GetObject(i)`
+names the equipment it switches off. A scenario gets the row whose contingency has exactly its equipment, so
+combined outages work when the Contingency Analysis has such a contingency. Scenarios with the same outages share
+one calculation.
+
+**What PowerFactory provides, and what it does not:**
+
+- **Lines only.** The result has columns for lines (`ElmLne`). Transformers and couplers as *monitored*
+  equipment have no LODF; they show "not calculated" in the matrix. (`factors4trf` does not add them.)
+- **Not defined** (the dashboard shows "no LODF" with the reason, the other outages are not affected):
+  - the contingency has no solution: typically a generator step-up transformer, the generator is cut off
+    and PowerFactory's contingency analysis fails to converge for it (it has no row in the result file),
+  - the equipment is not a contingency of the Contingency Analysis: add it there,
+  - the outage switches no line, transformer or coupler (e.g. a busbar), or it is a combination without its
+    own contingency.
+
+The reasons are stored in `pf_lodf_undefined` and listed in the view `v_lodf_undefined`. If PowerFactory's
+tool is missing or fails there is a warning, the scenarios still run and the dashboard shows "not calculated".
 
 ## Large databases
 

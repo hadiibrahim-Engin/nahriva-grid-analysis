@@ -63,6 +63,10 @@ PF_TABLES = """
         lodf REAL NOT NULL, p_pre REAL, p_post REAL, computed_at TEXT NOT NULL,
         PRIMARY KEY(outage_key, element_id)
     );
+    -- Outages whose LODF is not defined (AC load flow without solution, equipment cut off), with the reason.
+    CREATE TABLE IF NOT EXISTS pf_lodf_undefined (
+        outage_key TEXT PRIMARY KEY, reason TEXT NOT NULL, computed_at TEXT NOT NULL
+    );
 """
 
 # The grid (ElmNet) from an element's PowerFactory path: the folder name before ".ElmNet", the same
@@ -123,6 +127,13 @@ VIEWS = """
         SELECT group_concat(value, ',') FROM (SELECT value FROM json_each(sc.outages) ORDER BY value))
     JOIN analysis_elements e ON e.run_id = r.run_id AND e.id = l.element_id;
 
+    DROP VIEW IF EXISTS v_lodf_undefined;
+    CREATE VIEW v_lodf_undefined AS
+    SELECT sc.id AS scenario_id, sc.name AS scenario, u.outage_key, u.reason, u.computed_at
+    FROM pf_scenarios sc
+    JOIN pf_lodf_undefined u ON u.outage_key = (
+        SELECT group_concat(value, ',') FROM (SELECT value FROM json_each(sc.outages) ORDER BY value));
+
     DROP VIEW IF EXISTS v_planned_outages;
     CREATE VIEW v_planned_outages AS
     SELECT json_extract(o.value, '$.id') AS outage_id, json_extract(o.value, '$.name') AS outage,
@@ -135,7 +146,7 @@ VIEWS = """
 
 # PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
 # database is brought up to date once when it is next opened.
-LAYOUT_VERSION = 3
+LAYOUT_VERSION = 4
 
 
 class ScenarioStore:
@@ -183,17 +194,25 @@ class ScenarioStore:
                 (json.dumps(catalog), now()),
             )
 
-    def save_lodf(self, rows):
-        """Replace the stored LODF values of each outage combination in `rows`.
+    def save_lodf(self, rows, undefined=None):
+        """Replace the stored LODF values of each outage combination in `rows` and `undefined`.
 
         Each row is (outage_key, element_id, lodf, p_pre, p_post). The values are
         computed once before any simulation and are independent of result runs.
+        `undefined` maps an outage_key whose LODF is not defined to the reason; such an outage keeps no
+        values, so an earlier calculation can never show next to the reason.
         """
         rows = list(rows)
+        undefined = dict(undefined or {})
         stamp = now()
         with self.db:
-            for key in {row[0] for row in rows}:
+            for key in {row[0] for row in rows} | set(undefined):
                 self.db.execute("DELETE FROM pf_lodf WHERE outage_key=?", (key,))
+                self.db.execute("DELETE FROM pf_lodf_undefined WHERE outage_key=?", (key,))
+            self.db.executemany(
+                "INSERT INTO pf_lodf_undefined VALUES(?,?,?)",
+                [(key, reason, stamp) for key, reason in undefined.items()],
+            )
             self.db.executemany(
                 "INSERT INTO pf_lodf VALUES(?,?,?,?,?,?)",
                 [(*row, stamp) for row in rows],

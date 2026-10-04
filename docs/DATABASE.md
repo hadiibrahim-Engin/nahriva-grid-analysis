@@ -52,7 +52,8 @@ REF run: it is stored once and linked to each of them.
 | `pf_scenario_runs` | `scenario_id`, `run_id`, `kind` (`REF` / `OUTAGE`) |
 | `pf_scenario_provenance` | per scenario: PowerFactory version, project and Study Case paths, operational scenario, grids, QDS command (JSON) |
 | `pf_element_limits` | voltage band per busbar and run: `lower`, `upper` |
-| `pf_lodf` | `outage_key`, `element_id`, `lodf`, `p_pre`, `p_post` (MW before and after), `computed_at` |
+| `pf_lodf` | `outage_key`, `element_id`, `lodf` (signed fraction at the bus1 side, from PowerFactory), `p_pre`, `p_post` (always NULL: PowerFactory's tool gives no flows), `computed_at` |
+| `pf_lodf_undefined` | `outage_key`, `reason`: outages whose LODF is not defined (no contingency, no solution, no equipment), see [ASSESSMENT.md](ASSESSMENT.md) |
 
 ### Identifiers
 
@@ -104,6 +105,7 @@ The file can be read while the dashboard runs. Open it **read-only**, never writ
 | `v_series` | time series | run, metric, unit, element, grid |
 | `v_samples` | value | scenario, `case_kind` (REF/OUTAGE), element, grid, metric, unit, `timestamp_utc`, `epoch`, `value` |
 | `v_lodf` | LODF value | scenario, element, grid, `lodf`, `p_pre`, `p_post` |
+| `v_lodf_undefined` | scenario without LODF | scenario, reason |
 
 Filter `v_samples` at least by scenario and element (or metric); it holds every value of the file.
 

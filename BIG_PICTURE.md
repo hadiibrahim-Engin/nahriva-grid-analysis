@@ -13,7 +13,7 @@ flowchart LR
     Entry --> Plan[scenario_plan: check names and outages]
     Plan --> Ref[REF once: all planned outages disabled]
     Ref --> Period[compare outage windows with the simulated period]
-    Period --> Lodf[LODF: DC load flows]
+    Period --> Lodf[LODF: PowerFactory Sensitivities / Distribution Factors]
     Lodf --> Batch[run_assessment: one OUTAGE QDS per scenario]
     Batch --> Worker[analysis_worker.py]
     Worker --> Engine[gridlens_engine.py]
@@ -33,7 +33,7 @@ flowchart LR
 | `powerfactory/start_assessment.py` | database folder / name, scenario definitions, native calculation and dashboard start |
 | `powerfactory/analysis_worker.py` | read the PF context, activate outages, run REF/OUTAGE, restore state, serialise complete series |
 | `powerfactory/gridlens_engine.py` | taken-over GridLens helpers for native objects, QDS, ElmRes and restoration |
-| `powerfactory/lodf.py` | LODF from DC load flows before the first simulation |
+| `powerfactory/lodf.py` | executes PowerFactory's Sensitivities / Distribution Factors (ComVstab) once and reads the LODF per contingency before the first simulation; outages without a contingency or solution get a reason |
 | `powerfactory/pf_state.py` | `StateGuard`: change PF settings, restore and verify them; a failure names setting, expected and found value, and what stopped the run |
 | `powerfactory/outage_plan.py` | scenario plan from the outage catalogue (no PF access) |
 | `powerfactory/run_summary.py` | one result line per saved scenario: loading in the outage window against REF |
@@ -77,7 +77,7 @@ flowchart TD
     Discover --> Validate[Check all scenario names and outage references]
     Validate --> Valid{Plan valid?}
     Valid -->|No| Stop[Show error, no native calculation]
-    Valid -->|Yes| Lodf[Calculate LODF per scenario from DC load flows and store it in pf_lodf]
+    Valid -->|Yes| Lodf[Execute PowerFactory's Distribution Factors once, read the LODF per outage and store it in pf_lodf (reasons in pf_lodf_undefined)]
     Lodf --> Next[Next named scenario]
     Next --> Job[Publish catalog and create job]
     Job --> Calc[Worker calculates REF and OUTAGE]
@@ -88,7 +88,7 @@ flowchart TD
     More -->|No| Done[All scenarios saved: start the dashboard and open the browser]
 ```
 
-The LODF calculation runs once before the first simulation and restores every changed state, verified.
+The LODF calculation runs once before the first simulation; the two ComVstab settings it changes (LODF on, recording limit 0) are restored and verified.
 If it fails there is a warning; the scenarios run anyway.
 
 Scenarios that were saved successfully are kept if a later calculation fails. Every new batch creates

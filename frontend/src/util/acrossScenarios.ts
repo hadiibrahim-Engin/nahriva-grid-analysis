@@ -70,6 +70,8 @@ export interface AcrossScenario {
   outages: AcrossOutage[];
   outaged_element_ids: string[];
   has_lodf: boolean;
+  /** Why this scenario has no LODF: the load flow has no solution without its equipment, or it cuts off branches. */
+  lodf_note?: string | null;
 }
 
 export interface AcrossData {
