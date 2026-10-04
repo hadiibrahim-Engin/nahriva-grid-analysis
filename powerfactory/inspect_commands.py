@@ -37,6 +37,7 @@ CONTINGENCY_SETTINGS = (
     "iopt_Linear", "copt_Linear", "iopt_method", "iopt_cntldf", "isPlannedOutages", "cisPlannedOutages",
     "calcPeriod", "startTime", "endTime", "nrProcessedCnt", "nrUnsolvedCnt", "nrInactiveCnt", "p_rescnt",
 )
+VERSION = "4 (child result files, sub result keys)"  # shown first, so the output says which copy ran
 MAX_LISTED = 80  # contingencies and result columns shown
 # Parameters of a result file that say how its data is organised (rows, contingencies, selected sub result).
 RESULT_PARAMETERS = (
@@ -367,6 +368,7 @@ def inspect(app, execute=None):
         raise RuntimeError("Activate a project and a Study Case first.")
     found = commands(study_case)
     log(app, RULE)
+    log(app, "inspect_commands.py version {} from {}".format(VERSION, Path(__file__).resolve()))
     log(app, "Commands in the Study Case '{}': {}".format(engine.object_name(study_case), len(found)))
     for kind, name, _obj in sorted(found, key=lambda item: (item[0], item[1])):
         detail(app, "{:<18} {}".format(kind, name))
