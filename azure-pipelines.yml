@@ -1,0 +1,71 @@
+# Build and test on Azure DevOps. Stage 1 checks the code on Linux; stage 2 builds the release package on
+# Windows and proves that a fresh machine can set it up (setup.ps1) and start the dashboard.
+trigger:
+  branches:
+    include: [main]
+pr:
+  branches:
+    include: ['*']
+
+variables:
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '22.x'
+
+stages:
+  - stage: Validate
+    displayName: Lint, test and build
+    jobs:
+      - job: linux
+        displayName: Backend, frontend, smoke test
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(NODE_VERSION)
+          - script: python -m pip install --quiet uv
+            displayName: Install uv
+          - script: uv sync --frozen --extra dev --python $(PYTHON_VERSION)
+            workingDirectory: backend
+            displayName: Backend environment
+          - script: npm ci
+            workingDirectory: frontend
+            displayName: Frontend packages
+          - script: bash scripts/check.sh
+            displayName: ruff, pytest, tsc, eslint, unit tests, build, npm audit
+          - script: backend/.venv/bin/python scripts/smoke_production.py
+            displayName: Production smoke test
+
+  - stage: Package
+    displayName: Release package
+    dependsOn: Validate
+    jobs:
+      - job: windows
+        displayName: Build the ZIP and test the setup from it
+        pool:
+          vmImage: windows-latest
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(NODE_VERSION)
+          - powershell: .\setup.ps1 -Package -Port 18765 -Database "$(Agent.TempDirectory)\build.sqlite3"
+            displayName: setup.ps1 -Package (Python, backend, frontend build, self-test, ZIP)
+          - powershell: |
+              $zip = Get-ChildItem release\outage-assessment-*.zip | Select-Object -First 1
+              if (-not $zip) { throw 'The release ZIP was not built.' }
+              $target = Join-Path $env:AGENT_TEMPDIRECTORY 'fresh'
+              Expand-Archive -Path $zip.FullName -DestinationPath $target -Force
+              Push-Location (Join-Path $target 'outage-assessment')
+              try {
+                .\setup.ps1 -Port 18766 -Database (Join-Path $env:AGENT_TEMPDIRECTORY 'fresh.sqlite3')
+              } finally { Pop-Location }
+            displayName: Set up from the ZIP on a clean folder
+          - publish: release
+            artifact: outage-assessment-release
+            displayName: Publish the release package

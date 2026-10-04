@@ -11,12 +11,13 @@ to the flow the switched-off branches carried before:
 so that a single outage gives the classical, signed LODF and combined outages a
 normalised factor whose magnitude is comparable. The dashboard uses |LODF|.
 
-Standard library plus the engine helpers only. Every changed setting is read back
-and restored; a restoration failure raises so that nothing is saved on top of an
-unknown PowerFactory state.
+Standard library plus the engine helpers only. Every changed setting goes through
+pf_state.StateGuard: it is read back and restored; a restoration failure raises
+StateRestoreError so that nothing is saved on top of an unknown PowerFactory state.
 """
 
 import gridlens_engine as engine
+from pf_state import StateGuard
 
 # Branch classes with a flow result and the variable that holds it.
 FLOW_ATTRIBUTES = {
@@ -89,72 +90,51 @@ def _flows(ldf, monitored):
     return flows
 
 
+def _outage_rows(ldf, monitored, before, scenario, element_id):
+    """LODF rows of one scenario; the switched-off branches are put back before this returns."""
+    equipment = scenario["equipment"]
+    with StateGuard() as guard:
+        for branch in equipment:
+            if not guard.set(branch, "outserv", 1, "outserv of " + engine.object_name(branch)):
+                raise LodfError("Could not switch off " + engine.object_name(branch))
+        after = _flows(ldf, [b for b in monitored if b not in equipment])
+    keys = {engine.object_key(b) for b in equipment}
+    lost = [before[k] for k in keys if k in before]
+    denominator = sum(lost) if len(lost) == 1 else sum(abs(v) for v in lost)
+    if abs(denominator) < MIN_FLOW:
+        return []
+    rows = []
+    for branch in monitored:
+        key = engine.object_key(branch)
+        if key in keys or key not in after:
+            continue
+        rows.append((
+            scenario["key"], element_id(branch),
+            (after[key] - before[key]) / denominator, before[key], after[key],
+        ))
+    return rows
+
+
 def calculate(app, scenarios, element_id):
     """Return LODF rows (outage_key, element_id, lodf, p_pre, p_post).
 
     `scenarios` is a list of {"key": str, "equipment": [branch objects]};
     `element_id` maps a branch object to the identifier stored in the results.
+    LodfError: nothing could be calculated, the state is unchanged.
+    StateRestoreError: a setting could not be put back (and says what stopped the calculation).
     """
     ldf = app.GetFromStudyCase("ComLdf")
     if ldf is None:
         raise LodfError("The active Study Case has no ComLdf; LODF was not calculated.")
-    found, original_mode = engine._read_setting(ldf, "iopt_net")
-    if not found or engine.finite_number(original_mode) is None:
-        raise LodfError("ComLdf.iopt_net is not readable; LODF was not calculated.")
     monitored = branches(app)
     if not monitored:
         raise LodfError("No lines or transformers found; LODF was not calculated.")
     rows = []
-    failure = None
-    restore_errors = []
-    try:
-        if not engine._set_scalar_attribute(ldf, "iopt_net", DC_LOAD_FLOW):
-            raise LodfError("Could not select the DC load flow.")
+    with StateGuard() as guard:
+        if not guard.set(ldf, "iopt_net", DC_LOAD_FLOW, "ComLdf.iopt_net"):
+            raise LodfError("Could not select the DC load flow (ComLdf.iopt_net is not readable or not writable).")
         before = _flows(ldf, monitored)
         for scenario in scenarios:
-            equipment = scenario["equipment"]
-            if not equipment:
-                continue
-            switched = []
-            for branch in equipment:
-                found, state = engine._read_setting(branch, "outserv")
-                if not found or engine.finite_number(state) not in (0, 1):
-                    raise LodfError("Cannot read outserv of " + engine.object_name(branch))
-                switched.append((branch, state))
-            try:
-                # Switching off sits inside the block that restores: if the second branch refuses,
-                # the first one is put back as well.
-                for branch, _state in switched:
-                    if not engine._set_scalar_attribute(branch, "outserv", 1):
-                        raise LodfError("Could not switch off " + engine.object_name(branch))
-                after = _flows(ldf, [b for b in monitored if b not in equipment])
-            finally:
-                for branch, state in switched:
-                    if not engine._set_scalar_attribute(branch, "outserv", state):
-                        restore_errors.append("outserv of " + engine.object_name(branch))
-            keys = {engine.object_key(b) for b in equipment}
-            lost = [before[k] for k in keys if k in before]
-            denominator = sum(lost) if len(lost) == 1 else sum(abs(v) for v in lost)
-            if abs(denominator) < MIN_FLOW:
-                continue
-            for branch in monitored:
-                key = engine.object_key(branch)
-                if key in keys or key not in after:
-                    continue
-                rows.append((
-                    scenario["key"], element_id(branch),
-                    (after[key] - before[key]) / denominator, before[key], after[key],
-                ))
-    except LodfError as exc:
-        failure = exc
-    finally:
-        if not engine._set_scalar_attribute(ldf, "iopt_net", original_mode):
-            restore_errors.append("ComLdf.iopt_net")
-    if restore_errors:
-        raise RuntimeError(
-            "PowerFactory state restoration failed after the LODF calculation. "
-            "Verify the Study Case manually: " + ", ".join(restore_errors)
-        )
-    if failure is not None:
-        raise failure
+            if scenario["equipment"]:
+                rows.extend(_outage_rows(ldf, monitored, before, scenario, element_id))
     return rows

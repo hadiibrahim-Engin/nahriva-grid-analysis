@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.analysis import schema
+
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -35,8 +37,7 @@ class ScenarioStore:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.execute("PRAGMA journal_mode=WAL")
-        migration = Path(__file__).parents[1] / "analysis/migrations/001_analysis.sql"
-        self.db.executescript(migration.read_text())
+        schema.apply(self.db)
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS pf_catalog (
                 id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL, updated_at TEXT NOT NULL

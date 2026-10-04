@@ -34,39 +34,9 @@ sys.path.insert(0, str(PROJECT_DIR / "powerfactory"))
 sys.path.insert(0, str(PROJECT_DIR / "scripts"))
 import analysis_worker as worker
 import appconfig
+from pf_console import log
+from outage_plan import scenario_plan
 from dashboard_launcher import launch_dashboard, validate_installation
-
-
-def scenario_plan(catalog, definitions=None):
-    eligible = [o for o in catalog["outages"] if o["in_period"]]
-    if definitions is None:
-        definitions = [{"name": o["name"], "outages": [o["path"]]} for o in eligible]
-    if not definitions:
-        raise ValueError("No outage scenarios in the configured QDS period.")
-    plan = []
-    names = set()
-    for definition in definitions:
-        name = definition["name"].strip()
-        if not name or len(name) > 200 or name in names:
-            raise ValueError("Scenarios need unique names of 1–200 characters.")
-        names.add(name)
-        ids = []
-        for reference in definition["outages"]:
-            matches = [
-                o for o in eligible if reference in (o["id"], o["path"], o["name"])
-            ]
-            if len(matches) != 1:
-                raise ValueError(
-                    "Outage is missing, outside the period or ambiguous: "
-                    + reference
-                )
-            ids.append(matches[0]["id"])
-        if not ids or len(ids) != len(set(ids)):
-            raise ValueError(
-                "A scenario needs a unique selection of outages: " + name
-            )
-        plan.append({"name": name, "outage_ids": ids})
-    return plan
 
 
 def run_assessment(app, database_path, definitions=None):
@@ -74,7 +44,7 @@ def run_assessment(app, database_path, definitions=None):
     catalog = worker.discover(app)
     plan = scenario_plan(catalog, definitions)
     # LODF depends only on topology: calculate it once, before any simulation.
-    app.PrintPlain("[Outage Assessment] Calculating LODF")
+    log(app, "Calculating LODF")
     rows = worker.compute_lodf(app, catalog, plan)
     if rows:
         store = worker.ScenarioStore(str(database_path))
@@ -93,7 +63,7 @@ def run_assessment(app, database_path, definitions=None):
             )
         finally:
             store.close()
-        app.PrintPlain("[Outage Assessment] Calculating: " + selection["name"])
+        log(app, "Calculating: " + selection["name"])
         worker.execute(app, database_path)
     return [s["name"] for s in plan]
 
@@ -134,14 +104,25 @@ def show_dashboard(app, database, config):
             production=config["production"],
         )
     except Exception as exc:
-        app.PrintPlain("[Outage Assessment][WARN] Dashboard not started: " + str(exc))
+        log(app, "Dashboard not started: " + str(exc), "WARN")
         return None
-    app.PrintPlain("[Outage Assessment] Dashboard " + ("already running" if dashboard["reused"] else "started") + ": " + dashboard["url"])
+    log(app, "Dashboard " + ("already running" if dashboard["reused"] else "started") + ": " + dashboard["url"])
     for url in dashboard["lan_urls"]:
-        app.PrintPlain("[Outage Assessment] From other PCs in the network: " + url)
+        log(app, "From other PCs in the network: " + url)
     for note in dashboard["notes"]:
-        app.PrintPlain("[Outage Assessment][NOTE] " + note)
+        log(app, note, "NOTE")
     return dashboard
+
+
+def show_saved_results(app, database, config):
+    """Show whatever was saved, also after a failure. Never raises: the error that ended the run must stay visible."""
+    if not SHOW_DASHBOARD:
+        return
+    try:
+        if database.is_file() and has_results(database):
+            show_dashboard(app, database, config)
+    except Exception as exc:
+        log(app, "Dashboard not started: " + str(exc), "WARN")
 
 
 def main():
@@ -166,15 +147,14 @@ def main():
     try:
         validate_installation(python=DASHBOARD_PYTHON)
         free = preflight(database)
-        app.PrintPlain(f"[Outage Assessment] Database: {database} ({free:.0f} GB free)")
+        log(app, f"Database: {database} ({free:.0f} GB free)")
         names = run_assessment(app, database, SCENARIOS)
-        app.PrintPlain("[Outage Assessment] " + str(len(names)) + " scenarios saved.")
+        log(app, str(len(names)) + " scenarios saved.")
     except BaseException as exc:
-        app.PrintPlain("[Outage Assessment][ERROR] " + str(exc))
+        log(app, str(exc) or type(exc).__name__, "ERROR")
         raise
     finally:
-        if SHOW_DASHBOARD and database.is_file() and has_results(database):
-            show_dashboard(app, database, config)
+        show_saved_results(app, database, config)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,10 @@ flowchart LR
 | `powerfactory/analysis_worker.py` | read the PF context, activate outages, run REF/OUTAGE, restore state, serialise complete series |
 | `powerfactory/gridlens_engine.py` | taken-over GridLens helpers for native objects, QDS, ElmRes and restoration |
 | `powerfactory/lodf.py` | LODF from DC load flows before the first simulation |
+| `powerfactory/pf_state.py` | `StateGuard`: change PF settings, restore and verify them; a failure names setting, expected and found value, and what stopped the run |
+| `powerfactory/outage_plan.py` | scenario plan from the outage catalogue (no PF access) |
+| `powerfactory/pf_console.py` | output-window messages that never raise, even if PowerFactory already deleted the application |
+| `backend/app/analysis/schema.py` | the one place that applies the results schema (web app and PF script) |
 | `backend/app/simulation/store.py` | shared SQLite contract of PF and web app; jobs and atomic scenario import |
 | `backend/app/simulation/across.py` | read-only aggregation: index, values per scenario (cached), profile |
 | `backend/app/simulation/routes.py`, `data.py` | HTTP API on SQLite: series and analyses |

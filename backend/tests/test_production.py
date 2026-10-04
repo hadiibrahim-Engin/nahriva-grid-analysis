@@ -258,3 +258,25 @@ def test_release_build_refuses_without_the_frontend_build(tmp_path):
     (tmp_path / "backend/pyproject.toml").write_text('version = "1.0.0"')
     with pytest.raises(SystemExit):
         package_release.build(tmp_path, tmp_path / "out")
+
+
+def test_a_broken_dashboard_step_never_hides_the_assessment_error(tmp_path, monkeypatch):
+    import sqlite3
+
+    from tests.test_lodf import LockedLdf, LodfApp
+
+    monkeypatch.setenv("OA_DATABASE", str(tmp_path / "r.sqlite3"))
+    app = LodfApp(status=1)
+    app.ldf = LockedLdf("Load Flow", "ComLdf", iopt_net=0)
+    app.ldf.Execute = lambda: (setattr(app.ldf, "locked", True), 1)[1]
+
+    def deleted(_message):
+        raise RuntimeError("'powerfactory.Application' already deleted")
+
+    app.PrintPlain = deleted  # PowerFactory has already torn the application down
+    monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
+    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
+    monkeypatch.setattr(assessment, "has_results", lambda database: (_ for _ in ()).throw(sqlite3.OperationalError("unrecognized token")))
+    (tmp_path / "r.sqlite3").touch()
+    with pytest.raises(RuntimeError, match="restoration failed"):
+        assessment.main()

@@ -6,10 +6,10 @@ $ErrorActionPreference = 'Stop'
 
 $Files = @'
 .gitattributes
-.github/workflows/ci.yml
 .gitignore
 BIG_PICTURE.md
 README.md
+azure-pipelines.yml
 backend/.env.example
 backend/.gitignore
 backend/DEBUGGING.md
@@ -19,6 +19,7 @@ backend/app/analysis/bootstrap.py
 backend/app/analysis/migrations/001_analysis.sql
 backend/app/analysis/models.py
 backend/app/analysis/repository.py
+backend/app/analysis/schema.py
 backend/app/core/__init__.py
 backend/app/core/cache.py
 backend/app/core/errors.py
@@ -150,6 +151,9 @@ powerfactory/SOURCE.md
 powerfactory/analysis_worker.py
 powerfactory/gridlens_engine.py
 powerfactory/lodf.py
+powerfactory/outage_plan.py
+powerfactory/pf_console.py
+powerfactory/pf_state.py
 powerfactory/start_assessment.py
 scripts/appconfig.py
 scripts/browser-smoke.js

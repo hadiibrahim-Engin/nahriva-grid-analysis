@@ -90,9 +90,12 @@ autostart use the same file, so both work on the same database.
 
 ```bash
 bash scripts/dev.sh                                 # API and Vite dev server, both on 127.0.0.1
-bash scripts/check.sh                               # ruff, pytest, frontend checks, npm audit
+bash scripts/check.sh                               # ruff, pytest, frontend checks, build, npm audit
 backend/.venv/bin/python scripts/smoke_production.py
 ```
+
+`azure-pipelines.yml` runs the same checks on Azure DevOps (Linux) and then builds the release ZIP on Windows
+(`setup.ps1 -Package`), sets it up on a clean folder and publishes it as the artifact `outage-assessment-release`.
 
 Backend tests use a synthetic results database (`backend/tests/qds_fixture.py`) and a native API
 replacement for PowerFactory. A real PowerFactory 2026 run on Windows is still required; the mapping

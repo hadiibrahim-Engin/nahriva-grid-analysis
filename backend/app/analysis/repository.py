@@ -3,6 +3,7 @@
 import sqlite3
 from pathlib import Path
 from threading import RLock
+from app.analysis import schema
 from app.analysis.models import RunBundle
 from app.core.errors import ResourceNotFoundError
 
@@ -16,7 +17,6 @@ class AnalysisRepository:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.execute("PRAGMA busy_timeout=5000")
-        migration = Path(__file__).resolve().parent / "migrations" / "001_analysis.sql"
         # Refuse a future schema instead of silently treating it as version 1.
         exists = self.db.execute(
             "SELECT name FROM sqlite_master WHERE name='schema_migrations'"
@@ -25,7 +25,7 @@ class AnalysisRepository:
             "SELECT MAX(version) FROM schema_migrations"
         ).fetchone()[0] not in (None, 1):
             raise RuntimeError("Unsupported analysis schema version")
-        self.db.executescript(migration.read_text())
+        schema.apply(self.db)
 
     def close(self):
         self.db.close()

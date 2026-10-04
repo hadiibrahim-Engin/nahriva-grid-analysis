@@ -129,3 +129,35 @@ def test_branches_that_are_out_of_service_from_the_start_do_not_abort_the_calcul
     rows = lodf.calculate(app, [{"key": "k", "equipment": [app.network.a]}], lambda branch: branch.loc_name)
     assert {row[1] for row in rows} == {"B"}  # monitored: only branches in service; C is skipped, not an error
     assert app.network.c.outserv == 1
+
+
+class LockedLdf(PFObject):
+    """A ComLdf that rejects writes once the calculation has run, like a PowerFactory object that went away."""
+
+    def __setattr__(self, name, value):
+        if self.__dict__.get("locked") and name == "iopt_net":
+            raise RuntimeError("object already deleted")
+        super().__setattr__(name, value)
+
+
+def test_a_restoration_failure_reports_the_failure_it_would_have_hidden():
+    import lodf
+
+    app = LodfApp(status=1)
+    app.ldf = LockedLdf("Load Flow", "ComLdf", iopt_net=0)
+    app.ldf.Execute = lambda: (setattr(app.ldf, "locked", True), 1)[1]
+    with pytest.raises(RuntimeError) as caught:
+        lodf.calculate(app, [{"key": "k", "equipment": [app.network.a]}], lambda branch: branch.loc_name)
+    message = str(caught.value)
+    assert not isinstance(caught.value, lodf.LodfError)
+    assert "ComLdf.iopt_net" in message and "read back 2" in message  # what was expected and what is there
+    assert "did not converge" in message  # the failure that made the calculation stop
+
+
+def test_a_setting_that_never_changed_is_not_a_restoration_failure():
+    import lodf
+
+    app = LodfApp()
+    app.ldf = LockedLdf("Load Flow", "ComLdf", iopt_net=0, locked=True)  # refuses every write
+    with pytest.raises(lodf.LodfError, match="Could not select the DC load flow"):
+        lodf.calculate(app, [{"key": "k", "equipment": [app.network.a]}], lambda branch: branch.loc_name)

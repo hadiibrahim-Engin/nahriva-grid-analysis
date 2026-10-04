@@ -17,6 +17,7 @@ sys.path.insert(0, str(PROJECT_DIR / 'backend'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gridlens_engine as engine
 import lodf
+from pf_console import log
 from app.simulation.store import ScenarioStore, catalog_signature, outage_key
 
 
@@ -86,7 +87,7 @@ def compute_lodf(app, catalog, plan):
         return lodf.calculate(app, scenarios,
                               lambda branch: identifier(project_path + '|' + engine.object_key(branch)))
     except lodf.LodfError as exc:
-        app.PrintPlain('[Outage Assessment][WARN] ' + str(exc))
+        log(app, str(exc), 'WARN')
         return []
 
 
@@ -192,7 +193,7 @@ def execute(app, database_path=DATABASE_PATH):
         catalog = discover(app)
         store.publish_catalog(catalog)
         if job is None:
-            app.PrintPlain('[Outage Assessment] Planned outages synchronized. Create a named scenario in Outage Management and run this script again.')
+            log(app, 'Planned outages synchronized. Create a named scenario in Outage Management and run this script again.')
             return
         if job['kind'] == 'sync':
             store.finish(job['id'], 'Planned outages synchronized.')
@@ -204,7 +205,7 @@ def execute(app, database_path=DATABASE_PATH):
             store.save_scenario(job, catalog, runs)
             name = job['payload']['name']
             job = None
-            app.PrintPlain('[Outage Assessment] Saved scenario: ' + name)
+            log(app, 'Saved scenario: ' + name)
         else:
             raise RuntimeError('Unsupported PowerFactory job kind.')
     except BaseException as exc:
@@ -223,7 +224,7 @@ def main():
     try:
         execute(app)
     except BaseException as exc:
-        app.PrintPlain('[Outage Assessment][ERROR] ' + str(exc))
+        log(app, str(exc) or type(exc).__name__, 'ERROR')
         raise
 
 

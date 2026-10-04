@@ -81,3 +81,15 @@ def test_invalid_paths_and_foreign_or_future_databases_leave_selection_intact(
         assert db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall() == [("unrelated",)]
+
+
+def test_an_unreadable_schema_file_is_named_in_the_error(tmp_path, monkeypatch):
+    import sqlite3
+
+    from app.analysis import schema
+
+    broken = tmp_path / "001_analysis.sql"
+    broken.write_text("# not sql\n")
+    monkeypatch.setattr(schema, "SCHEMA_FILE", broken)
+    with pytest.raises(RuntimeError, match="001_analysis.sql"):
+        schema.apply(sqlite3.connect(":memory:"))
