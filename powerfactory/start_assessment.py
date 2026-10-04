@@ -11,6 +11,7 @@ Settings: constants below or outage-assessment.config.json in the project folder
 """
 
 from pathlib import Path
+import importlib.util
 import shutil
 import sys
 import time
@@ -34,6 +35,26 @@ SCENARIOS = None
 
 sys.path.insert(0, str(PROJECT_DIR / "powerfactory"))
 sys.path.insert(0, str(PROJECT_DIR / "scripts"))
+
+
+def forget_cached_modules(modules, root=PROJECT_DIR):
+    """Drop this project's modules from `modules` (sys.modules) so that they are read from disk again.
+
+    PowerFactory keeps its Python interpreter between script runs. A module imported by an earlier run
+    (possibly from an older copy of the files) would otherwise be used instead of the file next to this
+    script, which fails with errors like "module has no attribute" after an update.
+    """
+    names = {"app"}
+    for folder in ("powerfactory", "scripts"):
+        names.update(path.stem for path in (Path(root) / folder).glob("*.py"))
+    names -= {"__init__", Path(__file__).stem}
+    for name in [n for n in modules if n in names or n.startswith("app.")]:
+        del modules[name]
+
+
+if importlib.util.find_spec("powerfactory") is not None:  # only inside PowerFactory, never in tests or tools
+    forget_cached_modules(sys.modules)
+
 import analysis_worker as worker
 import appconfig
 from pf_console import RULE, detail, log, step
@@ -227,6 +248,7 @@ def main():
         free = preflight(database)
         log(app, RULE)
         log(app, "Outage assessment started")
+        detail(app, f"Scripts: {Path(__file__).resolve().parent}")
         detail(app, f"Database: {database} ({free:.0f} GB free)")
         run_assessment(app, database, SCENARIOS)
     except KeyboardInterrupt:
