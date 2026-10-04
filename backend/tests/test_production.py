@@ -292,3 +292,13 @@ def test_preflight_refuses_a_database_of_an_earlier_version_before_any_calculati
     db.close()
     with pytest.raises(RuntimeError, match="earlier version"):
         assessment.preflight(old)
+
+
+def test_modules_of_an_earlier_run_are_not_reused():
+    """PowerFactory keeps its Python between runs: an old pf_console (maybe of another copy) must not be used."""
+    from types import ModuleType
+
+    stale = {name: ModuleType(name) for name in ("pf_console", "analysis_worker", "app", "app.simulation.store")}
+    modules = {**stale, "json": ModuleType("json"), "powerfactory": ModuleType("powerfactory")}
+    assessment.forget_cached_modules(modules)
+    assert set(modules) == {"json", "powerfactory"}  # only this project's modules are dropped
