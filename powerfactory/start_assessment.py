@@ -131,12 +131,12 @@ def run_assessment(app, database_path, definitions=None):
     detail(app, "{} scenarios will be calculated, {} skipped.".format(len(plan), len(skipped)))
 
     # LODF depends only on topology: once, for the equipment of the scenarios that are calculated.
-    step(app, 4, STEPS, "LODF: DC load flows with the equipment of each scenario switched off")
-    rows = worker.compute_lodf(app, catalog, plan)
-    if rows:
+    step(app, 4, STEPS, "LODF: AC load flows with the equipment of each scenario switched off")
+    rows, undefined = worker.compute_lodf(app, catalog, plan)
+    if rows or undefined:
         store = worker.ScenarioStore(str(database_path))
         try:
-            store.save_lodf(rows)
+            store.save_lodf(rows, undefined)
         finally:
             store.close()
 

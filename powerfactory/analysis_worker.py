@@ -82,27 +82,31 @@ def discover(app, period=None):
 
 
 def compute_lodf(app, catalog, plan):
-    """LODF for every planned scenario, calculated before any simulation.
+    """LODF of every outage of the plan, calculated before any simulation.
 
-    Returns rows for ScenarioStore.save_lodf. Failures are reported and yield no
-    rows so the assessment itself still runs; the dashboard then shows no LODF.
+    Returns (rows, undefined): rows for ScenarioStore.save_lodf and {outage_key: reason} for the outages
+    whose LODF is not defined (AC load flow without solution, equipment cut off). Failures are reported
+    and yield no rows so the assessment itself still runs; the dashboard then shows no LODF.
     """
     engine.GRID_NAME_FILTER = GRID_NAME_FILTER
     by_id = {identifier(engine.object_key(o)): o for o in engine._find_project_outages(app)}
-    scenarios = [
-        {'key': outage_key(selection['outage_ids']), 'name': selection['name'],
-         'equipment': list({engine.object_key(b): b for i in selection['outage_ids']
-                            if i in by_id for b in lodf.outage_equipment(by_id[i])}.values())}
-        for selection in plan
-    ]
+    unique = {}
+    for selection in plan:  # scenarios with the same outages share one calculation
+        key = outage_key(selection['outage_ids'])
+        if key not in unique:
+            unique[key] = {'key': key, 'name': selection['name'],
+                           'equipment': list({engine.object_key(b): b for i in selection['outage_ids']
+                                              if i in by_id for b in lodf.outage_equipment(by_id[i])}.values())}
     project_path = catalog['project_path']
+    undefined = {}
     try:
-        return lodf.calculate(app, scenarios,
+        rows = lodf.calculate(app, list(unique.values()),
                               lambda branch: identifier(project_path + '|' + engine.object_key(branch)),
-                              lambda message: detail(app, message))
+                              lambda message: detail(app, message), undefined)
     except lodf.LodfError as exc:
         detail(app, str(exc), 'WARN')
-        return []
+        return [], {}
+    return rows, undefined
 
 
 def serialize_result(result, project_path, period):

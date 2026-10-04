@@ -1,7 +1,7 @@
 """Change PowerFactory settings temporarily and always put them back.
 
     with StateGuard() as guard:
-        guard.set(ldf, "iopt_net", 2, "ComLdf.iopt_net")
+        guard.set(branch, "outserv", 1, "outserv of " + name)
         ...
 
 Every change is recorded before it is written. Leaving the block restores all of them in reverse order

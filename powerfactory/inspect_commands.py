@@ -38,6 +38,11 @@ CONTINGENCY_SETTINGS = (
     "calcPeriod", "startTime", "endTime", "nrProcessedCnt", "nrUnsolvedCnt", "nrInactiveCnt", "p_rescnt",
 )
 MAX_LISTED = 80  # contingencies and result columns shown
+# Parameters of a result file that say how its data is organised (rows, contingencies, selected sub result).
+RESULT_PARAMETERS = (
+    "cnumcont", "cnumrow", "ctotrow", "cnumCase", "cases", "cnttime", "pResElm", "csteps", "cnumfiles", "FileType",
+    "usedfor", "unit",
+)
 EXECUTE_DISTRIBUTION_FACTORS = True  # run the command once, then show its results; False: only read (see above)
 # Where a contingency (ComOutage) keeps the equipment it switches off.
 CONTINGENCY_TARGETS = ("Branches", "Couplers", "Elms", "Nodes", "Faults", "BBFault", "pSWSC")
@@ -181,6 +186,54 @@ def summarize_columns(app, result, columns):
         detail(app, "{:>6} x {:<10} {}".format(number, kind, variable))
 
 
+def probe_sub_results(app, result, items, label):
+    """Select the sub result of a contingency like PowerFactory does (ElmRes.SetSubElmResKey) and look at it.
+
+    The key is put back afterwards. ElmRes.SetSubElmResKey takes a contingency object (parameter pResElm) or a
+    number (parameter cnttime); a result file such as 'Distribution Factors Results' looks empty (0 x 0)
+    until one of them is chosen.
+    """
+    setter = getattr(result, "SetSubElmResKey", None)
+    if not callable(setter):
+        return
+    known_time, original_time = engine._read_setting(result, "cnttime")
+    known_object, original_object = engine._read_setting(result, "pResElm")
+    keys = [("pResElm='{}'".format(engine.object_name(item)), item) for item in items[:3]]
+    keys += [("cnttime={}".format(number), number) for number in range(3)]
+    try:
+        for key_label, key in keys:
+            try:
+                setter(key)
+                result.Load()
+                rows, columns = int(result.GetNumberOfRows()), int(result.GetNumberOfColumns())
+            except Exception as exc:
+                detail(app, "{}: sub result with key {} not readable: {}".format(label, key_label, exc))
+                continue
+            detail(app, "{}: sub result with key {}: {} rows x {} columns".format(label, key_label, rows, columns))
+            if columns:
+                for column in range(min(columns, 5)):
+                    try:
+                        detail(app, "    col {}: {} '{}' | {} | values (return code, value): {}".format(
+                            column, engine.class_name(result.GetObject(column)), engine.object_name(result.GetObject(column)),
+                            result.GetVariable(column), _sample(result, column, rows)))
+                    except Exception as exc:
+                        detail(app, "    col {}: not readable ({})".format(column, exc))
+                summarize_columns(app, result, columns)
+                find_lodf_columns(app, result, "key {}".format(key_label))
+    finally:
+        try:
+            result.Release()
+        except Exception:
+            pass
+        if known_time:
+            engine._set_scalar_attribute(result, "cnttime", original_time)
+        if known_object:
+            try:
+                engine._set_attribute(result, "pResElm", original_object)
+            except Exception:
+                pass
+
+
 def describe_sub_results(app, result, items, label):
     """Contingency result files may hold one sub result file per contingency (ElmRes.GetSubElmRes)."""
     getter = getattr(result, "GetSubElmRes", None)
@@ -210,7 +263,7 @@ def describe_sub_results(app, result, items, label):
             pass
 
 
-def describe_result(app, distribution, heading="Result file of the distribution factors", items=()):
+def describe_result(app, distribution, heading="Result file of the distribution factors", items=(), depth=0):
     found, result = engine._read_setting(distribution, "pResult")
     log(app, RULE)
     if not found or result is None or isinstance(result, (str, int, float, bool)):
@@ -248,10 +301,17 @@ def describe_result(app, distribution, heading="Result file of the distribution 
             detail(app, "Columns by object class and variable:")
             summarize_columns(app, result, columns)
         find_lodf_columns(app, result, "result")
+        settings(app, "Parameters of the result file", result, RESULT_PARAMETERS)
         describe_sub_results(app, result, items, "result")
-        if not columns:
-            for line in engine.describe_object_api(result).split("; "):
-                detail(app, line)
+        probe_sub_results(app, result, items, "result")
+        if depth == 0:
+            # The result file may hold further result files; the LODF values are probably in the one named ..._LODF.
+            try:
+                children = [c for c in (result.GetContents("*", 1) or []) if engine.class_name(c) == "ElmRes"]
+            except Exception:
+                children = []
+            for child in children:
+                describe_result(app, PFHolder(child), "Child result file '{}'".format(engine.object_name(child)), items, depth=1)
     except Exception as exc:
         detail(app, "The result file could not be read: {}".format(exc), "WARN")
     finally:
