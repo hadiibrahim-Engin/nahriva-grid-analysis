@@ -34,6 +34,9 @@ flowchart LR
    missing (it uses Node 22.13+ or downloads a portable Node into `.tools\`), writes
    `outage-assessment.config.json`, optionally registers the per-user task and tests the server. Run it again at
    any time; finished steps are skipped.
+   Every step is reported in detail (what was found, what was decided and why, each command with its output,
+   exit code and duration, and a summary at the end). The complete output is also kept in `.tools\setup.log`;
+   if a step fails, the message names the step and the call stack.
    Without internet access use `-Wheelhouse <folder>` (build the package with
    `python scripts/package_release.py --wheelhouse`). `-Autostart` is optional: without it the
    PowerFactory script starts the dashboard after the calculation, and
