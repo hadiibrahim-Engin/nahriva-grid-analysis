@@ -17,7 +17,8 @@ def test_dummy_qds_is_small_complete_and_idempotent(tmp_path):
     assert store.db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] == 16
     assert (
         store.db.execute(
-            "SELECT COUNT(*) FROM analysis_samples WHERE run_id=(SELECT id FROM analysis_runs LIMIT 1) AND element_id='line-north' AND metric_id='loading'"
+            "SELECT COUNT(*) FROM analysis_values v JOIN analysis_series se ON se.id=v.series_id "
+            "WHERE se.run_id=(SELECT id FROM analysis_runs LIMIT 1) AND se.element_id='line-north' AND se.metric_id='loading'"
         ).fetchone()[0]
         == STEPS
     )

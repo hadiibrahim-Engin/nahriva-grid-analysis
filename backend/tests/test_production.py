@@ -190,13 +190,13 @@ def test_script_saves_into_the_configured_database_and_shows_the_dashboard_after
 
     def fake_launch(db, **kwargs):
         events.append(("dashboard", kwargs["host"], kwargs["port"], kwargs["production"], kwargs["reuse"]))
-        assert Path(db).is_file() and events.count("calculate") == 4  # shown only after all calculations
+        assert Path(db).is_file() and events.count("calculate") == 3  # shown only after all calculations
         return {"url": "http://127.0.0.1:8765", "lan_urls": ["http://pf-pc:8765"], "reused": False, "notes": [], "pid": 1, "process": None}
 
     monkeypatch.setattr(assessment, "launch_dashboard", fake_launch)
     assessment.main()
     assert events[-1] == ("dashboard", "0.0.0.0", 8765, True, True)  # shown after the calculation; read-only, reuses a running one
-    assert events.count("calculate") == 4  # REF and OUTAGE of two scenarios
+    assert events.count("calculate") == 3  # one REF, then OUTAGE of two scenarios
     assert any("pf-pc:8765" in line for line in printed)  # the address for other PCs is printed
     assert database.is_file()
 
@@ -211,7 +211,7 @@ def test_a_failing_dashboard_does_not_waste_the_calculation(tmp_path, monkeypatc
     monkeypatch.setattr(assessment, "launch_dashboard", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Port blocked")))
     assessment.main()
     assert any("WARN" in line and "Port blocked" in line for line in printed)
-    assert len(app.calls) == 4
+    assert len(app.calls) == 3
 
 
 def test_preflight_rejects_a_full_disk_and_an_unwritable_folder(tmp_path, monkeypatch):
@@ -280,3 +280,15 @@ def test_a_broken_dashboard_step_never_hides_the_assessment_error(tmp_path, monk
     (tmp_path / "r.sqlite3").touch()
     with pytest.raises(RuntimeError, match="restoration failed"):
         assessment.main()
+
+
+def test_preflight_refuses_a_database_of_an_earlier_version_before_any_calculation(tmp_path, monkeypatch):
+    import sqlite3
+
+    monkeypatch.setattr(assessment.shutil, "disk_usage", lambda p: type("U", (), {"free": 50e9})())
+    old = tmp_path / "old.sqlite3"
+    db = sqlite3.connect(old)
+    db.executescript("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY); INSERT INTO schema_migrations VALUES (1);")
+    db.close()
+    with pytest.raises(RuntimeError, match="earlier version"):
+        assessment.preflight(old)

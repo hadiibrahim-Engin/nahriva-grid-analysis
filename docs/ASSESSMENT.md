@@ -3,6 +3,29 @@
 Everything here works **read-only** on the SQLite file. Calculation and storage of the results are
 unchanged; the only addition is the LODF table `pf_lodf`.
 
+## How the PowerFactory script calculates
+
+`powerfactory/start_assessment.py` runs five steps and reports each one in the PowerFactory output window:
+
+1. **Check:** project, Study Case, ComStatsim, the planned outages and the scenarios (one per planned
+   outage, or the combinations in `SCENARIOS`) with their windows and equipment. Invalid names stop the
+   script before anything is calculated.
+2. **Reference (REF):** one QDS with **every** planned outage disabled (`outserv=1`, option *Planned
+   Outages* off). REF is the same for every scenario, so it is calculated once, stored once and linked to
+   every scenario.
+3. **Period check:** the outage windows are compared with the time axis REF actually covers. ComStatsim
+   can declare a longer period than it simulates (e.g. *Time period* = one month around the Study Case
+   time); then the script warns. A scenario whose window lies outside is skipped with a warning instead
+   of being saved without values. Set the ComStatsim *Time period* so that it covers the planned outages.
+4. **LODF** for the equipment of the scenarios that are calculated (see below).
+5. **Scenarios:** per scenario a complete QDS over the whole period with only its planned outages
+   enabled and the option *Planned Outages* on. PowerFactory takes the equipment out of service inside
+   the outage window and keeps it in service before and after. After saving, one line reports the
+   highest loading in the window against REF, the number of elements above 100 % and the largest rise.
+
+Every PowerFactory setting the script changes is restored after each step; a restoration failure stops
+the script. Stopping it with *Break* keeps the scenarios saved so far.
+
 ## Reading order
 
 The navigation and the page follow the path of an assessment:
@@ -16,6 +39,11 @@ The navigation and the page follow the path of an assessment:
 | Matrix | Which equipment is loaded how much in which scenario? |
 | Charts, radar | Comparison across all scenarios (loading, duration, change, LODF) |
 | Detail table | Every number, sortable |
+
+The **Grid** dropdown in the filter bar restricts the whole page to one PowerFactory grid (ElmNet),
+e.g. *D7 Grid*: the equipment dropdown, key figures, verdicts, profile, voltage, matrix, charts, radar,
+detail table and the added scenario charts. The grid of an element comes from its stored PowerFactory
+path, so it works for databases written before the filter existed. The choice is remembered per browser.
 
 Heavy sections load only when they come close to the viewport (see "Large databases").
 Explanations are off by default; open them per card with **i** or for everything with
@@ -78,10 +106,12 @@ Results in kV are judged against the limits stored with them; without limits no 
 ## LODF
 
 `powerfactory/lodf.py` calculates DC load flows (`ComLdf`, `iopt_net=2`) **before the first
-simulation**: per scenario its outage objects are switched off together and
+scenario simulation**: per scenario its outage objects are switched off together and
 `LODF = ΔP_equipment / ΣP_outaged,before` is determined (normalised with magnitudes for several
 outages; |LODF| is shown). The values are stored in `pf_lodf`, separate from the result runs. If the
 load flow fails there is a warning, the scenarios still run, and the dashboard shows "not calculated".
+Branches without a DC flow result (de-energised or isolated) are left out and named in the output;
+an outage that switches no line, transformer or coupler (e.g. a busbar) gets no LODF and is reported.
 To verify on the PowerFactory PC: the variables `m:P:bus1` / `m:P:bushv` and the assignment of outage
 objects to equipment.
 
@@ -111,7 +141,8 @@ please check timings there.
 |---|---|
 | `GET /api/simulation/across-scenarios/index` | scenarios, outages, period |
 | `GET /api/simulation/across-scenarios/{id}/cells` | reduced values of one scenario (cached) |
-| `GET /api/simulation/across-scenarios/{id}/profile` | loading profile of the most critical equipment |
+| `GET /api/simulation/across-scenarios/{id}/profile?grid=` | loading profile of the most critical equipment (of one grid) |
+| `GET /api/simulation/grids` | grids of the stored elements with their element count |
 | `GET /api/simulation/across-scenarios` | everything together (index plus all scenarios) |
 | `GET /api/simulation/outage-management` | catalog, jobs and saved scenarios |
 | `GET /api/simulation/facilities`, `.../components`, `.../timeseries/...`, `.../analytics/...` | series and analyses for the signal charts |

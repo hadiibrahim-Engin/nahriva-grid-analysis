@@ -161,3 +161,33 @@ def test_a_setting_that_never_changed_is_not_a_restoration_failure():
     app.ldf = LockedLdf("Load Flow", "ComLdf", iopt_net=0, locked=True)  # refuses every write
     with pytest.raises(lodf.LodfError, match="Could not select the DC load flow"):
         lodf.calculate(app, [{"key": "k", "equipment": [app.network.a]}], lambda branch: branch.loc_name)
+
+
+class NoResultBranch(Branch):
+    """A branch the DC load flow reports nothing for (de-energised, or no result variable)."""
+
+    def GetAttribute(self, name):
+        raise AttributeError(name)
+
+
+def test_a_branch_without_a_flow_result_is_left_out_instead_of_stopping_the_lodf():
+    import lodf
+
+    app = LodfApp()
+    silent = NoResultBranch("IS.1.2", 0.0, app.network)
+    lines = [app.network.a, app.network.b, app.network.c, silent]
+    app.GetCalcRelevantObjects = lambda pattern, *args: lines if pattern == "*.ElmLne" else []
+    messages = []
+    rows = lodf.calculate(app, [{"key": "k", "equipment": [app.network.a]}], lambda branch: branch.loc_name, messages.append)
+    assert {row[1] for row in rows} == {"B", "C"}
+    assert any("IS.1.2" in m for m in messages)  # named, so it can be checked in PowerFactory
+    assert app.ldf.iopt_net == 0
+
+
+def test_an_outage_without_branch_equipment_is_reported():
+    import lodf
+
+    app = LodfApp()
+    messages = []
+    assert lodf.calculate(app, [{"key": "k", "name": "Busbar", "equipment": []}], lambda b: b.loc_name, messages.append) == []
+    assert any("Busbar" in m and "no line" in m for m in messages)

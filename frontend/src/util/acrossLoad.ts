@@ -14,9 +14,9 @@ export interface CellsPayload {
   scenario_id: string;
   period_hours: number;
   voltage_unit: string | null;
-  lines: { id: string; name: string; class_name: string | null; type: string; ref_full: number | null; cell: AcrossCell }[];
+  lines: { id: string; name: string; class_name: string | null; type: string; grid?: string | null; ref_full: number | null; cell: AcrossCell }[];
   buses: {
-    id: string; name: string; class_name: string | null; type: string;
+    id: string; name: string; class_name: string | null; type: string; grid?: string | null;
     unit: string | null; limits: [number | null, number | null] | null; cell: AcrossBusCell;
   }[];
 }
@@ -54,7 +54,7 @@ export function mergeCells(index: AcrossIndex, parts: Record<string, CellsPayloa
     for (const item of part.lines) {
       let line = lines.get(item.id);
       if (!line) {
-        line = { id: item.id, name: item.name, class_name: item.class_name, type: item.type, base: null, cells: {} };
+        line = { id: item.id, name: item.name, class_name: item.class_name, type: item.type, grid: item.grid, base: null, cells: {} };
         lines.set(item.id, line);
       }
       if (item.ref_full !== null && (line.base === null || item.ref_full > line.base)) line.base = item.ref_full;
@@ -63,7 +63,7 @@ export function mergeCells(index: AcrossIndex, parts: Record<string, CellsPayloa
     for (const item of part.buses) {
       let bus = buses.get(item.id);
       if (!bus) {
-        bus = { id: item.id, name: item.name, class_name: item.class_name, type: item.type, unit: item.unit, limits: item.limits, cells: {} };
+        bus = { id: item.id, name: item.name, class_name: item.class_name, type: item.type, grid: item.grid, unit: item.unit, limits: item.limits, cells: {} };
         buses.set(item.id, bus);
       }
       if (bus.limits === null) bus.limits = item.limits;

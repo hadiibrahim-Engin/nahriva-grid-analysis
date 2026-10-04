@@ -16,10 +16,11 @@ backend/DEBUGGING.md
 backend/app/__init__.py
 backend/app/analysis/__init__.py
 backend/app/analysis/bootstrap.py
-backend/app/analysis/migrations/001_analysis.sql
+backend/app/analysis/migrations/002_analysis.sql
 backend/app/analysis/models.py
 backend/app/analysis/repository.py
 backend/app/analysis/schema.py
+backend/app/analysis/series.py
 backend/app/core/__init__.py
 backend/app/core/cache.py
 backend/app/core/errors.py
@@ -28,6 +29,7 @@ backend/app/main.py
 backend/app/simulation/__init__.py
 backend/app/simulation/across.py
 backend/app/simulation/data.py
+backend/app/simulation/grids.py
 backend/app/simulation/routes.py
 backend/app/simulation/settings.py
 backend/app/simulation/store.py
@@ -38,6 +40,7 @@ backend/tests/qds_fixture.py
 backend/tests/test_across_scenarios.py
 backend/tests/test_analysis.py
 backend/tests/test_cache.py
+backend/tests/test_database_layout.py
 backend/tests/test_database_selection.py
 backend/tests/test_lodf.py
 backend/tests/test_logging.py
@@ -50,6 +53,7 @@ backend/web/fetch-assets.mjs
 backend/web/package.json
 deploy/windows/uninstall.ps1
 docs/ASSESSMENT.md
+docs/DATABASE.md
 docs/DEPLOYMENT.md
 docs/POWERFACTORY.md
 frontend/.env.example
@@ -71,6 +75,8 @@ frontend/src/components/ChartTemplatePicker.tsx
 frontend/src/components/DatabasePicker.tsx
 frontend/src/components/DynamicChartCard.tsx
 frontend/src/components/ErrorBoundary.tsx
+frontend/src/components/GridFilterProvider.tsx
+frontend/src/components/GridPicker.tsx
 frontend/src/components/OutageManagement.tsx
 frontend/src/components/SearchableDropdown.tsx
 frontend/src/components/across/AcrossChartBody.tsx
@@ -119,6 +125,7 @@ frontend/src/desktop.d.ts
 frontend/src/echarts-gl.d.ts
 frontend/src/hooks/useAcrossData.ts
 frontend/src/hooks/useChartTheme.ts
+frontend/src/hooks/useGridFilter.ts
 frontend/src/hooks/useInView.ts
 frontend/src/index.css
 frontend/src/main.tsx
@@ -127,6 +134,7 @@ frontend/src/util/__tests__/acrossLoad.test.ts
 frontend/src/util/__tests__/acrossScenarios.test.ts
 frontend/src/util/__tests__/acrossSelection.test.ts
 frontend/src/util/__tests__/dynamicCharts.derived.test.ts
+frontend/src/util/__tests__/grids.test.ts
 frontend/src/util/__tests__/outageAssessment.test.ts
 frontend/src/util/__tests__/resultProvenance.test.ts
 frontend/src/util/__tests__/scenarioTemplates.test.ts
@@ -137,6 +145,7 @@ frontend/src/util/acrossScenarios.ts
 frontend/src/util/acrossSelection.ts
 frontend/src/util/dropdownOptions.ts
 frontend/src/util/dynamicCharts.ts
+frontend/src/util/grids.ts
 frontend/src/util/outageAssessment.ts
 frontend/src/util/resultProvenance.ts
 frontend/src/util/savedView.ts
@@ -154,6 +163,7 @@ powerfactory/lodf.py
 powerfactory/outage_plan.py
 powerfactory/pf_console.py
 powerfactory/pf_state.py
+powerfactory/run_summary.py
 powerfactory/start_assessment.py
 scripts/appconfig.py
 scripts/browser-smoke.js
@@ -171,6 +181,8 @@ setup.cmd
 setup.ps1
 start-app.cmd
 start-dashboard.command
+stop-dashboard.cmd
+stop-dashboard.ps1
 '@ -split '\r?\n'
 
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null

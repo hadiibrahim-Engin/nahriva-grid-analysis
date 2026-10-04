@@ -183,16 +183,16 @@ def test_named_outage_selection_and_full_results_are_persisted(tmp_path):
     job_id = queue(app, path)
     worker.execute(app, path)
     restored(app)
-    assert app.calls == [(0, ["Chosen"]), (1, ["Chosen"])]
+    assert app.calls == [(0, []), (1, ["Chosen"])]  # REF: every planned outage disabled
     with sqlite3.connect(path) as db:
         assert (
             db.execute("SELECT name FROM pf_scenarios").fetchone()[0]
             == "D7 · Maintenance North"
         )
-        assert db.execute("SELECT COUNT(*) FROM analysis_samples").fetchone()[0] == 600
+        assert db.execute("SELECT COUNT(*) FROM analysis_values").fetchone()[0] == 600
         assert (
             db.execute(
-                "SELECT COUNT(DISTINCT timestamp) FROM analysis_samples"
+                "SELECT COUNT(DISTINCT t) FROM analysis_values"
             ).fetchone()[0]
             == 300
         )
@@ -202,7 +202,8 @@ def test_named_outage_selection_and_full_results_are_persisted(tmp_path):
         )
         assert (
             db.execute(
-                "SELECT DISTINCT value FROM analysis_samples WHERE run_id LIKE '%OUTAGE'"
+                "SELECT DISTINCT v.value FROM analysis_values v JOIN analysis_series se ON se.id=v.series_id "
+                "WHERE se.run_id LIKE '%OUTAGE'"
             ).fetchone()[0]
             == 110
         )
@@ -289,7 +290,7 @@ def test_failed_sql_write_rolls_back_both_runs_and_scenario(tmp_path):
         "kind": "OUTAGE",
         "elements": [],
         "metrics": [],
-        "samples": [("unknown", "loading", "2026-01-31T00:00:00+00:00", 1, "ok")],
+        "samples": [("unknown", "loading", 1769817600, 1)],
     }
     with pytest.raises(sqlite3.IntegrityError):
         store.save_scenario(job, catalog, [bad])
@@ -324,17 +325,16 @@ def test_batch_runs_each_named_planned_outage_and_restores_state(tmp_path):
     path = tmp_path / "batch.sqlite3"
     assert assessment.run_assessment(app, path) == ["Chosen", "Other"]
     restored(app)
-    assert app.calls == [
-        (0, ["Chosen"]),
-        (1, ["Chosen"]),
-        (0, ["Other"]),
-        (1, ["Other"]),
-    ]
+    # One reference with every planned outage disabled, then one OUTAGE run per planned outage.
+    assert app.calls == [(0, []), (1, ["Chosen"]), (1, ["Other"])]
     store = ScenarioStore(str(path))
     assert {s["name"] for s in store.overview()["scenarios"]} == {"Chosen", "Other"}
-    assert (
-        store.db.execute("SELECT COUNT(*) FROM analysis_samples").fetchone()[0] == 1200
-    )
+    # The reference is stored once and linked to both scenarios: 3 runs of 300 samples.
+    assert store.db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] == 3
+    assert store.db.execute("SELECT COUNT(*) FROM analysis_values").fetchone()[0] == 900
+    refs = {r[0] for r in store.db.execute("SELECT run_id FROM pf_scenario_runs WHERE kind='REF'")}
+    assert len(refs) == 1
+    assert store.db.execute("SELECT COUNT(*) FROM pf_scenario_runs").fetchone()[0] == 4
     store.close()
 
 
@@ -352,5 +352,59 @@ def test_batch_validates_all_combinations_before_native_calculation(tmp_path):
     assert assessment.run_assessment(
         app, tmp_path / "combined.sqlite3", definitions
     ) == ["Both"]
-    assert app.calls == [(0, ["Chosen", "Other"]), (1, ["Chosen", "Other"])]
+    assert app.calls == [(0, []), (1, ["Chosen", "Other"])]
     restored(app)
+
+
+def test_outage_outside_the_simulated_period_is_skipped_not_saved_empty(tmp_path):
+    """ComStatsim may declare a longer period than it simulates (e.g. 'Time period' = one month).
+
+    Outage windows are compared with the time axis PowerFactory actually calculated."""
+    assessment = assessment_module()
+    app = App()
+    messages = []
+    app.PrintPlain = messages.append
+    late = app.original.times[-1] + 30 * 86400  # one month after the last simulated point
+    app.outages[1].starttime, app.outages[1].endtime = late, late + 86400
+    app.qds.endTime = late + 86400  # declared: covers both outages; simulated: only the first
+    path = tmp_path / "period.sqlite3"
+    assert assessment.run_assessment(app, path) == ["Chosen"]
+    assert app.calls == [(0, []), (1, ["Chosen"])]  # no OUTAGE run whose window cannot be in the results
+    assert any("WARN" in m and "Other" in m and "outside the simulated period" in m for m in messages)
+    assert any("declares" in m for m in messages)  # the period mismatch itself is reported
+    store = ScenarioStore(str(path))
+    assert [s["name"] for s in store.overview()["scenarios"]] == ["Chosen"]
+    assert store.catalog()["period"] == [app.original.times[0], app.original.times[-1]]
+    store.close()
+    restored(app)
+
+
+def test_no_scenario_in_the_simulated_period_stops_with_a_clear_message(tmp_path):
+    assessment = assessment_module()
+    app = App()
+    late = app.original.times[-1] + 30 * 86400
+    for outage in app.outages:
+        outage.starttime, outage.endtime = late, late + 86400
+    app.qds.endTime = late + 86400
+    with pytest.raises(RuntimeError, match="Time period"):
+        assessment.run_assessment(app, tmp_path / "none.sqlite3")
+    assert app.calls == [(0, [])]  # only the reference was calculated
+    restored(app)
+
+
+def test_output_shows_each_step_and_the_result_of_each_scenario(tmp_path):
+    assessment = assessment_module()
+    app = App()
+    messages = []
+    app.PrintPlain = messages.append
+    assessment.run_assessment(app, tmp_path / "output.sqlite3")
+    text = "\n".join(messages)
+    for number in range(1, 6):
+        assert f"Step {number}/5" in text
+    assert "Scenario 2/2: Other" in text
+    # what the OUTAGE run does, in plain words
+    assert "'Chosen' enabled, active" in text and "keeps it in service before and after" in text
+    assert "highest loading 110.0 % (Line A), REF 90.0 %" in text
+    assert "Summary: 2 scenarios saved, 0 skipped" in text
+    # the planned outages a case disables on purpose are counted, not warned about one by one
+    assert "Outage object is disabled" not in text

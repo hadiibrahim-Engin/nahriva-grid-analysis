@@ -80,28 +80,40 @@ def _execute(ldf):
 
 
 def _flows(ldf, monitored):
+    """Flows of the branches PowerFactory reports one for, and the branches it reports none for."""
     _execute(ldf)
-    flows = {}
+    flows, missing = {}, []
     for branch in monitored:
         value = _flow(branch)
         if value is None:
-            raise LodfError("No flow result for " + engine.object_name(branch))
-        flows[engine.object_key(branch)] = value
-    return flows
+            missing.append(branch)
+        else:
+            flows[engine.object_key(branch)] = value
+    return flows, missing
 
 
-def _outage_rows(ldf, monitored, before, scenario, element_id):
+def _names(branches, limit=5):
+    names = [engine.object_name(b) for b in branches[:limit]]
+    return ", ".join(names) + (" and {} more".format(len(branches) - limit) if len(branches) > limit else "")
+
+
+def _outage_rows(ldf, monitored, before, scenario, element_id, log):
     """LODF rows of one scenario; the switched-off branches are put back before this returns."""
     equipment = scenario["equipment"]
+    label = scenario.get("name") or scenario["key"]
+    if not equipment:
+        log("LODF '{}': the outage switches no line, transformer or coupler; no LODF.".format(label))
+        return []
     with StateGuard() as guard:
         for branch in equipment:
             if not guard.set(branch, "outserv", 1, "outserv of " + engine.object_name(branch)):
                 raise LodfError("Could not switch off " + engine.object_name(branch))
-        after = _flows(ldf, [b for b in monitored if b not in equipment])
+        after, _missing = _flows(ldf, [b for b in monitored if b not in equipment])
     keys = {engine.object_key(b) for b in equipment}
     lost = [before[k] for k in keys if k in before]
     denominator = sum(lost) if len(lost) == 1 else sum(abs(v) for v in lost)
     if abs(denominator) < MIN_FLOW:
+        log("LODF '{}': {} carries no flow before the outage; no LODF.".format(label, _names(equipment)))
         return []
     rows = []
     for branch in monitored:
@@ -115,11 +127,12 @@ def _outage_rows(ldf, monitored, before, scenario, element_id):
     return rows
 
 
-def calculate(app, scenarios, element_id):
+def calculate(app, scenarios, element_id, log=lambda message: None):
     """Return LODF rows (outage_key, element_id, lodf, p_pre, p_post).
 
-    `scenarios` is a list of {"key": str, "equipment": [branch objects]};
-    `element_id` maps a branch object to the identifier stored in the results.
+    `scenarios` is a list of {"key": str, "name": str (optional), "equipment": [branch objects]};
+    `element_id` maps a branch object to the identifier stored in the results; `log` receives notes
+    about branches and scenarios that get no LODF.
     LodfError: nothing could be calculated, the state is unchanged.
     StateRestoreError: a setting could not be put back (and says what stopped the calculation).
     """
@@ -133,8 +146,15 @@ def calculate(app, scenarios, element_id):
     with StateGuard() as guard:
         if not guard.set(ldf, "iopt_net", DC_LOAD_FLOW, "ComLdf.iopt_net"):
             raise LodfError("Could not select the DC load flow (ComLdf.iopt_net is not readable or not writable).")
-        before = _flows(ldf, monitored)
+        before, missing = _flows(ldf, monitored)
+        if missing:
+            # De-energised or isolated branches have no DC flow; they cannot take part, the rest can.
+            log("LODF: {} of {} branches have no DC flow result and are left out: {}.".format(
+                len(missing), len(monitored), _names(missing)))
+            monitored = [b for b in monitored if b not in missing]
+        if not before:
+            raise LodfError("The DC load flow reports no branch flow; LODF was not calculated.")
         for scenario in scenarios:
-            if scenario["equipment"]:
-                rows.extend(_outage_rows(ldf, monitored, before, scenario, element_id))
+            rows.extend(_outage_rows(ldf, monitored, before, scenario, element_id, log))
+    log("LODF: {} values for {} scenarios.".format(len(rows), len({row[0] for row in rows})))
     return rows

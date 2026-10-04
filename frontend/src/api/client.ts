@@ -92,11 +92,13 @@ export interface GridComponent {
   facility_id: string;
   name: string;
   class_name?: string | null;
+  /** PowerFactory grid (ElmNet) of the element, '' when it has none. */
+  grid?: string | null;
 }
 
 export async function getComponentsByFacility(facilityId: string, opts?: CacheOptions): Promise<GridComponent[]> {
   return withCache(
-    `components|${facilityId}`,
+    `components2|${facilityId}`, // 2: with the grid of each element
     async () => {
       const res = await api.get(`/facilities/${facilityId}/components`);
       return res.data;

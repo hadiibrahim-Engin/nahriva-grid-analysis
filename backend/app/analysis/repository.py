@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 from threading import RLock
 from app.analysis import schema
+from app.analysis.series import insert_values
 from app.analysis.models import RunBundle
 from app.core.errors import ResourceNotFoundError
 
@@ -17,15 +18,9 @@ class AnalysisRepository:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.execute("PRAGMA busy_timeout=5000")
-        # Refuse a future schema instead of silently treating it as version 1.
-        exists = self.db.execute(
-            "SELECT name FROM sqlite_master WHERE name='schema_migrations'"
-        ).fetchone()
-        if exists and self.db.execute(
-            "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] not in (None, 1):
-            raise RuntimeError("Unsupported analysis schema version")
-        schema.apply(self.db)
+        # Another schema version is refused, never read with the wrong layout.
+        if schema.check_version(self.db) is None:  # only a new file is set up; an existing one is not written
+            schema.apply(self.db)
 
     def close(self):
         self.db.close()
@@ -56,28 +51,28 @@ class AnalysisRepository:
                     for m in bundle.metrics
                 ],
             )
-            self.db.executemany(
-                "INSERT INTO analysis_samples VALUES (?,?,?,?,?,?)",
-                [
-                    (
-                        r.id,
-                        s.element_id,
-                        s.metric_id,
-                        s.timestamp.isoformat(),
-                        s.value,
-                        s.status,
-                    )
+            # A failed sample carries no usable value: stored as NULL like any missing value.
+            insert_values(
+                self.db,
+                r.id,
+                (
+                    (s.element_id, s.metric_id, s.timestamp, None if s.status == "failed" else s.value)
                     for s in bundle.samples
-                ],
+                ),
             )
 
     def runs(self):
-        return self._all("""SELECT r.*, MIN(s.timestamp) start, MAX(s.timestamp) end,
-            COUNT(s.timestamp) sample_count FROM analysis_runs r LEFT JOIN analysis_samples s
-            ON s.run_id=r.id GROUP BY r.id ORDER BY r.id""")
+        # No join with the samples: that read every stored value on each call.
+        return self._all("SELECT * FROM analysis_runs ORDER BY id")
+
+    def sample_count(self, run_id):
+        return self._all(
+            "SELECT COUNT(*) n FROM analysis_series se JOIN analysis_values v ON v.series_id=se.id WHERE se.run_id=?",
+            (run_id,),
+        )[0]["n"]
 
     def run(self, run_id):
-        rows = [r for r in self.runs() if r["id"] == run_id]
+        rows = self._all("SELECT * FROM analysis_runs WHERE id=?", (run_id,))
         if not rows:
             raise ResourceNotFoundError("Simulation run not found.")
         return rows[0]

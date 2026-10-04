@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.analysis import schema
+from app.analysis.series import insert_values
 
 
 def now():
@@ -28,6 +29,115 @@ def outage_key(outage_ids):
     return ",".join(sorted(outage_ids))
 
 
+# Tables of the PowerFactory bridge, next to the analysis tables of app/analysis/migrations.
+PF_TABLES = """
+    CREATE TABLE IF NOT EXISTS pf_catalog (
+        id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS pf_jobs (
+        id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL,
+        status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT,
+        finished_at TEXT, message TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS pf_scenarios (
+        id TEXT PRIMARY KEY REFERENCES pf_jobs(id), name TEXT NOT NULL,
+        project TEXT NOT NULL, study_case TEXT NOT NULL,
+        outages TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS pf_scenario_runs (
+        scenario_id TEXT NOT NULL REFERENCES pf_scenarios(id),
+        run_id TEXT NOT NULL REFERENCES analysis_runs(id), kind TEXT NOT NULL,
+        PRIMARY KEY(scenario_id, run_id)
+    );
+    CREATE TABLE IF NOT EXISTS pf_scenario_provenance (
+        scenario_id TEXT PRIMARY KEY REFERENCES pf_scenarios(id),
+        payload TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS pf_element_limits (
+        run_id TEXT NOT NULL, element_id TEXT NOT NULL, metric_id TEXT NOT NULL,
+        lower REAL, upper REAL, PRIMARY KEY(run_id,element_id,metric_id),
+        FOREIGN KEY(run_id,element_id) REFERENCES analysis_elements(run_id,id)
+    );
+    CREATE TABLE IF NOT EXISTS pf_lodf (
+        outage_key TEXT NOT NULL, element_id TEXT NOT NULL,
+        lodf REAL NOT NULL, p_pre REAL, p_post REAL, computed_at TEXT NOT NULL,
+        PRIMARY KEY(outage_key, element_id)
+    );
+"""
+
+# The grid (ElmNet) from an element's PowerFactory path: the folder name before ".ElmNet", the same
+# value app/simulation/grids.py gives the dashboard ('' without a grid).
+_PREFIX = "substr(e.path, 1, instr(e.path, '.ElmNet') - 1)"
+GRID_SQL = (
+    "CASE WHEN instr(e.path, '.ElmNet') > 0 THEN "
+    "replace(" + _PREFIX + ", rtrim(" + _PREFIX + ", replace(" + _PREFIX + ", '\\', '')), '') ELSE '' END"
+)
+
+# Read-only views for Excel / Power BI / Python: names instead of hashed identifiers, one row per value.
+# They change nothing about how the dashboard reads; see docs/DATABASE.md.
+VIEWS = """
+    DROP VIEW IF EXISTS v_scenarios;
+    CREATE VIEW v_scenarios AS
+    SELECT s.id AS scenario_id, s.name AS scenario, s.project, s.study_case, s.created_at,
+           s.outages AS outage_ids,
+           (SELECT r.run_id FROM pf_scenario_runs r WHERE r.scenario_id = s.id AND r.kind = 'REF') AS ref_run_id,
+           (SELECT r.run_id FROM pf_scenario_runs r WHERE r.scenario_id = s.id AND r.kind = 'OUTAGE') AS outage_run_id
+    FROM pf_scenarios s;
+
+    DROP VIEW IF EXISTS v_elements;
+    CREATE VIEW v_elements AS
+    SELECT e.run_id, e.id AS element_id, e.name AS element, e.className AS element_class,
+           e.type AS element_type, {grid} AS grid, e.path
+    FROM analysis_elements e;
+
+    DROP VIEW IF EXISTS v_series;
+    CREATE VIEW v_series AS
+    SELECT se.id AS series_id, se.run_id, r.name AS run, se.metric_id AS metric, m.unit,
+           e.id AS element_id, e.name AS element, e.className AS element_class, e.type AS element_type,
+           {grid} AS grid
+    FROM analysis_series se
+    JOIN analysis_runs r ON r.id = se.run_id
+    JOIN analysis_metrics m ON m.run_id = se.run_id AND m.id = se.metric_id
+    JOIN analysis_elements e ON e.run_id = se.run_id AND e.id = se.element_id;
+
+    DROP VIEW IF EXISTS v_samples;
+    CREATE VIEW v_samples AS
+    SELECT sc.id AS scenario_id, sc.name AS scenario, r.kind AS case_kind, r.run_id,
+           e.id AS element_id, e.name AS element, e.className AS element_class, e.type AS element_type,
+           {grid} AS grid, m.id AS metric, m.unit,
+           datetime(v.t, 'unixepoch') AS timestamp_utc, v.t AS epoch, v.value
+    FROM pf_scenarios sc
+    JOIN pf_scenario_runs r ON r.scenario_id = sc.id
+    JOIN analysis_series se ON se.run_id = r.run_id
+    JOIN analysis_values v ON v.series_id = se.id
+    JOIN analysis_metrics m ON m.run_id = se.run_id AND m.id = se.metric_id
+    JOIN analysis_elements e ON e.run_id = se.run_id AND e.id = se.element_id;
+
+    DROP VIEW IF EXISTS v_lodf;
+    CREATE VIEW v_lodf AS
+    SELECT sc.id AS scenario_id, sc.name AS scenario, l.outage_key, e.id AS element_id, e.name AS element,
+           e.className AS element_class, {grid} AS grid, l.lodf, l.p_pre, l.p_post, l.computed_at
+    FROM pf_scenarios sc
+    JOIN pf_scenario_runs r ON r.scenario_id = sc.id AND r.kind = 'OUTAGE'
+    JOIN pf_lodf l ON l.outage_key = (
+        SELECT group_concat(value, ',') FROM (SELECT value FROM json_each(sc.outages) ORDER BY value))
+    JOIN analysis_elements e ON e.run_id = r.run_id AND e.id = l.element_id;
+
+    DROP VIEW IF EXISTS v_planned_outages;
+    CREATE VIEW v_planned_outages AS
+    SELECT json_extract(o.value, '$.id') AS outage_id, json_extract(o.value, '$.name') AS outage,
+           json_extract(o.value, '$.equipment_name') AS equipment,
+           datetime(json_extract(o.value, '$.start'), 'unixepoch') AS start_utc,
+           datetime(json_extract(o.value, '$.end'), 'unixepoch') AS end_utc,
+           json_extract(o.value, '$.in_period') AS in_simulated_period, json_extract(o.value, '$.path') AS path
+    FROM pf_catalog c, json_each(c.payload, '$.outages') o;
+""".format(grid=GRID_SQL)
+
+# PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
+# database is brought up to date once when it is next opened.
+LAYOUT_VERSION = 3
+
+
 class ScenarioStore:
     def __init__(self, path):
         Path(path).resolve().parent.mkdir(parents=True, exist_ok=True)
@@ -36,42 +146,24 @@ class ScenarioStore:
         self.db = sqlite3.connect(path, timeout=30, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
+        # WAL with NORMAL sync: a commit is safe against a crashed process; only a power loss can
+        # lose the very last commit. Much faster saves of large scenarios.
+        self.db.execute("PRAGMA synchronous=NORMAL")
+        self.db.execute("PRAGMA temp_store=MEMORY")
+        try:
+            schema.check_version(self.db)
+        except schema.OutdatedDatabaseError:
+            self.db.close()
+            raise
+        if schema.needs_setup(self.db, LAYOUT_VERSION):
+            self._set_up()
+
+    def _set_up(self):
+        """Create what is missing; runs once per database file, not on every request."""
         self.db.execute("PRAGMA journal_mode=WAL")
         schema.apply(self.db)
-        self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS pf_catalog (
-                id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL, updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS pf_jobs (
-                id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL,
-                status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT,
-                finished_at TEXT, message TEXT NOT NULL DEFAULT ''
-            );
-            CREATE TABLE IF NOT EXISTS pf_scenarios (
-                id TEXT PRIMARY KEY REFERENCES pf_jobs(id), name TEXT NOT NULL,
-                project TEXT NOT NULL, study_case TEXT NOT NULL,
-                outages TEXT NOT NULL, created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS pf_scenario_runs (
-                scenario_id TEXT NOT NULL REFERENCES pf_scenarios(id),
-                run_id TEXT NOT NULL REFERENCES analysis_runs(id), kind TEXT NOT NULL,
-                PRIMARY KEY(scenario_id, run_id)
-            );
-            CREATE TABLE IF NOT EXISTS pf_scenario_provenance (
-                scenario_id TEXT PRIMARY KEY REFERENCES pf_scenarios(id),
-                payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS pf_element_limits (
-                run_id TEXT NOT NULL, element_id TEXT NOT NULL, metric_id TEXT NOT NULL,
-                lower REAL, upper REAL, PRIMARY KEY(run_id,element_id,metric_id),
-                FOREIGN KEY(run_id,element_id) REFERENCES analysis_elements(run_id,id)
-            );
-            CREATE TABLE IF NOT EXISTS pf_lodf (
-                outage_key TEXT NOT NULL, element_id TEXT NOT NULL,
-                lodf REAL NOT NULL, p_pre REAL, p_post REAL, computed_at TEXT NOT NULL,
-                PRIMARY KEY(outage_key, element_id)
-            );
-        """)
+        self.db.executescript(PF_TABLES + VIEWS)
+        schema.mark_set_up(self.db, LAYOUT_VERSION)
 
     def close(self):
         self.db.close()
@@ -157,7 +249,12 @@ class ScenarioStore:
             )
 
     def save_scenario(self, job, catalog, runs):
-        """Commit the named scenario and all its result rows together after restoration."""
+        """Commit the named scenario and all its result rows together after restoration.
+
+        A run may carry its own `run_id` and `name`; with `shared` it is written only once and every
+        further scenario of the batch is linked to it (the reference with all planned outages disabled).
+        Samples are (element_id, metric_id, time, value) with time in epoch seconds (or ISO text).
+        """
         with self.db:
             self.db.execute(
                 "INSERT INTO pf_scenarios VALUES(?,?,?,?,?,?)",
@@ -175,12 +272,20 @@ class ScenarioStore:
                 (job["id"], json.dumps({k: v for k, v in catalog.items() if k not in ("outages", "updated_at")})),
             )
             for run in runs:
-                run_id = job["id"] + "-" + run["kind"]
+                run_id = run.get("run_id") or job["id"] + "-" + run["kind"]
+                if run.get("shared") and self.db.execute(
+                    "SELECT 1 FROM analysis_runs WHERE id=?", (run_id,)
+                ).fetchone():
+                    self.db.execute(
+                        "INSERT INTO pf_scenario_runs VALUES(?,?,?)",
+                        (job["id"], run_id, run["kind"]),
+                    )
+                    continue
                 self.db.execute(
                     "INSERT INTO analysis_runs VALUES(?,?,?,?,?,?)",
                     (
                         run_id,
-                        job["payload"]["name"] + " · " + run["kind"],
+                        run.get("name") or job["payload"]["name"] + " · " + run["kind"],
                         catalog["project"],
                         catalog["study_case"],
                         run.get("source", "PowerFactory"),
@@ -195,10 +300,7 @@ class ScenarioStore:
                     "INSERT INTO analysis_metrics VALUES(?,?,?,?,?,?)",
                     [(run_id, *metric) for metric in run["metrics"]],
                 )
-                self.db.executemany(
-                    "INSERT INTO analysis_samples VALUES(?,?,?,?,?,?)",
-                    ((run_id, *sample) for sample in run["samples"]),
-                )
+                insert_values(self.db, run_id, run["samples"])
                 self.db.execute(
                     "INSERT INTO pf_scenario_runs VALUES(?,?,?)",
                     (job["id"], run_id, run["kind"]),

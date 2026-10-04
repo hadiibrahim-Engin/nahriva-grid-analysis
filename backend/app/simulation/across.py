@@ -28,6 +28,7 @@ import json
 from datetime import datetime, timezone
 
 from app.core.cache import TTLCache
+from app.simulation.grids import grid_name
 from app.simulation.store import outage_key
 
 LOADING = "loading"
@@ -41,21 +42,38 @@ def _iso(epoch):
     return datetime.fromtimestamp(epoch, timezone.utc).isoformat()
 
 
-def _window_clause(windows):
+# Every value of one metric of one run: the series of the run, each read as one contiguous range.
+_VALUES = (
+    " FROM analysis_series se JOIN analysis_values v ON v.series_id = se.id"
+    " WHERE se.run_id=? AND se.metric_id=? AND v.value IS NOT NULL"
+)
+
+
+def _window_expr(windows):
+    """SQL condition 'v.t lies inside one of the outage windows' (always true without windows)."""
     if not windows:
-        return "", []
+        return "1", []
     parts, params = [], []
     for start, end in windows:
-        parts.append("(timestamp>=? AND timestamp<=?)")
-        params += [_iso(start), _iso(end)]
-    return " AND (" + " OR ".join(parts) + ")", params
+        parts.append("(v.t>=? AND v.t<=?)")
+        params += [start, end]
+    return " OR ".join(parts), params
+
+
+def _window_clause(windows):
+    expr, params = _window_expr(windows)
+    return ("", []) if not windows else (" AND (" + expr + ")", params)
+
+
+def _step_hours(row):
+    """Time step of a series in hours, from its first and last time and the number of values."""
+    return (row["t1"] - row["t0"]) / (row["n"] - 1) / 3600 if row["n"] > 1 else 0.0
 
 
 def _extremes(db, run_id, windows=None):
     clause, params = _window_clause(windows)
     rows = db.execute(
-        "SELECT element_id, MAX(value) hi FROM analysis_samples "
-        "WHERE run_id=? AND metric_id=? AND value IS NOT NULL" + clause + " GROUP BY element_id",
+        "SELECT se.element_id, MAX(v.value) hi" + _VALUES + clause + " GROUP BY se.element_id",
         (run_id, LOADING, *params),
     )
     return {row["element_id"]: row["hi"] for row in rows}
@@ -64,8 +82,7 @@ def _extremes(db, run_id, windows=None):
 def _voltage_range(db, run_id, windows=None):
     clause, params = _window_clause(windows)
     rows = db.execute(
-        "SELECT element_id, MIN(value) lo, MAX(value) hi FROM analysis_samples "
-        "WHERE run_id=? AND metric_id=? AND value IS NOT NULL" + clause + " GROUP BY element_id",
+        "SELECT se.element_id, MIN(v.value) lo, MAX(v.value) hi" + _VALUES + clause + " GROUP BY se.element_id",
         (run_id, VOLTAGE, *params),
     )
     return {row["element_id"]: [row["lo"], row["hi"]] for row in rows}
@@ -87,57 +104,34 @@ def _voltage_unit(db, run_id):
 def _hours_outside(db, run_id):
     """Per busbar: hours outside the stored voltage band over the whole simulation period."""
     rows = db.execute(
-        "SELECT s.element_id, COUNT(*) n, MIN(s.timestamp) t0, MAX(s.timestamp) t1, "
-        "SUM(CASE WHEN s.value < COALESCE(l.lower,-1e9) OR s.value > COALESCE(l.upper,1e9) THEN 1 ELSE 0 END) bad "
-        "FROM analysis_samples s JOIN pf_element_limits l "
-        "ON l.run_id=s.run_id AND l.element_id=s.element_id AND l.metric_id=s.metric_id "
-        "WHERE s.run_id=? AND s.metric_id=? AND s.value IS NOT NULL GROUP BY s.element_id",
+        "SELECT se.element_id, COUNT(*) n, MIN(v.t) t0, MAX(v.t) t1, "
+        "SUM(CASE WHEN v.value < COALESCE(l.lower,-1e9) OR v.value > COALESCE(l.upper,1e9) THEN 1 ELSE 0 END) bad"
+        + _VALUES.replace(" WHERE", " JOIN pf_element_limits l"
+                          " ON l.run_id=se.run_id AND l.element_id=se.element_id AND l.metric_id=se.metric_id WHERE")
+        + " GROUP BY se.element_id",
         (run_id, VOLTAGE),
     ).fetchall()
-    result = {}
-    for row in rows:
-        step = 0.0
-        if row["n"] > 1:
-            span = datetime.fromisoformat(row["t1"]) - datetime.fromisoformat(row["t0"])
-            step = span.total_seconds() / (row["n"] - 1) / 3600
-        result[row["element_id"]] = (row["bad"] or 0) * step
-    return result
-
-
-def _window_expr(windows):
-    """SQL condition 'timestamp lies inside one of the outage windows' (always true without windows)."""
-    if not windows:
-        return "1", []
-    parts, params = [], []
-    for start, end in windows:
-        parts.append("(timestamp>=? AND timestamp<=?)")
-        params += [_iso(start), _iso(end)]
-    return " OR ".join(parts), params
+    return {row["element_id"]: (row["bad"] or 0) * _step_hours(row) for row in rows}
 
 
 def _loading_stats(db, run_id, windows, limits):
     """One grouped pass per run: full and in-window maximum, hours above each limit, period."""
     expr, wparams = _window_expr(windows)
-    over = ",".join("SUM(CASE WHEN value>? THEN 1 ELSE 0 END)" for _ in limits)
+    over = ",".join("SUM(CASE WHEN v.value>? THEN 1 ELSE 0 END)" for _ in limits)
     rows = db.execute(
-        "SELECT element_id, COUNT(*) n, MIN(timestamp) t0, MAX(timestamp) t1, MAX(value) full_max, "
-        "MAX(CASE WHEN " + expr + " THEN value END) win_max, " + over +
-        " FROM analysis_samples WHERE run_id=? AND metric_id=? AND value IS NOT NULL GROUP BY element_id",
+        "SELECT se.element_id, COUNT(*) n, MIN(v.t) t0, MAX(v.t) t1, MAX(v.value) full_max, "
+        "MAX(CASE WHEN " + expr + " THEN v.value END) win_max, " + over + _VALUES + " GROUP BY se.element_id",
         (*wparams, *limits, run_id, LOADING),
     ).fetchall()
     result = {}
     for row in rows:
-        n = row["n"]
-        step = 0.0
-        if n > 1:
-            span = datetime.fromisoformat(row["t1"]) - datetime.fromisoformat(row["t0"])
-            step = span.total_seconds() / (n - 1) / 3600
+        step = _step_hours(row)
         counts = [row[i] or 0 for i in range(6, 6 + len(limits))]
         result[row["element_id"]] = {
             "full_max": row["full_max"],
             "win_max": row["win_max"],
             "hours_over": [c * step for c in counts],
-            "period": n * step,
+            "period": row["n"] * step,
         }
     return result
 
@@ -237,6 +231,7 @@ def _branch_rows(elements, ref, out, equipment, lodf):
                 "name": element["name"],
                 "class_name": element["className"],
                 "type": element["type"],
+                "grid": grid_name(element["path"]),
                 "ref_full": ref_stats["full_max"],
                 "cell": {
                     "outaged": outaged,
@@ -267,6 +262,7 @@ def _bus_rows(db, runs, windows, elements, equipment, unit):
                 "name": element["name"],
                 "class_name": element["className"],
                 "type": element["type"],
+                "grid": grid_name(element["path"]),
                 "unit": unit,
                 "limits": band.get(element_id),
                 "cell": {
@@ -293,7 +289,7 @@ def _scenario_cells(store, scenario_id, limits):
     }
     elements = {
         e["id"]: e
-        for e in db.execute("SELECT id, name, className, type FROM analysis_elements WHERE run_id=?", (runs["OUTAGE"],))
+        for e in db.execute("SELECT id, name, className, type, path FROM analysis_elements WHERE run_id=?", (runs["OUTAGE"],))
     }
     ref = _loading_stats(db, runs["REF"], windows, limits)
     out = _loading_stats(db, runs["OUTAGE"], windows, limits)
@@ -319,7 +315,7 @@ def merge_cells(index, cells_by_scenario, limits=DEFAULT_LIMITS):
         for item in part["lines"]:
             entry = lines.setdefault(
                 item["id"],
-                {k: item[k] for k in ("id", "name", "class_name", "type")} | {"base": None, "cells": {}},
+                {k: item.get(k) for k in ("id", "name", "class_name", "type", "grid")} | {"base": None, "cells": {}},
             )
             if entry["base"] is None or (item["ref_full"] is not None and item["ref_full"] > entry["base"]):
                 entry["base"] = item["ref_full"]
@@ -327,7 +323,7 @@ def merge_cells(index, cells_by_scenario, limits=DEFAULT_LIMITS):
         for item in part["buses"]:
             entry = buses.setdefault(
                 item["id"],
-                {k: item[k] for k in ("id", "name", "class_name", "type", "unit", "limits")} | {"cells": {}},
+                {k: item.get(k) for k in ("id", "name", "class_name", "type", "grid", "unit", "limits")} | {"cells": {}},
             )
             if entry["limits"] is None:
                 entry["limits"] = item["limits"]
@@ -353,8 +349,8 @@ def across_scenarios(store, limits=DEFAULT_LIMITS):
     return merge_cells(index, cells, limits)
 
 
-def scenario_profile(store, scenario_id, top=5, points=240):
-    """Loading over time of the most critical branches of one scenario.
+def scenario_profile(store, scenario_id, top=5, points=240, grid=None):
+    """Loading over time of the most critical branches of one scenario (of one grid, when `grid` is given).
 
     The elements switched off in the scenario are left out. Series are reduced to at
     most `points` buckets by their maximum, so short peaks are never averaged away.
@@ -377,9 +373,9 @@ def scenario_profile(store, scenario_id, top=5, points=240):
     elements = {
         e["id"]: e
         for e in db.execute(
-            "SELECT id, name, className, type FROM analysis_elements WHERE run_id=?", (runs["OUTAGE"],)
+            "SELECT id, name, className, type, path FROM analysis_elements WHERE run_id=?", (runs["OUTAGE"],)
         )
-        if e["type"] != "bus" and e["name"] not in equipment
+        if e["type"] != "bus" and e["name"] not in equipment and (grid is None or grid_name(e["path"]) == grid)
     }
     peaks = _extremes(db, runs["OUTAGE"], windows)
     ranked = sorted((i for i in peaks if i in elements), key=lambda i: peaks[i], reverse=True)[: max(1, top)]
@@ -391,11 +387,11 @@ def scenario_profile(store, scenario_id, top=5, points=240):
     def samples(run_id):
         result = {}
         for r in db.execute(
-            "SELECT element_id, timestamp, value FROM analysis_samples WHERE run_id=? AND metric_id=? "
-            "AND element_id IN (" + marks + ") ORDER BY timestamp",
+            "SELECT se.element_id, v.t, v.value FROM analysis_series se JOIN analysis_values v ON v.series_id = se.id "
+            "WHERE se.run_id=? AND se.metric_id=? AND se.element_id IN (" + marks + ") ORDER BY v.t",
             (run_id, LOADING, *ranked),
         ):
-            result.setdefault(r["element_id"], []).append((r["timestamp"], r["value"]))
+            result.setdefault(r["element_id"], []).append((r["t"], r["value"]))
         return result
 
     out, ref = samples(runs["OUTAGE"]), samples(runs["REF"])
@@ -423,4 +419,4 @@ def scenario_profile(store, scenario_id, top=5, points=240):
         }
         for i in ranked
     ]
-    return {"scenario_id": scenario_id, "times": times, "windows": windows, "series": series}
+    return {"scenario_id": scenario_id, "times": [_iso(t) for t in times], "windows": windows, "series": series}

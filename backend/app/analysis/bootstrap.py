@@ -5,6 +5,7 @@ from contextlib import closing
 import sqlite3
 from threading import RLock
 from app.simulation import settings
+from app.analysis import schema
 from app.analysis.repository import AnalysisRepository
 
 _repositories = {}
@@ -34,7 +35,8 @@ def select_database(value):
                 "analysis_runs",
                 "analysis_elements",
                 "analysis_metrics",
-                "analysis_samples",
+                "analysis_series",
+                "analysis_values",
                 "pf_catalog",
                 "pf_jobs",
                 "pf_scenarios",
@@ -47,19 +49,16 @@ def select_database(value):
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
             }
+            if "schema_migrations" in tables:
+                schema.check_version(db)  # an earlier version is named as such, not as "not a results database"
             if not required.issubset(tables):
                 raise ValueError(
                     "The file is not an Outage Assessment results database."
                 )
-            if (
-                db.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-                != 1
-            ):
-                raise ValueError("The database version is not supported.")
             if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise ValueError("The SQLite database is corrupt.")
             db.execute(
-                "SELECT run_id, element_id, metric_id, timestamp, value, status FROM analysis_samples LIMIT 0"
+                "SELECT series_id, t, value FROM analysis_values LIMIT 0"
             )
             db.execute(
                 "SELECT id, name, project, study_case, source, status FROM analysis_runs LIMIT 0"

@@ -31,3 +31,25 @@ def scenario_plan(catalog, definitions=None):
             )
         plan.append({"name": name, "outage_ids": ids})
     return plan
+
+
+def split_by_period(plan, catalog):
+    """Scenarios whose outages all lie in the catalogue's period, and the others with the outages outside
+    (catalogue entries; an id the catalogue does not know is given as {"id": ..., "name": ...}).
+
+    PowerFactory applies an outage only inside its own window; a scenario whose window is not part of the
+    simulated period would produce an OUTAGE run identical to the reference and no values in the dashboard.
+    """
+    by_id = {o["id"]: o for o in catalog["outages"]}
+    runnable, skipped = [], []
+    for selection in plan:
+        outside = [
+            by_id.get(i, {"id": i, "name": i})
+            for i in selection["outage_ids"]
+            if not by_id.get(i, {}).get("in_period")
+        ]
+        if outside:
+            skipped.append((selection, outside))
+        else:
+            runnable.append(selection)
+    return runnable, skipped

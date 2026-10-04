@@ -28,6 +28,8 @@ INCLUDE = [
     "deploy",
     "setup.ps1",
     "setup.cmd",
+    "stop-dashboard.ps1",
+    "stop-dashboard.cmd",
     "docs",
     "README.md",
     "BIG_PICTURE.md",

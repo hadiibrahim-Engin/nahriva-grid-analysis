@@ -9,6 +9,8 @@ import { useChartTheme } from '../../hooks/useChartTheme';
 import { escapeHtml, readAcrossColors, withAlpha } from '../../util/acrossColors';
 import { SUMMARY_IDS, fmtPct } from '../../util/acrossScenarios';
 import { SectionCard } from './shared';
+import { useGridFilter } from '../../hooks/useGridFilter';
+import { gridLabel, type GridSelection } from '../../util/grids';
 
 echarts.use([LineChart, GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent, CanvasRenderer]);
 
@@ -26,18 +28,20 @@ interface Profile {
 export default function ScenarioProfile({ scenarioId, label, refreshKey }: { scenarioId: string; label: string; refreshKey: number }) {
   const theme = useChartTheme();
   const colors = useMemo(() => readAcrossColors(theme.isLight), [theme.isLight]);
-  const [loaded, setLoaded] = useState<{ id: string; profile: Profile } | null>(null);
+  const { grid } = useGridFilter();
+  const [loaded, setLoaded] = useState<{ id: string; grid: GridSelection; profile: Profile } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    api.get<Profile>(`/across-scenarios/${encodeURIComponent(scenarioId)}/profile`, { params: { top: 5, points: 300 } })
-      .then((response) => { if (active) { setLoaded({ id: scenarioId, profile: response.data }); setFailed(null); } })
+    const params = { top: 5, points: 300, ...(grid === null ? {} : { grid }) };
+    api.get<Profile>(`/across-scenarios/${encodeURIComponent(scenarioId)}/profile`, { params })
+      .then((response) => { if (active) { setLoaded({ id: scenarioId, grid, profile: response.data }); setFailed(null); } })
       .catch(() => { if (active) setFailed(scenarioId); });
     return () => { active = false; };
-  }, [scenarioId, refreshKey]);
+  }, [scenarioId, refreshKey, grid]);
 
-  const profile = loaded?.id === scenarioId ? loaded.profile : null;
+  const profile = loaded?.id === scenarioId && loaded.grid === grid ? loaded.profile : null;
   const option = useMemo(() => {
     if (!profile || profile.series.length === 0) return null;
     const stamps = profile.times.map((t) => Date.parse(t));
@@ -106,7 +110,7 @@ export default function ScenarioProfile({ scenarioId, label, refreshKey }: { sce
   return (
     <SectionCard
       id={SUMMARY_IDS.profile}
-      title={`Loading profile · ${label}`}
+      title={`Loading profile · ${label}${grid === null ? '' : ` · ${gridLabel(grid)}`}`}
       hint="The five most heavily loaded equipment items in service over the simulation period. Solid: with outage, dashed: reference (REF). The shaded area marks the outage window; switched-off equipment is missing."
     >
       {failed === scenarioId && !profile && <div className="ab-empty">The profile could not be loaded.</div>}

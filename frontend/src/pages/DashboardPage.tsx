@@ -23,6 +23,9 @@ import {
 const TimeseriesChart          = lazy(() => import('../components/charts/TimeseriesChart'));
 import ErrorBoundary from '../components/ErrorBoundary';
 import SearchableDropdown from '../components/SearchableDropdown';
+import GridPicker from '../components/GridPicker';
+import { useGridFilter } from '../hooks/useGridFilter';
+import { inGrid } from '../util/grids';
 import DynamicChartCard from '../components/DynamicChartCard';
 import ChartTemplatePicker from '../components/ChartTemplatePicker';
 import { MTYPE_LABELS, type DashboardChartConfig, type DynamicChartConfig } from '../util/dynamicCharts';
@@ -120,6 +123,9 @@ export default function DashboardPage() {
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [selectedFacilityId, setSelectedFacilityId] = useState<string | null>(initialView?.fac ?? null);
   const [components, setComponents] = useState<GridComponent[]>([]);
+  const { grid } = useGridFilter();
+  // The equipment dropdown offers only the equipment of the chosen grid.
+  const gridComponents = useMemo(() => components.filter((c) => inGrid(c, grid)), [components, grid]);
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(initialView?.cmp ?? null);
   const [measurementTypes, setMeasurementTypes] = useState<MeasurementTypeInfo[]>([]);
   const [selectedMtype, setSelectedMtype] = useState<string>(initialView?.mt ?? '');
@@ -421,6 +427,12 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [selectedComponentId]);
 
+  // Choosing another grid drops an equipment selection that is not part of it.
+  useEffect(() => {
+    if (componentsLoading || !selectedComponentId) return;
+    if (!gridComponents.some((c) => c.id === selectedComponentId)) setSelectedComponentId(null);
+  }, [gridComponents, selectedComponentId, componentsLoading]);
+
   const addSeries = useCallback(() => {
     if (!selectedComponentId || !selectedMtype || !selectedFacilityId) return;
     const comp = components.find((c) => c.id === selectedComponentId);
@@ -696,6 +708,7 @@ export default function DashboardPage() {
           <details open className="selection-dock shrink-0 border-b border-gray-700 bg-gray-800/30 p-3">
             <summary className="dashboard-filter-toggle">Filters and series</summary>
             <div className="flex flex-wrap items-start gap-3">
+              <GridPicker refreshKey={refreshNonce} />
               <div className="flex items-start gap-1">
                 <SearchableDropdown
                   label="Scenario"
@@ -728,7 +741,7 @@ export default function DashboardPage() {
               </div>
               <SearchableDropdown
                 label="Equipment"
-                items={components}
+                items={gridComponents}
                 idOf={(c) => c.id}
                 labelOf={(c) => `${c.name}${c.class_name ? ` (${c.class_name})` : ''}`}
                 searchOf={(c) => [c.name, c.id, c.class_name ?? ''].join(' ')}

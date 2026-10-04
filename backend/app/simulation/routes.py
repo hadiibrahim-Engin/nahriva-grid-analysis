@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, ConfigDict
 from app.analysis.bootstrap import get_repository, select_database
-from app.simulation import across, data, settings
+from app.simulation import across, data, grids, settings
 from app.simulation.store import ScenarioStore, catalog_signature, now
 
 router = APIRouter(prefix="/api/simulation", tags=["PowerFactory scenarios"])
@@ -91,12 +91,19 @@ def scenario_profile(
     scenario_id: str,
     top: int = Query(5, ge=1, le=10),
     points: int = Query(240, ge=20, le=1000),
+    grid: str | None = Query(None, max_length=500),
     db=Depends(store),
 ):
-    result = across.scenario_profile(db, scenario_id, top, points)
+    result = across.scenario_profile(db, scenario_id, top, points, grid)
     if result is None:
         raise HTTPException(404, "Scenario not found.")
     return result
+
+
+@router.get("/grids")
+def grid_list(db=Depends(store)):
+    """Grids (ElmNet) of the stored elements, for the grid filter; "" collects elements without a grid."""
+    return grids.grids(db.db)
 
 
 @router.get("/facilities")
@@ -116,6 +123,7 @@ def elements(run_id: str, repo=Depends(get_repository)):
             "facility_id": run_id,
             "name": e["name"],
             "class_name": e["className"],
+            "grid": grids.grid_name(e["path"]),
         }
         for e in repo.elements(run_id)
     ]
@@ -125,7 +133,7 @@ def elements(run_id: str, repo=Depends(get_repository)):
 def measurements(identifier: str, repo=Depends(get_repository)):
     run_id, element = data.resolve(repo, identifier)
     rows = repo._all(
-        "SELECT DISTINCT m.id,m.unit FROM analysis_metrics m JOIN analysis_samples s ON s.run_id=m.run_id AND s.metric_id=m.id WHERE m.run_id=? AND s.element_id=?",
+        "SELECT m.id,m.unit FROM analysis_metrics m JOIN analysis_series se ON se.run_id=m.run_id AND se.metric_id=m.id WHERE m.run_id=? AND se.element_id=?",
         (run_id, element["id"]),
     )
     return [

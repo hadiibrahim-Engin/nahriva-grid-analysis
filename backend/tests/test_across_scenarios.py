@@ -132,7 +132,7 @@ def test_index_reads_no_samples_and_cells_are_cached(tmp_path):
     store.db.set_trace_callback(statements.append)
     index = across.scenario_index(store)
     assert len(index["scenarios"]) == 8 and index["has_lodf"]
-    assert not any("analysis_samples" in sql for sql in statements)  # nothing heavy for the overview
+    assert not any("analysis_values" in sql for sql in statements)  # nothing heavy for the overview
     store.db.set_trace_callback(None)
 
     across._CELLS_CACHE.hits = 0
@@ -176,3 +176,49 @@ def test_lazy_endpoints_serve_index_and_cells(tmp_path, monkeypatch):
         assert client.get("/api/simulation/across-scenarios/missing/cells").status_code == 404
     assert cells["scenario_id"] == first and len(cells["lines"]) == 10 and len(cells["buses"]) == 3
     assert "cell" in cells["lines"][0] and "ref_full" in cells["lines"][0]
+
+
+def test_grid_comes_from_the_powerfactory_path():
+    from app.simulation.grids import grid_name
+
+    assert grid_name(r"\User\P.IntPrj\Network Model.IntPrjfolder\Network Data.IntPrjfolder\D7 Grid.ElmNet\L1.ElmLne") == "D7 Grid"
+    assert grid_name(r"\User\P.IntPrj\D7 Grid.ElmNet\Site.ElmSite\S1.ElmSubstat\BB.ElmTerm") == "D7 Grid"
+    assert grid_name("Dummy/Line North") == ""
+    assert grid_name(None) == ""
+
+
+def test_grid_filter_data_lists_lines_buses_components_and_profile(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.simulation import settings
+
+    path = create_dummy_database(tmp_path / "grids.sqlite3")
+    store = ScenarioStore(str(path))
+    north = ("line-north", "line-northeast", "transformer-north", "bus-north")
+    with store.db:
+        for element_id in north:
+            store.db.execute(
+                "UPDATE analysis_elements SET path='\\Dummy.IntPrj\\D7 Grid.ElmNet\\' || name WHERE id=?", (element_id,)
+            )
+        store.db.execute(
+            "UPDATE analysis_elements SET path='\\Dummy.IntPrj\\D8 Grid.ElmNet\\' || name WHERE path NOT LIKE '%.ElmNet%'"
+        )
+    store.close()
+    monkeypatch.setattr(settings, "ANALYSIS_MODE", "sqlite")
+    monkeypatch.setattr(settings, "ANALYSIS_DB_PATH", str(path))
+    with TestClient(app) as client:
+        assert client.get("/api/simulation/grids").json() == [
+            {"name": "D7 Grid", "elements": 4},
+            {"name": "D8 Grid", "elements": 9},
+        ]
+        body = client.get("/api/simulation/across-scenarios").json()
+        assert {line["name"]: line["grid"] for line in body["lines"]}["Line North–East"] == "D7 Grid"
+        assert {bus["name"]: bus["grid"] for bus in body["buses"]}["Busbar South"] == "D8 Grid"
+        run_id = client.get("/api/simulation/facilities").json()[0]["id"]
+        components = client.get(f"/api/simulation/facilities/{run_id}/components").json()
+        assert {c["grid"] for c in components} == {"D7 Grid", "D8 Grid"}
+        scenario = next(s for s in body["scenarios"] if s["name"] == "Outage Line South")
+        profile = client.get(
+            f"/api/simulation/across-scenarios/{scenario['id']}/profile", params={"grid": "D7 Grid", "top": 10}
+        ).json()
+        assert profile["series"] and all(s["id"] in north for s in profile["series"])

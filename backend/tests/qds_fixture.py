@@ -202,9 +202,8 @@ def create_dummy_database(path):
                                 (
                                     eid,
                                     metric[0],
-                                    timestamp.isoformat(),
+                                    int(epoch),
                                     round(values[metric[0]], 6),
-                                    "ok",
                                 )
                             )
                 runs.append(

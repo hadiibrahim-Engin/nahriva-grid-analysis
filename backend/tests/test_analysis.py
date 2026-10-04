@@ -51,7 +51,7 @@ def repo(tmp_path):
 def test_duplicate_import_never_overwrites(repo):
     with pytest.raises(sqlite3.IntegrityError):
         repo.import_bundle(bundle(values=(1, 2, 3, 4)))
-    assert repo.runs()[0]["sample_count"] == 4
+    assert repo.sample_count(repo.runs()[0]["id"]) == 4
 
 
 @pytest.mark.parametrize("change", ["nan", "reference", "duplicate", "naive", "bounds"])
@@ -84,7 +84,7 @@ def test_schema_migration_is_idempotent_and_data_persists(tmp_path):
     first.import_bundle(bundle())
     first.close()
     second = AnalysisRepository(path)
-    assert second.runs()[0]["sample_count"] == 4
+    assert second.sample_count(second.runs()[0]["id"]) == 4
     assert (
         second.db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
     )

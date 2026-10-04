@@ -83,7 +83,9 @@ subnet. The server then runs read-only (see "Security"). Never forward the port 
 | Restart the server | `Stop-ScheduledTask OutageAssessmentDashboard; Start-ScheduledTask OutageAssessmentDashboard` |
 | Logs | next to the database: `<name>.server.log` (autostart) and `<name>.dashboard.log` (started by the script), rotated at 5 MB |
 | Backup | copying the database while the server runs is not safe (WAL). Better `sqlite3 results.sqlite3 ".backup backup.sqlite3"` or stop the server briefly |
-| Update | unpack the new release package over the folder (configuration and database stay), run `setup.ps1` again, restart the task |
+| Read the results elsewhere | read-only views for Excel, Power BI and Python: [DATABASE.md](DATABASE.md) |
+| Update | unpack the new release package over the folder (configuration and database stay), run `setup.ps1` again, restart the task. If the new version reports "written by an earlier version", delete the database with `stop-dashboard.cmd -DeleteDatabase` and calculate again (see [DATABASE.md](DATABASE.md)) |
+| Stop the dashboard, release the database | double-click `stop-dashboard.cmd`: stops the autostart task, a Windows service of the same name and every server process of this folder, then checks that the database is free. `-DisableAutostart` keeps the task from starting again at logon; `-DeleteDatabase` deletes the database afterwards (asks first); `-DryRun` only shows what it would stop |
 | Remove | `deploy\windows\uninstall.ps1` (removes the task; the database stays) |
 
 ## Troubleshooting
@@ -94,6 +96,7 @@ subnet. The server then runs read-only (see "Security"). Never forward the port 
 | Script reports "not writable" or "not enough free space" | check the database folder; at least 2 GB free |
 | Note "Port is in use" | another process uses the port; change `port` in the configuration |
 | Message "read-only" or 403 | intended in network mode: nobody can switch the database |
+| The database cannot be deleted or replaced | a dashboard server still has it open; run `stop-dashboard.cmd` (with autostart the task would otherwise start the server again) |
 | Server stops after logoff | without autostart the server started by the script is tied to the PowerFactory process; use `-Autostart` |
 
 ## Security

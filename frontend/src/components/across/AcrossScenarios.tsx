@@ -1,5 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAcrossData } from '../../hooks/useAcrossData';
+import { useGridFilter } from '../../hooks/useGridFilter';
+import { gridLabel } from '../../util/grids';
 import { SUMMARY_IDS, analyse, compareScenarioCriticality, summarySections, type SummarySection } from '../../util/acrossScenarios';
 import { assessScenario, compareVerdict, equipmentKind, filterByEquipment, type EquipmentKind } from '../../util/outageAssessment';
 import ErrorBoundary from '../ErrorBoundary';
@@ -34,7 +36,9 @@ export default function AcrossScenarios({ refreshKey, onSectionsChange }: {
   /** Reports the sections currently on screen, for the navigation bar. */
   onSectionsChange?: (sections: SummarySection[]) => void;
 }) {
+  // `data` is already restricted to the grid chosen in the dashboard header.
   const { data, total, shown, failed, loading, error } = useAcrossData(refreshKey);
+  const { grid } = useGridFilter();
   const [selected, setSelected] = useState<string | null>(null);
   const [kind, setKind] = useState<EquipmentFilterValue>('all');
   const [help, setHelp] = useState(readHelp);
@@ -103,7 +107,7 @@ export default function AcrossScenarios({ refreshKey, onSectionsChange }: {
           <button type="button" className="ab-chip" aria-pressed={help} onClick={toggleHelp} title="Show or hide the explanations of all sections">Explanations</button>
         </div>
         {/* 1 · Result first: key figures and the verdict per scenario, always over all equipment */}
-        <SectionCard id={SUMMARY_IDS.kpis} title="Key figures" summary={`${full.scenarios.length} scenarios · ${full.lines.length} Equipment${buses.length ? ` · ${buses.length} Busbars` : ''}`}>
+        <SectionCard id={SUMMARY_IDS.kpis} title="Key figures" summary={`${full.scenarios.length} scenarios · ${grid === null ? 'all grids' : gridLabel(grid)} · ${full.lines.length} Equipment${buses.length ? ` · ${buses.length} Busbars` : ''}`}>
           <AcrossKpis kpis={full.kpis} scenarios={full.scenarios} assessments={assessments} />
         </SectionCard>
         <ScenarioOverview scenarios={full.scenarios} assessments={assessments} selectedId={selectedId} onSelect={setSelected} periodHours={periodHours} period={data!.period} />

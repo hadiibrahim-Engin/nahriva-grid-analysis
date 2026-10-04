@@ -28,6 +28,8 @@ export interface AcrossLine {
   name: string;
   class_name: string | null;
   type: string;
+  /** PowerFactory grid (ElmNet), '' when the element has none; absent from older servers. */
+  grid?: string | null;
   base: number | null;
   cells: Record<string, AcrossCell>;
 }
@@ -46,6 +48,7 @@ export interface AcrossBus {
   name: string;
   class_name: string | null;
   type: string;
+  grid?: string | null;
   /** Unit of the stored voltage results, e.g. 'p.u.' or 'kV'. */
   unit?: string | null;
   /** [lower, upper] as stored with the results; null when none were stored. */

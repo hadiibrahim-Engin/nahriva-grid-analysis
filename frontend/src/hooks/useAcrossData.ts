@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 import { committedPrefix, mergeCells, type AcrossIndex, type CellsPayload } from '../util/acrossLoad';
 import type { AcrossData } from '../util/acrossScenarios';
+import { restrictToGrid } from '../util/grids';
+import { useGridFilter } from './useGridFilter';
 
 /** How many scenarios the server reduces at the same time. Small on purpose: the database may be large. */
 const CONCURRENCY = 3;
@@ -46,6 +48,7 @@ export interface AcrossLoad {
  * Index first (instant), then the values of each scenario in the background. Scenarios appear in
  * their fixed order as they arrive, so the first verdicts are visible long before the last scenario
  * is reduced. A refresh only fetches scenarios that are not cached yet.
+ * The data is restricted to the grid chosen in the dashboard header (all grids when none is chosen).
  */
 export function useAcrossData(refreshKey: number): AcrossLoad {
   const [index, setIndex] = useState<AcrossIndex | null>(null);
@@ -109,7 +112,9 @@ export function useAcrossData(refreshKey: number): AcrossLoad {
     return () => { active = false; };
   }, [refreshKey, peerTick]);
 
-  const data = useMemo(() => (index ? mergeCells(index, committedPrefix(index, parts)) : null), [index, parts]);
+  const { grid } = useGridFilter();
+  const merged = useMemo(() => (index ? mergeCells(index, committedPrefix(index, parts)) : null), [index, parts]);
+  const data = useMemo(() => (merged ? restrictToGrid(merged, grid) : null), [merged, grid]);
   const total = index?.scenarios.length ?? 0;
   const failed = index ? index.scenarios.filter((scenario) => parts[scenario.id] === null).length : 0;
   return { data, total, shown: data?.scenarios.length ?? 0, failed, loading, error };

@@ -11,7 +11,10 @@ footer and no date filter for the plots. Nothing needs administrator rights or a
 flowchart LR
     User[User in PowerFactory] --> Entry[start_assessment.py]
     Entry --> Plan[scenario_plan: check names and outages]
-    Plan --> Batch[run_assessment: scenarios one after another]
+    Plan --> Ref[REF once: all planned outages disabled]
+    Ref --> Period[compare outage windows with the simulated period]
+    Period --> Lodf[LODF: DC load flows]
+    Lodf --> Batch[run_assessment: one OUTAGE QDS per scenario]
     Batch --> Worker[analysis_worker.py]
     Worker --> Engine[gridlens_engine.py]
     Engine --> PF[ComStatsim and ElmRes]
@@ -33,7 +36,12 @@ flowchart LR
 | `powerfactory/lodf.py` | LODF from DC load flows before the first simulation |
 | `powerfactory/pf_state.py` | `StateGuard`: change PF settings, restore and verify them; a failure names setting, expected and found value, and what stopped the run |
 | `powerfactory/outage_plan.py` | scenario plan from the outage catalogue (no PF access) |
+| `powerfactory/run_summary.py` | one result line per saved scenario: loading in the outage window against REF |
 | `powerfactory/pf_console.py` | output-window messages that never raise, even if PowerFactory already deleted the application |
+| `backend/app/simulation/grids.py` | grid (ElmNet) of an element from its stored PowerFactory path; grid list for the filter |
+| `frontend/src/components/GridPicker.tsx`, `hooks/useGridFilter.ts`, `util/grids.ts` | grid dropdown; restricts summary, charts and equipment dropdown to one grid |
+| `stop-dashboard.ps1`, `stop-dashboard.cmd` | stop every dashboard server of the folder and release the database |
+| `backend/app/analysis/series.py` | the one place that writes time series (compact layout, see docs/DATABASE.md) |
 | `backend/app/analysis/schema.py` | the one place that applies the results schema (web app and PF script) |
 | `backend/app/simulation/store.py` | shared SQLite contract of PF and web app; jobs and atomic scenario import |
 | `backend/app/simulation/across.py` | read-only aggregation: index, values per scenario (cached), profile |

@@ -84,27 +84,27 @@ def dataset(repo, identifier, code, start=None, end=None):
     finish = parse_time(end) if end else None
     if begin and finish and begin > finish:
         raise InvalidRequestError("The start must be before the end.")
-    conditions = ["run_id=?", "element_id=?", "metric_id=?"]
-    params = [run_id, element["id"], metric["id"]]
+    conditions = ["se.run_id=?", "se.metric_id=?", "se.element_id=?"]
+    params = [run_id, metric["id"], element["id"]]
     if begin:
-        conditions.append("timestamp >= ?")
-        params.append(begin.isoformat())
+        conditions.append("v.t >= ?")
+        params.append(begin.timestamp())
     if finish:
-        conditions.append("timestamp <= ?")
-        params.append(finish.isoformat())
-    rows = repo._all(
-        "SELECT timestamp,value,status FROM analysis_samples WHERE "
+        conditions.append("v.t <= ?")
+        params.append(finish.timestamp())
+    stored = repo._all(
+        "SELECT v.t, v.value FROM analysis_series se JOIN analysis_values v ON v.series_id = se.id WHERE "
         + " AND ".join(conditions)
-        + " ORDER BY timestamp LIMIT 200001",
+        + " ORDER BY v.t LIMIT 200001",
         params,
     )
-    if len(rows) > 200000:
-        raise RawRangeTooLargeError(estimated_points=len(rows), max_points=200000)
-    points = [
-        {"timestamp": r["timestamp"], "value": r["value"]}
-        for r in rows
-        if r["value"] is not None and r["status"] != "failed"
+    if len(stored) > 200000:
+        raise RawRangeTooLargeError(estimated_points=len(stored), max_points=200000)
+    rows = [
+        {"timestamp": datetime.fromtimestamp(r["t"], timezone.utc).isoformat(), "value": r["value"]}
+        for r in stored
     ]
+    points = [row for row in rows if row["value"] is not None]
     base = {
         "component_id": identifier,
         "component_name": element["name"],
@@ -233,7 +233,7 @@ def metric_analytics(
             span = (
                 parse_time(following["timestamp"]) - parse_time(row["timestamp"])
             ).total_seconds()
-            if span > step * 1.5 or row["value"] is None or row["status"] == "failed":
+            if span > step * 1.5 or row["value"] is None:
                 continue
             duration += span
             if row["value"] > threshold:
@@ -284,7 +284,7 @@ def component_analytics(
 ):
     run_id, element = resolve(repo, identifier)
     available = repo._all(
-        "SELECT DISTINCT m.id,m.unit FROM analysis_metrics m JOIN analysis_samples s ON s.run_id=m.run_id AND s.metric_id=m.id WHERE m.run_id=? AND s.element_id=?",
+        "SELECT m.id,m.unit FROM analysis_metrics m JOIN analysis_series se ON se.run_id=m.run_id AND se.metric_id=m.id WHERE m.run_id=? AND se.element_id=?",
         (run_id, element["id"]),
     )
     codes = {METRIC_CODES.get(m["id"], m["id"]): m["unit"] for m in available}
