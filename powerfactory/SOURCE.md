@@ -20,3 +20,8 @@ outage windows and ElmRes timestamps must be checked in a real PowerFactory 2026
 
 `start_assessment.py` adds the native batch entry point, the configurable results file and the start of
 the local dashboard.
+
+Changes to `gridlens_engine.py` after it was taken over: in `collect_series` a non-finite (NaN) voltage is treated
+like 0, as "de-energised node, no value". An outage that cuts a node off from the grid makes PowerFactory write NaN
+there, which stopped the extraction of the OUTAGE run ("Invalid result value in ElmRes cell ... m:u"). Non-finite
+loading values still stop the run.

@@ -193,7 +193,7 @@ def test_an_outage_without_branch_equipment_is_reported():
     assert any("Busbar" in m and "no line" in m for m in messages)
 
 
-def test_inspecting_the_commands_is_read_only_and_describes_the_distribution_factor_command():
+def test_inspecting_the_commands_is_read_only_and_describes_the_lodf_setup():
     import importlib.util
 
     from tests.test_powerfactory_worker import ROOT
@@ -202,11 +202,24 @@ def test_inspecting_the_commands_is_read_only_and_describes_the_distribution_fac
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     app = LodfApp()
-    sensitivity = PFObject("Distribution Factors", "ComSensitivity", iopt_mode=1)
-    app.study.GetContents = lambda *args: [app.ldf, sensitivity, app.qds]
+    contingency = PFObject("Line A", "ComOutage", outserv=0, p_target=app.network.a)
+    result = PFObject("LODF results", "ElmRes")
+    result.GetNumberOfRows = lambda: 1
+    result.GetNumberOfColumns = lambda: 1
+    result.GetObject = lambda column: app.network.b
+    result.GetVariable = lambda column: "c:lodf"
+    result.GetUnit = lambda column: ""
+    result.GetValue = lambda row, column: (0, 0.6)
+    result.Load = result.Release = lambda: None
+    simulation = PFObject("Contingency Analysis", "ComSimoutage", iopt_Linear=1)
+    simulation.GetContents = lambda *args: [contingency]
+    distribution = PFObject("Sensitivities / Distribution Factors", "ComVstab", calcLodf=1, pComSimoutage=simulation, pResult=result)
+    app.study.GetContents = lambda *args: [app.ldf, distribution, simulation, app.qds]
     printed = []
     app.PrintPlain = printed.append
-    assert module.inspect(app) == (3, 2)  # 3 commands; the load flow and the sensitivity command are described
+    assert module.inspect(app) == (4, 3)  # 4 commands; load flow, distribution factors and contingency analysis are described
     text = "\n".join(printed)
-    assert "ComSensitivity" in text and "iopt_mode" in text
-    assert app.ldf.iopt_net == 0 and sensitivity.iopt_mode == 1  # nothing was changed
+    assert "calcLodf" in text and "pResult" in text
+    assert "Line A | outserv=0 | p_target=A (ElmLne)" in text  # the contingency and the equipment it switches off
+    assert "col   0: ElmLne 'B' | c:lodf" in text and "first value 0.6" in text  # where the LODF values are
+    assert app.ldf.iopt_net == 0 and distribution.calcLodf == 1 and contingency.outserv == 0  # nothing was changed

@@ -388,12 +388,13 @@ def collect_series(elmres, windows=(), counters=None):
         category = result_category(obj, variable)
         dark = 0
         for row, value in enumerate(read_column(elmres, column, rows)):
-            if value is None:
-                raise RuntimeError('Invalid result value in ElmRes cell ({}, {}) for {} {}.'.format(row, column, object_name(obj), variable))
-            if category == 'voltage' and value < ENERGIZED_MIN_PU:
-                # PowerFactory reports 0 for a de-energised node: no value.
+            if category == 'voltage' and (value is None or value < ENERGIZED_MIN_PU):
+                # A de-energised node has no voltage: PowerFactory reports 0, or a non-finite value
+                # (NaN) for a node that an outage cuts off from the grid. Either way: no value.
                 value = None
                 dark += 1
+            elif value is None:
+                raise RuntimeError('Invalid result value in ElmRes cell ({}, {}) for {} {}.'.format(row, column, object_name(obj), variable))
             points.append((labels[row], plot_times[row], value))
         if counters is not None:
             counters['deenergized_steps'] += dark

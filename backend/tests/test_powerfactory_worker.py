@@ -408,3 +408,54 @@ def test_output_shows_each_step_and_the_result_of_each_scenario(tmp_path):
     assert "Summary: 2 scenarios saved, 0 skipped" in text
     # the planned outages a case disables on purpose are counted, not warned about one by one
     assert "Outage object is disabled" not in text
+
+
+class Terminal(PFObject):
+    def __init__(self, name):
+        super().__init__(name, "ElmTerm", uknom=110, systype=0)
+
+
+class ResultWithIsolatedNode(Result):
+    """ElmRes with a time column, a line and two terminals; one terminal is cut off from the grid mid-run."""
+
+    def __init__(self, start, count=6, nan_in="voltage"):
+        super().__init__(start, count)
+        self.nodes = [Terminal("T1"), Terminal("T2.1")]
+        self.nan_in = nan_in
+
+    def GetNumberOfColumns(self):
+        return 4
+
+    def GetVariable(self, column):
+        return ("b:tnow", "c:loading", "m:u", "m:u")[column]
+
+    def GetObject(self, column):
+        return (self.time, self.line, self.nodes[0], self.nodes[1])[column]
+
+    def GetUnit(self, column):
+        return ("s", "%", "p.u.", "p.u.")[column]
+
+    def GetColumnValues(self, column):
+        nan = float("nan")
+        isolated = [1.0, 1.0, 1.0, nan, nan, nan]
+        loading = [50, 50, 50, nan, 50, 50] if self.nan_in == "loading" else [50] * 6
+        return (self.times, loading, [1.01] * 6, isolated)[column]
+
+
+def test_a_node_cut_off_by_the_outage_has_no_voltage_instead_of_stopping_the_run():
+    engine = worker.engine
+    result = ResultWithIsolatedNode(1769817600)
+    counters = {}
+    series, labels, _times, _unit, _absolute, _origin = engine.collect_series(result, (), counters)
+    voltage = {item["element_name"]: item for item in series if item["category"] == "voltage"}
+    assert set(voltage) == {"T1", "T2.1"}  # the node is kept: it was energised at the start
+    values = [value for _label, _t, value in voltage["T2.1"]["points"]]
+    assert values == [1.0, 1.0, 1.0, None, None, None]  # no value while it is isolated
+    assert counters["deenergized_steps"] == 3 and counters["deenergized_nodes"] == 0
+    # and a database can store it: the missing values become NULL
+    assert voltage["T1"]["statistics"]["max"] == 1.01
+
+
+def test_a_non_finite_loading_still_stops_the_run():
+    with pytest.raises(RuntimeError, match="Invalid result value"):
+        worker.engine.collect_series(ResultWithIsolatedNode(1769817600, nan_in="loading"), (), {})
