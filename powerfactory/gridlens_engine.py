@@ -40,15 +40,15 @@ RUN_REFERENCE_CASE = True
 # Only elements whose grid (PowerFactory attribute "Grid", cpGrid) has a name
 # containing this text are assessed; every other element in the model is
 # foreign network and ignored. An empty string assesses every element.
-GRID_NAME_FILTER = 'D7'  # setting
+GRID_NAME_FILTER = 'D7'
 VARIABLES = {'line': ('c:loading', 'm:loading'), 'transformer': ('c:loading', 'm:loading'), 'voltage': ('m:u', 'm:u1')}
 CLASS_CATEGORIES = {'ElmLne': ('line',), 'ElmTr2': ('transformer',), 'ElmTr3': ('transformer',), 'ElmTerm': ('voltage',)}
 # Every other variable of the result file (P, Q, S, I, loading of busbars, ...) is stored too, for every element in
 # scope, so that the dashboard offers everything the ElmRes records. READ_ALL_VARIABLES False reads the assessed
 # loading and voltage only. Variables of the first side keep the dashboard's standard names; any other variable
 # is stored as its name with ':' replaced by '_' (m:P:bus2 -> m_P_bus2).
-READ_ALL_VARIABLES = True  # setting
-BUSBARS_ONLY = True  # terminals: only those with usage 'Busbar'; junction and internal nodes are left out # setting
+READ_ALL_VARIABLES = True
+BUSBARS_ONLY = True  # terminals: only those with usage 'Busbar'; junction and internal nodes are left out
 STANDARD_METRICS = {
     'm:P:bus1': ('active_power', 'MW'), 'm:P:bushv': ('active_power', 'MW'),
     'm:Q:bus1': ('reactive_power', 'Mvar'), 'm:Q:bushv': ('reactive_power', 'Mvar'),
@@ -65,8 +65,8 @@ POWER_VARIABLES = {
 }
 POWER_UNITS = {'active_power': 'MW', 'reactive_power': 'Mvar'}
 MAX_RESULT_ROWS = 35040
-MAX_RESULT_CELLS = 20000000  # setting
-MAX_RUN_CELLS = 120000000  # setting
+MAX_RESULT_CELLS = 20000000
+MAX_RUN_CELLS = 120000000
 MAX_TABLE_ROWS = 5000
 PUBLICATION_LOG_INTERVAL_SECONDS = 5.0
 SNAPSHOT_PREFIX = 'GridLens_'

@@ -24,8 +24,6 @@ INCLUDE = [
     "powerfactory",
     "scripts/appconfig.py",
     "scripts/dashboard_launcher.py",
-    "scripts/release_manifest.py",
-    "release-manifest.json",
     "scripts/serve.py",
     "deploy",
     "setup.ps1",
@@ -62,10 +60,6 @@ def files(root=ROOT):
 
 
 def build(root=ROOT, out_dir=None):
-    sys.path.insert(0, str(root / "scripts"))
-    import release_manifest
-
-    release_manifest.write(root)  # the package always carries a manifest of exactly the files it contains
     if not (root / "frontend/dist/index.html").is_file():
         raise SystemExit("frontend/dist is missing. Build it first: cd frontend && npm ci && npm run build")
     out_dir = Path(out_dir or root / "release")

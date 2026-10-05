@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAcrossData } from '../../hooks/useAcrossData';
 import { useGridFilter } from '../../hooks/useGridFilter';
 import { gridLabel } from '../../util/grids';
@@ -30,8 +30,10 @@ const readHelp = (): boolean => {
  * loaded), then the chosen scenario, voltage, loading matrix, comparison and the reference table.
  * Everything below the verdicts mounts only when it is scrolled near, and the data arrives scenario
  * by scenario, so a very large database never blocks the first view.
+ * Memoised: the page re-renders on every section the user scrolls past (navigation highlight), and a
+ * large evaluation takes over a second to render; it only has to follow its own props and data.
  */
-export default function AcrossScenarios({ refreshKey, onSectionsChange }: {
+export default memo(function AcrossScenarios({ refreshKey, onSectionsChange }: {
   refreshKey: number;
   /** Reports the sections currently on screen, for the navigation bar. */
   onSectionsChange?: (sections: SummarySection[]) => void;
@@ -160,4 +162,4 @@ export default function AcrossScenarios({ refreshKey, onSectionsChange }: {
       </div>
     </HelpContext.Provider>
   );
-}
+});

@@ -19,7 +19,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # Set this to the exact database displayed/configured in the web application.
 DATABASE_PATH = PROJECT_DIR / 'backend/data/analysis.sqlite3'
-GRID_NAME_FILTER = ''  # setting
+GRID_NAME_FILTER = ''
 
 sys.path.insert(0, str(PROJECT_DIR / 'backend'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
