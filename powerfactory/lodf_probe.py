@@ -185,29 +185,38 @@ def _candidate_names():
     return names
 
 
+def _available_names(app, class_name_):
+    """Every input attribute PowerFactory knows for the class (Application.GetAvailableAttributes, namespace 'e');
+    None when that is not available, so that the guessed names are tried instead."""
+    try:
+        text = app.GetAvailableAttributes(class_name_, "", 1, "e")
+    except Exception:
+        return None
+    names = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    return names or None
+
+
 def _vstab_attributes(app, distribution):
-    """What the command offers: the attributes the assessment uses and every attribute whose name looks like a factor switch."""
-    detail(app, "ComVstab '{}':".format(engine.object_name(distribution)))
+    """All settings of the command with value and description, so the switch that enables a factor can be found."""
+    listed = _available_names(app, "ComVstab")
+    detail(app, "ComVstab '{}': {}".format(
+        engine.object_name(distribution),
+        "{} attributes known to PowerFactory".format(len(listed)) if listed else "attribute list not available, trying likely names"))
     rows = []
-    for name in _candidate_names():
-        if not _has_attribute(distribution, name):
+    for name in listed or _candidate_names():
+        if not listed and not _has_attribute(distribution, name):
             continue
         known, value = engine._read_setting(distribution, name)
         try:
             description = distribution.GetAttributeDescription(name, 1)
         except Exception:
             description = None
-        rows.append((name, engine._format_setting_value(value) if known else "not readable", description or ""))
+        rows.append((name, engine._format_setting_value(value) if known else "not readable", (description or "")[:90]))
     table(app, ("Attribute", "Value", "Description"), rows)
-    missing = [name for name in VSTAB_ATTRIBUTES if name not in {row[0] for row in rows}]
+    found = {row[0] for row in rows}
+    missing = [name for name in VSTAB_ATTRIBUTES if name not in found]
     if missing:
         detail(app, "Not found on this command: {}.".format(", ".join(missing)), "WARN")
-    try:
-        listed = [n for n in dir(distribution) if not n.startswith("_") and not callable(getattr(distribution, n, None))]
-    except Exception:
-        listed = []
-    if listed:
-        detail(app, "Attributes listed by Python: {}.".format(", ".join(listed[:120])))
 
 
 def _where_is_the_result(app, distribution):
