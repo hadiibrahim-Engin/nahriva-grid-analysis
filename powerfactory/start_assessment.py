@@ -24,6 +24,7 @@ DASHBOARD_PYTHON = None  # default: backend/.venv/Scripts/python.exe
 DASHBOARD_HOST = "127.0.0.1"  # this PC only; "0.0.0.0" makes the dashboard reachable from other PCs (needs a firewall rule from IT)
 DASHBOARD_PORT = 8765  # fixed, so the address can be bookmarked; 0 chooses a free port
 SHOW_DASHBOARD = True  # start the dashboard after the calculation
+CHECK_FILES = True  # stop when the files are not all of one release (release-manifest.json); False: only report
 OPEN_BROWSER = True  # ... and open it in the default browser
 
 # None: one scenario per eligible Planned Outage, using its exact loc_name.
@@ -57,39 +58,33 @@ if importlib.util.find_spec("powerfactory") is not None:  # only inside PowerFac
 
 import analysis_worker as worker
 import appconfig
+import release_manifest
 from pf_console import detail, log, section, step, subsection, table
 from outage_plan import scenario_plan, split_by_period
 from dashboard_launcher import launch_dashboard
 
 
 STEPS = 5
-INTERFACE_VERSION = 6  # every module must report the same; see check_installation
-
-
 def check_installation():
-    """Stop with a clear message when the files of this installation are of different versions.
+    """Stop with a clear message when the files of this installation are not all of one release.
 
-    PowerFactory runs whatever files it finds. After an update by copying single files, a new script can meet an
-    old module and fail with errors like "too many values to unpack" or "has no attribute". Every module that
-    the others depend on states its INTERFACE_VERSION; this compares them with the one of this script.
+    PowerFactory runs whatever files it finds. After an update by copying single files, a new script can meet an old
+    module and fail with errors like "too many values to unpack" or "has no attribute". release-manifest.json (generated
+    by scripts/release_manifest.py, nobody maintains a number) lists a hash of every file the script depends on.
+    Returns "release <id>, <n> files" for the output, or a note when there is no manifest to compare with.
     """
-    import importlib
-
-    names = ["analysis_worker", "gridlens_engine", "lodf", "pf_console", "pf_state", "outage_plan", "run_summary",
-             "app.simulation.store", "app.analysis.schema", "app.analysis.series"]
-    wrong = []
-    for name in names:
-        module = importlib.import_module(name)
-        version = getattr(module, "INTERFACE_VERSION", None)
-        if version != INTERFACE_VERSION:
-            wrong.append("    {:<24} version {}  ({})".format(
-                name, "unknown (older)" if version is None else version, getattr(module, "__file__", "?")))
-    if wrong:
+    release, count, problems = release_manifest.verify(PROJECT_DIR)
+    if release is None:
+        return "no " + release_manifest.MANIFEST + " (consistency of the files not checked)"
+    if problems and CHECK_FILES:
         raise RuntimeError(
-            "The files of this installation are from different versions (this script is version {}):\n{}\n"
-            "Replace the complete folders powerfactory\\ and backend\\app\\ with the ones of the same release "
-            "(for example with git pull); single files cannot be mixed.".format(INTERFACE_VERSION, "\n".join(wrong))
+            "The files of this installation are not all from release {} ({} problems):\n    {}\n"
+            "Replace the complete folders powerfactory\\, scripts\\ and backend\\app\\ and the file {} with the ones of "
+            "one release (for example with git pull); single files cannot be mixed. A setting you changed on purpose "
+            "belongs into a line ending with '# setting'.".format(
+                release, len(problems), "\n    ".join(problems), release_manifest.MANIFEST)
         )
+    return "release {}, {} files{}".format(release, count, " (checks are off: {} differ)".format(len(problems)) if problems else "")
 
 
 def _span(period):
@@ -367,10 +362,11 @@ def main():
     database = config["database"]
     dashboard = None
     try:
-        check_installation()
+        installed = check_installation()
         free = preflight(database)  # the dashboard is checked when it starts: without it the calculation still runs
         section(app, "OUTAGE ASSESSMENT · started " + time.strftime("%Y-%m-%d %H:%M:%S"))
         detail(app, f"Scripts:  {Path(__file__).resolve().parent}")
+        detail(app, f"Files:    {installed}")
         detail(app, f"Database: {database} ({free:.0f} GB free)")
         detail(app, "Dashboard: {}:{}{}".format(config["host"], config["port"], "" if SHOW_DASHBOARD else " (not started)"))
         dashboard = start_dashboard(app, database, config)

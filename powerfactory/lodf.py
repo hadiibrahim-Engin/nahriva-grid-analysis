@@ -39,12 +39,8 @@ OUTAGE_ID_VARIABLE = "b:outid"
 LODF_RESULT_SUFFIX = "_LODF"
 RECORD_ALL = 0  # ComVstab.lodflim: values below this limit (in %) are not written to the result file
 MAX_TABLE_ROWS = 50  # equipment per contingency read from its table
-ANALYSIS_NAME = "Outage Assessment"  # the Contingency Analysis this script creates and fills; the user's own is not touched
-CLEAN_UP = False  # True: delete what a run creates (contingency analysis, command) when it has read the LODF
-
-# Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
-# compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 6
+ANALYSIS_NAME = "Outage Assessment"  # the Contingency Analysis this script creates and fills; the user's own is not touched # setting
+CLEAN_UP = False  # True: delete what a run creates (contingency analysis, command) when it has read the LODF # setting
 
 
 class LodfError(RuntimeError):

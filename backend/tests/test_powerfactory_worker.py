@@ -692,6 +692,43 @@ def test_every_variable_of_the_result_file_reaches_the_dashboard(tmp_path):
     assert "WARN" not in text.split("Result file content")[1].split("STEP 3")[0]  # nothing missing
 
 
+class ResultWithJunctionNode(ResultWithEverything):
+    """Like ResultWithEverything, plus a junction node and an internal node (terminals that are no busbars)."""
+
+    def __init__(self, start, count=300):
+        super().__init__(start, count)
+        self.busbar.iUsage = 0
+        self.junction = PFObject("Junction 1", "ElmTerm", uknom=110, iUsage=1)
+        self.internal = PFObject("Internal 1", "ElmTerm", uknom=110, iUsage=2)
+        self.columns += [(self.junction, "m:u", "p.u.", lambda: [1.0] * len(self.times)),
+                         (self.junction, "m:phiu", "deg", lambda: [0.0] * len(self.times)),
+                         (self.internal, "m:u", "p.u.", lambda: [1.0] * len(self.times))]
+
+
+def test_only_terminals_used_as_busbar_are_stored_not_junction_or_internal_nodes(tmp_path, monkeypatch):
+    import gridlens_engine
+
+    assessment = assessment_module()
+    app = app_with(ResultWithJunctionNode)
+    printed = []
+    app.PrintPlain = printed.append
+    path = tmp_path / "busbars.sqlite3"
+    assessment.run_assessment(app, path)
+    store = ScenarioStore(str(path))
+    buses = {r[0] for r in store.db.execute("SELECT DISTINCT element FROM v_series WHERE element_type='bus'")}
+    store.close()
+    assert buses == {"Busbar 1"}
+    assert any("Left out 2 terminal(s) that are no busbars" in line for line in printed)
+    # switched off: every terminal comes along
+    monkeypatch.setattr(gridlens_engine, "BUSBARS_ONLY", False)
+    app = app_with(ResultWithJunctionNode)
+    assessment.run_assessment(app, tmp_path / "all.sqlite3")
+    store = ScenarioStore(str(tmp_path / "all.sqlite3"))
+    every = {r[0] for r in store.db.execute("SELECT DISTINCT element FROM v_series WHERE element_type='bus'")}
+    store.close()
+    assert every == {"Busbar 1", "Junction 1", "Internal 1"}
+
+
 def test_missing_transformers_and_busbars_in_the_result_file_are_named_with_the_fix(tmp_path):
     assessment = assessment_module()
     app = App()  # the result file records the loading of one line only

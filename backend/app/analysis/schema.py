@@ -14,10 +14,6 @@ SCHEMA_VERSION = 2  # schema_migrations.version written by SCHEMA_FILE
 # fault of the schema file and is raised as it is.
 _PARSE_ERRORS = ("syntax error", "unrecognized token", "incomplete input")
 
-# Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
-# compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 6
-
 
 class OutdatedDatabaseError(RuntimeError):
     """The file was written by another schema version; it is never read with the wrong layout."""

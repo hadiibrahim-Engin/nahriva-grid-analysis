@@ -19,7 +19,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # Set this to the exact database displayed/configured in the web application.
 DATABASE_PATH = PROJECT_DIR / 'backend/data/analysis.sqlite3'
-GRID_NAME_FILTER = ''
+GRID_NAME_FILTER = ''  # setting
 
 sys.path.insert(0, str(PROJECT_DIR / 'backend'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -28,10 +28,6 @@ import lodf
 from pf_console import case, detail, log, table
 import run_summary
 from app.simulation.store import ScenarioStore, catalog_signature, outage_key
-
-# Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
-# compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 6
 
 
 def identifier(path):

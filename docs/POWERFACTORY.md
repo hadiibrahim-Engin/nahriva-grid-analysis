@@ -27,6 +27,10 @@ variables (for example `c:loading`, `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` for lines
 | `m:I:bus1`, `m:I:bushv` | `current` |
 | any other variable, e.g. `m:P:bus2`, `m:phiu` | its name with `:` replaced by `_` (`m_P_bus2`, `m_phiu`) |
 
+Of the terminals (`ElmTerm`) only **busbars** are read: usage *Busbar* (`iUsage = 0`). Junction nodes and internal
+nodes are left out of everything (voltage and every other variable); the output says how many. A terminal whose
+usage cannot be read counts as a busbar. `BUSBARS_ONLY = False` in `gridlens_engine.py` reads every terminal.
+
 Calculation parameters (`b:...`, such as the time) are not stored. After the reference calculation the
 PowerFactory output lists what the result file records per class and variable and how each is stored, and warns
 when lines, transformers or busbars have no loading or voltage to assess. Only lines and transformers (loading)

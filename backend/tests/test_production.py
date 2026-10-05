@@ -351,19 +351,28 @@ def test_modules_of_an_earlier_run_are_not_reused():
     assert set(modules) == {"json", "powerfactory"}  # only this project's modules are dropped
 
 
-def test_files_of_different_versions_are_named_before_anything_runs(tmp_path, monkeypatch):
-    """A new script with an old analysis_worker.py (no INTERFACE_VERSION) must not fail with 'too many values to unpack'."""
+def test_files_of_different_releases_are_named_before_anything_runs(tmp_path, monkeypatch):
+    """A new script with an old analysis_worker.py must not fail with 'too many values to unpack'."""
     from tests.test_lodf import NativeApp
 
     monkeypatch.setenv("OA_DATABASE", str(tmp_path / "r.sqlite3"))
     app = NativeApp()
     monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.delattr(assessment.worker, "INTERFACE_VERSION")  # an older copy of the file
+    old = "powerfactory/analysis_worker.py: differs (C:\\copy\\powerfactory\\analysis_worker.py)"
+    monkeypatch.setattr(assessment.release_manifest, "verify", lambda root: ("abc123", 30, [old]))
     with pytest.raises(RuntimeError) as caught:
         assessment.main()
     message = str(caught.value)
-    assert "different versions" in message and "analysis_worker" in message and "unknown (older)" in message
-    assert "analysis_worker.py" in message  # the path of the file, so it can be found
-    assert "lodf" not in message.replace("analysis_worker", "")  # only the files that are wrong are listed
-    assert any("ERROR" in line and "different versions" in line for line in app.printed)
+    assert "not all from release abc123" in message and "analysis_worker.py: differs" in message
+    assert "C:\\copy\\powerfactory" in message  # the path of the file, so it can be found
+    assert "# setting" in message  # how to keep an edit of a setting
+    assert any("ERROR" in line and "not all from release" in line for line in app.printed)
     assert app.calls == []  # nothing was calculated
+
+
+def test_the_check_can_be_switched_off_and_a_missing_manifest_is_only_reported(tmp_path, monkeypatch):
+    monkeypatch.setattr(assessment.release_manifest, "verify", lambda root: ("abc123", 30, ["x.py: differs"]))
+    monkeypatch.setattr(assessment, "CHECK_FILES", False)
+    assert "checks are off: 1 differ" in assessment.check_installation()
+    monkeypatch.setattr(assessment.release_manifest, "verify", lambda root: (None, 0, ["missing"]))
+    assert "not checked" in assessment.check_installation()

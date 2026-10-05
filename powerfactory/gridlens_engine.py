@@ -40,14 +40,15 @@ RUN_REFERENCE_CASE = True
 # Only elements whose grid (PowerFactory attribute "Grid", cpGrid) has a name
 # containing this text are assessed; every other element in the model is
 # foreign network and ignored. An empty string assesses every element.
-GRID_NAME_FILTER = 'D7'
+GRID_NAME_FILTER = 'D7'  # setting
 VARIABLES = {'line': ('c:loading', 'm:loading'), 'transformer': ('c:loading', 'm:loading'), 'voltage': ('m:u', 'm:u1')}
 CLASS_CATEGORIES = {'ElmLne': ('line',), 'ElmTr2': ('transformer',), 'ElmTr3': ('transformer',), 'ElmTerm': ('voltage',)}
 # Every other variable of the result file (P, Q, S, I, loading of busbars, ...) is stored too, for every element in
 # scope, so that the dashboard offers everything the ElmRes records. READ_ALL_VARIABLES False reads the assessed
 # loading and voltage only. Variables of the first side keep the dashboard's standard names; any other variable
 # is stored as its name with ':' replaced by '_' (m:P:bus2 -> m_P_bus2).
-READ_ALL_VARIABLES = True
+READ_ALL_VARIABLES = True  # setting
+BUSBARS_ONLY = True  # terminals: only those with usage 'Busbar'; junction and internal nodes are left out # setting
 STANDARD_METRICS = {
     'm:P:bus1': ('active_power', 'MW'), 'm:P:bushv': ('active_power', 'MW'),
     'm:Q:bus1': ('reactive_power', 'Mvar'), 'm:Q:bushv': ('reactive_power', 'Mvar'),
@@ -57,9 +58,6 @@ STANDARD_METRICS = {
     'm:u': ('voltage', 'p.u.'), 'm:u1': ('voltage', 'p.u.'),
 }
 
-# Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
-# compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 6
 POWER_VARIABLES = {
     'ElmLne': {'m:P:bus1': 'active_power', 'm:Q:bus1': 'reactive_power'},
     'ElmTr2': {'m:P:bushv': 'active_power', 'm:Q:bushv': 'reactive_power'},
@@ -67,8 +65,8 @@ POWER_VARIABLES = {
 }
 POWER_UNITS = {'active_power': 'MW', 'reactive_power': 'Mvar'}
 MAX_RESULT_ROWS = 35040
-MAX_RESULT_CELLS = 20000000
-MAX_RUN_CELLS = 120000000
+MAX_RESULT_CELLS = 20000000  # setting
+MAX_RUN_CELLS = 120000000  # setting
 MAX_TABLE_ROWS = 5000
 PUBLICATION_LOG_INTERVAL_SECONDS = 5.0
 SNAPSHOT_PREFIX = 'GridLens_'
@@ -311,6 +309,13 @@ def is_dc_terminal(obj):
     """ElmTerm.systype 1 marks a DC terminal; its voltage is no AC magnitude."""
     return class_name(obj) == 'ElmTerm' and finite_number(safe_attr(obj, 'systype')) == 1.0
 
+def is_busbar(obj):
+    """ElmTerm.iUsage 0 is a busbar; 1 a junction node and 2 an internal node (PowerFactory's 'Usage').
+
+    Anything that is not a terminal, or whose usage cannot be read, counts as a busbar so that nothing disappears silently.
+    """
+    return class_name(obj) != 'ElmTerm' or finite_number(safe_attr(obj, 'iUsage')) in (None, 0.0)
+
 def read_column(elmres, column, rows):
     reader = getattr(elmres, 'GetColumnValues', None)
     if reader is not None:
@@ -373,6 +378,7 @@ def collect_series(elmres, windows=(), counters=None):
     census = {}  # (class, variable) -> number of columns: what the result file records
     out_of_scope = 0
     dc_nodes = set()
+    not_busbars = set()
     for column in range(columns):
         try:
             obj = elmres.GetObject(column)
@@ -383,6 +389,9 @@ def collect_series(elmres, windows=(), counters=None):
         if column == t_column or obj is None:
             continue
         census[(class_name(obj), variable)] = census.get((class_name(obj), variable), 0) + 1
+        if BUSBARS_ONLY and not is_busbar(obj):
+            not_busbars.add(object_key(obj))
+            continue
         if not category or variable not in VARIABLES[category]:
             if READ_ALL_VARIABLES and not variable.startswith('b:') and element_in_scope(obj):
                 metric = STANDARD_METRICS.get(variable, (variable.replace(':', '_'), ''))[0]
@@ -403,6 +412,7 @@ def collect_series(elmres, windows=(), counters=None):
         counters['columns'] = census
         counters['out_of_scope'] = out_of_scope
         counters['dc_nodes'] = len(dc_nodes)
+        counters['not_busbars'] = len(not_busbars)
         counters['deenergized_nodes'] = 0
         counters['deenergized_steps'] = 0
     if not chosen and out_of_scope:
@@ -1794,6 +1804,10 @@ def _run_calculation(app, study_case, qds, case_id, name, description,
             "EXTRACTION",
             "Validated {} supported series across {} time point(s); time unit '{}'."
             .format(len(series), len(labels), unit), 5)
+        if counters.get('not_busbars'):
+            logger.write(
+                "EXTRACTION", "Left out {} terminal(s) that are no busbars (usage junction node or internal node).".format(
+                    counters['not_busbars']), 5)
         if counters.get('extra_series'):
             logger.write(
                 "EXTRACTION", "Also read {} further series (power, current, ...) for the dashboard.".format(
