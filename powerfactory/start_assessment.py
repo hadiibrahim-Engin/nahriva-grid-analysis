@@ -59,7 +59,7 @@ import analysis_worker as worker
 import appconfig
 from pf_console import detail, log, section, step, subsection, table
 from outage_plan import scenario_plan, split_by_period
-from dashboard_launcher import launch_dashboard, validate_installation
+from dashboard_launcher import launch_dashboard
 
 
 STEPS = 5
@@ -349,8 +349,7 @@ def main():
     dashboard = None
     try:
         check_installation()
-        validate_installation(python=DASHBOARD_PYTHON)
-        free = preflight(database)
+        free = preflight(database)  # the dashboard is checked when it starts: without it the calculation still runs
         section(app, "OUTAGE ASSESSMENT · started " + time.strftime("%Y-%m-%d %H:%M:%S"))
         detail(app, f"Scripts:  {Path(__file__).resolve().parent}")
         detail(app, f"Database: {database} ({free:.0f} GB free)")

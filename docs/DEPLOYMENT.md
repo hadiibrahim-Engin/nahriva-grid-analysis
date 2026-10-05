@@ -96,7 +96,7 @@ subnet. The server then runs read-only (see "Security"). Never forward the port 
 | Observation | Cause and remedy |
 |---|---|
 | Script stops with "The files of this installation are from different versions", or a PowerFactory error like "too many values to unpack", "has no attribute" or "cannot import" | files of different releases were mixed (typical after copying single files, or with two copies of the project on the PC). The message names the files and their paths; replace the complete folders `powerfactory\` and `backend\app\` with the ones of one release, for example with `git pull` |
-| Script reports "Backend is missing" or "Frontend build is missing" | run `setup.ps1` or use the complete release package |
+| Warning "Dashboard not started: Backend is missing" or "Frontend build is missing" | the calculation still runs; only the dashboard is skipped. The message names the missing file. `frontend\dist` is not in git: run `setup.ps1 -RebuildFrontend` in this copy of the project, or use the complete release package |
 | Script reports "not writable" or "not enough free space" | check the database folder; at least 2 GB free |
 | Note "Port is in use" | another process uses the port; change `port` in the configuration |
 | Message "read-only" or 403 | intended in network mode: nobody can switch the database |

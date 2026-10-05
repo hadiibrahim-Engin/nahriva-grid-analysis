@@ -25,11 +25,13 @@ def validate_installation(root=ROOT, python=None):
     interpreter = Path(python) if python else dashboard_python(root)
     if not interpreter.is_file():
         raise RuntimeError(
-            "Backend is missing. Run setup.ps1 (Windows) or start-dashboard.command (macOS) first."
+            f"Backend is missing: {interpreter} does not exist. Run setup.ps1 (Windows) or start-dashboard.command (macOS) first."
         )
-    if not (root / "frontend/dist/index.html").is_file():
+    build = root / "frontend/dist/index.html"
+    if not build.is_file():
         raise RuntimeError(
-            "Frontend build is missing. In the frontend folder run: npm ci and npm run build."
+            f"Frontend build is missing: {build} does not exist (frontend/dist is not part of git). "
+            "Run setup.ps1 -RebuildFrontend, or copy the frontend\\dist folder from a working copy of this project."
         )
     return interpreter
 

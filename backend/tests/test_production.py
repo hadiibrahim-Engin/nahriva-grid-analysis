@@ -187,7 +187,6 @@ def test_script_starts_the_dashboard_before_the_calculation_and_the_database_exi
 
     app.qds.Execute = calculate
     monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
 
     def fake_launch(db, **kwargs):
         events.append(("dashboard", kwargs["host"], kwargs["port"], kwargs["production"], kwargs["reuse"], kwargs["open_browser"]))
@@ -221,7 +220,6 @@ def test_the_dashboard_is_told_where_the_run_is(tmp_path, monkeypatch):
 
     app.qds.Execute = calculate
     monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
     monkeypatch.setattr(assessment, "SHOW_DASHBOARD", False)
     assessment.main()
     reference, first, second = seen
@@ -239,7 +237,6 @@ def test_a_stopped_or_failed_run_is_visible_in_the_dashboard(tmp_path, monkeypat
     monkeypatch.setenv("OA_DATABASE", str(database))
     app = App(fail=True)
     monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
     monkeypatch.setattr(assessment, "SHOW_DASHBOARD", False)
     with pytest.raises(Exception, match="failed"):
         assessment.main()
@@ -261,7 +258,6 @@ def test_a_failing_dashboard_does_not_waste_the_calculation(tmp_path, monkeypatc
     printed = []
     app.PrintPlain = printed.append
     monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
     monkeypatch.setattr(assessment, "launch_dashboard", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Port blocked")))
     assessment.main()
     assert any("WARN" in line and "Port blocked" in line for line in printed)
@@ -327,7 +323,6 @@ def test_a_broken_dashboard_step_never_hides_the_assessment_error(tmp_path, monk
 
     app.PrintPlain = deleted  # PowerFactory has already torn the application down
     monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
     monkeypatch.setattr(assessment, "has_results", lambda database: (_ for _ in ()).throw(sqlite3.OperationalError("unrecognized token")))
     (tmp_path / "r.sqlite3").touch()
     with pytest.raises(RuntimeError, match="restoration failed"):
@@ -363,7 +358,6 @@ def test_files_of_different_versions_are_named_before_anything_runs(tmp_path, mo
     monkeypatch.setenv("OA_DATABASE", str(tmp_path / "r.sqlite3"))
     app = NativeApp()
     monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
     monkeypatch.delattr(assessment.worker, "INTERFACE_VERSION")  # an older copy of the file
     with pytest.raises(RuntimeError) as caught:
         assessment.main()
