@@ -71,7 +71,8 @@ class Result(PFObject):
 
 
 class App:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, not_converged_call=None):
+        self.not_converged_call = not_converged_call  # number of the QDS call that ends with error code 1
         self.start = 1769817600
         self.original = Result(self.start)
         self.project = PFObject("Project", "IntPrj")
@@ -127,7 +128,7 @@ class App:
         self.qds.results.values = [110 if self.qds.iopt_maint else 90] * 300
         if self.fail and len(self.calls) == 2:
             raise RuntimeError("QDS failed")
-        return 0
+        return 1 if len(self.calls) == self.not_converged_call else 0
 
     def PrintPlain(self, message):
         pass
@@ -491,3 +492,104 @@ def test_a_node_cut_off_by_the_outage_has_no_voltage_instead_of_stopping_the_run
 def test_a_non_finite_loading_still_stops_the_run():
     with pytest.raises(RuntimeError, match="Invalid result value"):
         worker.engine.collect_series(ResultWithIsolatedNode(1769817600, nan_in="loading"), (), {})
+
+
+# -- results are kept and explained when a calculation does not converge -------------------------------
+
+def test_the_reference_is_saved_before_the_first_scenario_is_calculated(tmp_path):
+    assessment = assessment_module()
+    app = App()
+    path = tmp_path / "early.sqlite3"
+    seen = []
+    original = app.calculate
+
+    def calculate():
+        if len(app.calls) == 1:  # the first scenario starts: what can the dashboard or VS Code see right now?
+            store = ScenarioStore(str(path))
+            seen.append(store.db.execute(
+                "SELECT COUNT(*), MIN(scenario), MIN(case_kind) FROM v_samples").fetchone()[:])
+            seen.append(store.db.execute("SELECT status, scenarios FROM v_runs").fetchall()[:])
+            store.close()
+        return original()
+
+    app.qds.Execute = calculate
+    assessment.run_assessment(app, path)
+    assert tuple(seen[0]) == (300, None, "REF")  # all REF values, no scenario yet
+    assert [tuple(r) for r in seen[1]] == [("completed", 0)]
+    store = ScenarioStore(str(path))
+    assert store.db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] == 3  # not saved twice
+    assert store.db.execute("SELECT COUNT(*) FROM v_runs WHERE scenarios = 0").fetchone()[0] == 0  # now linked
+    store.close()
+
+
+def test_a_scenario_that_did_not_converge_is_saved_with_its_results_and_the_reason(tmp_path):
+    assessment = assessment_module()
+    app = App(not_converged_call=2)  # the OUTAGE run of the first scenario
+    path = tmp_path / "not-converged.sqlite3"
+    printed = []
+    app.PrintPlain = printed.append
+    assert assessment.run_assessment(app, path) == ["Chosen", "Other"]  # the assessment goes on with the next one
+    restored(app)
+    store = ScenarioStore(str(path))
+    scenarios = {s["name"]: s for s in store.overview()["scenarios"]}
+    chosen = {r["kind"]: r for r in scenarios["Chosen"]["runs"]}
+    other = {r["kind"]: r for r in scenarios["Other"]["runs"]}
+    assert chosen["OUTAGE"]["status"] == "not_converged"
+    assert "error code 1" in chosen["OUTAGE"]["note"] and "300 time points" in chosen["OUTAGE"]["note"]
+    assert chosen["REF"]["status"] == "completed" and other["OUTAGE"]["status"] == "completed"
+    # what PowerFactory had calculated is there to look at
+    count = store.db.execute(
+        "SELECT COUNT(*) FROM v_samples WHERE scenario = 'Chosen' AND case_kind = 'OUTAGE'").fetchone()[0]
+    assert count == 300
+    store.close()
+    text = "\n".join(printed)
+    assert "saved with state 'not converged'" in text and "NOT CONVERGED:" in text  # in the case and in the summary
+
+
+def test_a_reference_that_did_not_converge_is_saved_and_stops_the_assessment(tmp_path):
+    assessment = assessment_module()
+    app = App(not_converged_call=1)
+    path = tmp_path / "ref-not-converged.sqlite3"
+    with pytest.raises(RuntimeError, match="reference did not converge.*saved"):
+        assessment.run_assessment(app, path)
+    restored(app)
+    store = ScenarioStore(str(path))
+    assert store.overview()["scenarios"] == []
+    row = store.db.execute("SELECT status, note FROM v_runs").fetchone()
+    assert row["status"] == "not_converged" and "error code 1" in row["note"]
+    assert store.db.execute("SELECT COUNT(*) FROM v_samples WHERE scenario IS NULL").fetchone()[0] == 300
+    store.close()
+
+
+def test_the_reference_of_an_aborted_assessment_is_replaced_not_piled_up(tmp_path):
+    assessment = assessment_module()
+    path = tmp_path / "again.sqlite3"
+    with pytest.raises(RuntimeError, match="QDS failed"):
+        assessment.run_assessment(App(fail=True), path)  # REF saved, the first scenario fails
+    assessment.run_assessment(App(), path)
+    store = ScenarioStore(str(path))
+    assert store.db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] == 3  # the old REF is gone
+    assert store.db.execute("SELECT COUNT(*) FROM analysis_values").fetchone()[0] == 900
+    store.close()
+
+
+def test_time_points_without_any_value_are_reported_as_incomplete():
+    import analysis_worker as worker
+    result = {"status": "CONVERGED", "message": ""}
+    samples = [("a", "loading", t, None if t in (7200, 10800) else 50.0) for t in (0, 3600, 7200, 10800)]
+    samples += [("b", "voltage", t, None if t in (7200, 10800) else 1.0) for t in (0, 3600, 7200, 10800)]
+    status, note = worker.run_state(result, samples, 0)
+    assert status == "incomplete" and note.startswith("2 of 4 time points have no valid value")
+    assert worker.run_state(result, samples[:2], 0) == ("completed", "")
+
+
+def test_a_missing_result_file_or_option_is_named_not_lumped_together(tmp_path):
+    assessment = assessment_module()
+    app = App()
+    app.qds.results = None
+    with pytest.raises(RuntimeError, match="ComStatsim.results is empty.*Open the ComStatsim dialog"):
+        assessment.run_assessment(app, tmp_path / "a.sqlite3")
+    app = App()
+    app.qds.iopt_maint = 7
+    with pytest.raises(RuntimeError, match="reads 7, expected 0 or 1"):
+        assessment.run_assessment(app, tmp_path / "b.sqlite3")

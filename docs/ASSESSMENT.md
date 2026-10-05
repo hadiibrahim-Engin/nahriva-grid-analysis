@@ -12,7 +12,18 @@ unchanged; the only addition is the LODF table `pf_lodf`.
    script before anything is calculated.
 2. **Reference (REF):** one QDS with **every** planned outage disabled (`outserv=1`, option *Planned
    Outages* off). REF is the same for every scenario, so it is calculated once, stored once and linked to
-   every scenario.
+   every scenario. It is **saved to the database right after its calculation**, not only with the first
+   scenario: its time series can be looked at (`v_samples`, `scenario` is NULL until a scenario links it)
+   while the scenarios run, and also when a later step fails. A REF of an earlier, aborted assessment that no
+   scenario links to is replaced.
+
+   **When a calculation does not converge:** if ComStatsim ends with an error code (typically a load flow
+   that does not converge), the time points calculated up to there are still read and saved, with the state
+   *not converged* and the reason (error code, how far it got). A scenario in that state is saved and the
+   assessment goes on with the next one; the dashboard shows it as a warning, and the summary table repeats
+   it. A REF that did not converge is saved too, but stops the assessment: nothing can be compared with it.
+   A calculation that ends normally but leaves time points without any value is saved as *incomplete*
+   with the number and the first of those times. State and reason: view `v_runs` (`status`, `note`).
 3. **Period check:** the outage windows are compared with the time axis REF actually covers. ComStatsim
    can declare a longer period than it simulates (e.g. *Time period* = one month around the Study Case
    time); then the script warns. A scenario whose window lies outside is skipped with a warning instead

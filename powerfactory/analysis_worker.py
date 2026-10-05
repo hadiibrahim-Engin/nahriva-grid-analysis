@@ -30,7 +30,7 @@ from app.simulation.store import ScenarioStore, catalog_signature, outage_key
 
 # Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
 # compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 3
+INTERFACE_VERSION = 4
 
 
 def identifier(path):
@@ -141,7 +141,30 @@ def serialize_result(result, project_path, period):
                     raise RuntimeError('ElmRes timestamps lie outside the active QDS period.')
                 # (element, metric, epoch seconds UTC, value); None: no valid value at that time.
                 samples.append((element_id, code, int(round(epoch)), value))
-    return {'kind': result['id'], 'elements': list(elements.values()), 'metrics': list(metrics.values()), 'samples': samples, 'limits': limits}
+    status, note = run_state(result, samples, origin)
+    return {'kind': result['id'], 'elements': list(elements.values()), 'metrics': list(metrics.values()), 'samples': samples,
+            'limits': limits, 'status': status, 'note': note}
+
+
+def run_state(result, samples, origin):
+    """('completed' | 'not_converged' | 'incomplete', explanation) of a calculated run.
+
+    not_converged: the calculation ended with an error code, the results stop there. incomplete: it ended
+    normally, but at some time points no series has a value, which is what a load flow without solution leaves.
+    """
+    times = {}
+    for _element, _metric, epoch, value in samples:
+        times[epoch] = times.get(epoch, False) or value is not None
+    empty = sorted(epoch for epoch, valid in times.items() if not valid)
+    first, last = (min(times), max(times)) if times else (None, None)
+    covered = '{} time points from {} to {}'.format(len(times), engine._format_pf_time(first), engine._format_pf_time(last)) if times else 'no time points'
+    if result['status'] != engine.CONVERGED:
+        return 'not_converged', '{} Results saved up to there: {}.'.format(result.get('message') or 'Did not converge.', covered)
+    if empty:
+        shown = ', '.join(engine._format_pf_time(epoch) for epoch in empty[:5]) + (' ...' if len(empty) > 5 else '')
+        return 'incomplete', ('{} of {} time points have no valid value in any series (PowerFactory returned no result '
+                              'there, typically a load flow without solution): {}.').format(len(empty), len(times), shown)
+    return 'completed', ''
 
 
 class CaseLogger(engine.RunLogger):
@@ -193,8 +216,21 @@ def _run_cases(app, catalog, cases):
     qds = app.GetFromStudyCase('ComStatsim')
     original_result = engine.safe_attr(qds, 'results')
     found, original_option = engine._read_setting(qds, engine.PLANNED_OUTAGE_OPTION)
-    if original_result is None or not found or engine.finite_number(original_option) not in (0, 1):
-        raise RuntimeError('ComStatsim requires an ElmRes and a readable iopt_maint option.')
+    where = "ComStatsim '{}' of Study Case '{}'".format(engine.object_name(qds), engine.object_name(study_case))
+    if original_result is None:
+        raise RuntimeError(
+            where + " has no result file: ComStatsim.results is empty. Typical cause: an earlier run was cut off "
+            "while its temporary result was bound, and PowerFactory deleted it. Open the ComStatsim dialog, set "
+            "'Results' to your ElmRes (with the loading and voltage variables selected) and run again.")
+    if not found or engine.finite_number(original_option) not in (0, 1):
+        raise RuntimeError(
+            where + " does not give a usable 'Planned Outages' option ({}): it reads {!r}, expected 0 or 1. "
+            "Open the ComStatsim dialog and check the option 'Planned Outages'.".format(
+                engine.PLANNED_OUTAGE_OPTION, original_option if found else 'unreadable'))
+    if engine.object_name(original_result).startswith(engine.SNAPSHOT_PREFIX + 'TMP_'):
+        detail(app, "ComStatsim.results is bound to '{}', a temporary result left behind by an earlier run that was "
+                    "cut off. It is used as the configured result file and the binding is restored afterwards; "
+                    "bind ComStatsim.results to your own ElmRes to tidy up.".format(engine.object_name(original_result)), 'WARN')
     clock = engine._capture_study_time(app)
     outage_state = []
     for obj in engine._find_project_outages(app):
@@ -243,10 +279,12 @@ def _run_cases(app, catalog, cases):
 
 
 def calculate_reference(app, catalog):
-    """REF once for a whole batch: every planned outage disabled. Shared by all scenarios of the batch."""
+    """REF once for a whole batch: every planned outage disabled. Shared by all scenarios of the batch.
+
+    A REF that did not converge is returned too (status NOT CONVERGED) so that its results can be saved and looked at;
+    the caller stops the assessment, because without a reference no scenario can be compared.
+    """
     reference = _run_cases(app, catalog, [('REF', REFERENCE_NAME, set(), 0)])[0]
-    if reference['status'] != engine.CONVERGED:
-        raise RuntimeError('The reference calculation did not converge.')
     reference['shared_run_id'] = 'reference-' + uuid.uuid4().hex
     return reference
 
@@ -261,7 +299,7 @@ def simulated_period(reference, declared):
     return (round(start), round(end)) if start is not None and end is not None else tuple(declared)
 
 
-def _shared(reference, project_path, period):
+def shared_reference(reference, project_path, period):
     run = reference.get('_serialized')
     if run is None:
         run = serialize_result(reference, project_path, period)
@@ -288,12 +326,12 @@ def calculate(app, job, catalog, reference=None):
     results = ([reference] if reference is not None else []) + _run_cases(app, catalog, cases)
     engine.check_run_budget(results)
     engine.enforce_common_time_axis(results)
-    if any(result['status'] != engine.CONVERGED for result in results):
+    if any(result['status'] not in (engine.CONVERGED, engine.NOT_CONVERGED) for result in results):
         raise RuntimeError('Reference and outage time axes differ; scenario results were rejected.')
     period = tuple(catalog['period'])
     if reference is None:
         return [serialize_result(result, catalog['project_path'], period) for result in results]
-    return [_shared(reference, catalog['project_path'], period),
+    return [shared_reference(reference, catalog['project_path'], period),
             serialize_result(results[1], catalog['project_path'], period)]
 
 
@@ -328,7 +366,11 @@ def execute(app, database_path=DATABASE_PATH, reference=None, period=None):
             summary = run_summary.describe(runs, windows)
             if summary:
                 detail(app, 'Result ' + summary + '.')
-            return {'name': name, 'summary': summary}
+            flagged = [run for run in runs if run.get('status', 'completed') != 'completed' and not run.get('shared')]
+            for run in flagged:
+                detail(app, "{} saved with state '{}': {}".format(run['kind'], run['status'].replace('_', ' '), run['note']), 'WARN')
+            return {'name': name, 'summary': summary, 'status': flagged[0]['status'] if flagged else 'completed',
+                    'note': flagged[0]['note'] if flagged else ''}
         else:
             raise RuntimeError('Unsupported PowerFactory job kind.')
     except BaseException as exc:

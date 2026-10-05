@@ -63,7 +63,7 @@ from dashboard_launcher import launch_dashboard
 
 
 STEPS = 5
-INTERFACE_VERSION = 3  # every module must report the same; see check_installation
+INTERFACE_VERSION = 4  # every module must report the same; see check_installation
 
 
 def check_installation():
@@ -168,6 +168,22 @@ def run_assessment(app, database_path, definitions=None):
     period = worker.simulated_period(reference, declared["period"])
     detail(app, "REF done: {} time points from {}, {} series.".format(
         len(reference["labels"]), _span(period), sum(len(v) for v in reference["by_category"].values())))
+    # Saved at once: the time series can be looked at while the scenarios are calculated, and also when a later
+    # step fails. The scenarios link to this run.
+    saved_reference = worker.shared_reference(reference, declared["project_path"], period)
+    store = worker.ScenarioStore(str(database_path))
+    try:
+        store.save_reference(declared, saved_reference)
+    finally:
+        store.close()
+    detail(app, "REF saved to the database: {} values (state: {}).".format(
+        len(saved_reference["samples"]), saved_reference["status"].replace("_", " ")))
+    if saved_reference["status"] != "completed":
+        detail(app, saved_reference["note"], "WARN")
+    if saved_reference["status"] == "not_converged":
+        raise RuntimeError(
+            "The reference did not converge, so no scenario can be compared with it. The results up to the failure "
+            "are saved (view v_runs / v_samples, scenario NULL). " + saved_reference["note"])
 
     begin(3, "Compare the outage windows with the simulated period")
     detail(app, "Declared by ComStatsim: " + _span(declared["period"]))
@@ -234,7 +250,10 @@ def run_assessment(app, database_path, definitions=None):
         outcome = worker.execute(app, database_path, reference, period) or {}
         seconds = time.monotonic() - begun
         detail(app, "Done in {:.1f} s.".format(seconds))
-        saved.append((number, selection["name"], seconds, lodf_status(selection), outcome.get("summary") or ""))
+        result = outcome.get("summary") or ""
+        if outcome.get("status", "completed") != "completed":
+            result = outcome["status"].replace("_", " ").upper() + ": " + outcome["note"]
+        saved.append((number, selection["name"], seconds, lodf_status(selection), result))
 
     section(app, "SUMMARY")
     detail(app, "{} scenarios saved, {} skipped, {} LODF values, total {}.".format(

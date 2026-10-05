@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import { SectionCard } from './across/shared';
 import { progressView, type PfProgress } from '../util/progress';
-import { isSynthetic, provenancePeriod, resultContexts, type ResultProvenance, type ResultScenario } from '../util/resultProvenance';
+import { isSynthetic, provenancePeriod, resultContexts, runProblems, type ResultProvenance, type ResultScenario } from '../util/resultProvenance';
 interface Job { id: string; status: string; name?: string | null; message?: string }
 interface Overview { catalog: ResultProvenance | null; scenarios: ResultScenario[]; database_path: string; jobs?: Job[]; progress?: PfProgress | null; }
 export default function OutageManagement({ onResultsChanged }: { onResultsChanged: () => void }) {
@@ -39,6 +39,7 @@ export default function OutageManagement({ onResultsChanged }: { onResultsChange
   // The script's own note says more than a job (it also covers the reference run and the LODF, where no job
   // exists yet); the job is the fallback for a database written by a script without progress notes.
   const note = progressView(overview?.progress);
+  const problems = runProblems(overview?.scenarios ?? []);
   return <>
     {note ? (
       <div className="ab-progress" role={note.tone === 'running' ? 'status' : 'alert'} aria-live="polite" data-tone={note.tone}>
@@ -52,6 +53,11 @@ export default function OutageManagement({ onResultsChanged }: { onResultsChange
         PowerFactory is calculating{running.name ? `: ${running.name}` : ''}
       </div>
     )}
+    {problems.map((problem) => (
+      <div key={problem.scenario + problem.kind} className="ab-progress" role="alert" data-tone="failed">
+        {problem.scenario} · {problem.kind} {problem.state}. {problem.note}
+      </div>
+    ))}
   <SectionCard title="Outage Management" defaultOpen={false} summary={summary}>
     <p className="text-xs text-[var(--grid-muted)]">{contexts.length ? `${overview?.scenarios.length ?? 0} saved outage scenarios · ${overview?.scenarios.length ? 'Origin of the saved results' : 'Synchronised calculation context · no results yet'}` : 'No results yet. The PowerFactory script starts the calculation and this dashboard.'}</p>
     {contexts.map(({ provenance: p, count, lastResult }, index) => {

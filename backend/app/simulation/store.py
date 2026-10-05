@@ -12,7 +12,7 @@ from app.analysis.series import insert_values
 
 # Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
 # compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 3
+INTERFACE_VERSION = 4
 
 
 def now():
@@ -72,6 +72,10 @@ PF_TABLES = """
         id INTEGER PRIMARY KEY CHECK(id=1), state TEXT NOT NULL, step TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
         current INTEGER, total INTEGER, started_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
+    -- Why a run is not simply "completed": status 'not_converged' or 'incomplete' with the explanation.
+    CREATE TABLE IF NOT EXISTS pf_run_notes (
+        run_id TEXT PRIMARY KEY REFERENCES analysis_runs(id), status TEXT NOT NULL, note TEXT NOT NULL
+    );
     -- Outages whose LODF is not defined (AC load flow without solution, equipment cut off), with the reason.
     CREATE TABLE IF NOT EXISTS pf_lodf_undefined (
         outage_key TEXT PRIMARY KEY, reason TEXT NOT NULL, computed_at TEXT NOT NULL
@@ -113,6 +117,14 @@ VIEWS = """
     JOIN analysis_metrics m ON m.run_id = se.run_id AND m.id = se.metric_id
     JOIN analysis_elements e ON e.run_id = se.run_id AND e.id = se.element_id;
 
+    -- Every calculated run with its state; a run without scenario is a REF saved before its scenarios.
+    DROP VIEW IF EXISTS v_runs;
+    CREATE VIEW v_runs AS
+    SELECT a.id AS run_id, a.name AS run, COALESCE((SELECT MIN(r.kind) FROM pf_scenario_runs r WHERE r.run_id = a.id), 'REF') AS case_kind,
+           COALESCE(n.status, a.status) AS status, COALESCE(n.note, '') AS note,
+           (SELECT COUNT(*) FROM pf_scenario_runs r WHERE r.run_id = a.id) AS scenarios
+    FROM analysis_runs a LEFT JOIN pf_run_notes n ON n.run_id = a.id;
+
     DROP VIEW IF EXISTS v_samples;
     CREATE VIEW v_samples AS
     SELECT sc.id AS scenario_id, sc.name AS scenario, r.kind AS case_kind, r.run_id,
@@ -124,7 +136,17 @@ VIEWS = """
     JOIN analysis_series se ON se.run_id = r.run_id
     JOIN analysis_values v ON v.series_id = se.id
     JOIN analysis_metrics m ON m.run_id = se.run_id AND m.id = se.metric_id
-    JOIN analysis_elements e ON e.run_id = se.run_id AND e.id = se.element_id;
+    JOIN analysis_elements e ON e.run_id = se.run_id AND e.id = se.element_id
+    UNION ALL
+    SELECT NULL, NULL, 'REF', se.run_id,
+           e.id, e.name, e.className, e.type,
+           {grid}, m.id, m.unit,
+           datetime(v.t, 'unixepoch'), v.t, v.value
+    FROM analysis_series se
+    JOIN analysis_values v ON v.series_id = se.id
+    JOIN analysis_metrics m ON m.run_id = se.run_id AND m.id = se.metric_id
+    JOIN analysis_elements e ON e.run_id = se.run_id AND e.id = se.element_id
+    WHERE NOT EXISTS (SELECT 1 FROM pf_scenario_runs r WHERE r.run_id = se.run_id);
 
     DROP VIEW IF EXISTS v_lodf;
     CREATE VIEW v_lodf AS
@@ -155,7 +177,7 @@ VIEWS = """
 
 # PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
 # database is brought up to date once when it is next opened.
-LAYOUT_VERSION = 5
+LAYOUT_VERSION = 6
 
 
 class ScenarioStore:
@@ -297,6 +319,51 @@ class ScenarioStore:
                 ("failed" if failed else "completed", now(), message, job_id),
             )
 
+    def _run_exists(self, run_id):
+        return self.db.execute("SELECT 1 FROM analysis_runs WHERE id=?", (run_id,)).fetchone() is not None
+
+    def _write_run(self, run_id, run, catalog, default_name):
+        """The rows of one run (inside the caller's transaction). A run that is not 'completed' keeps its explanation."""
+        status = run.get("status") or "completed"
+        self.db.execute(
+            "INSERT INTO analysis_runs VALUES(?,?,?,?,?,?)",
+            (run_id, run.get("name") or default_name, catalog["project"], catalog["study_case"],
+             run.get("source", "PowerFactory"), status),
+        )
+        if status != "completed":
+            self.db.execute("INSERT INTO pf_run_notes VALUES(?,?,?)", (run_id, status, run.get("note") or ""))
+        self.db.executemany(
+            "INSERT INTO analysis_elements VALUES(?,?,?,?,?,?)", [(run_id, *element) for element in run["elements"]]
+        )
+        self.db.executemany(
+            "INSERT INTO analysis_metrics VALUES(?,?,?,?,?,?)", [(run_id, *metric) for metric in run["metrics"]]
+        )
+        insert_values(self.db, run_id, run["samples"])
+        self.db.executemany(
+            "INSERT INTO pf_element_limits VALUES(?,?,?,?,?)", [(run_id, *limit) for limit in run.get("limits", [])]
+        )
+
+    def save_reference(self, catalog, run):
+        """Save the reference run at once, before any scenario exists, so that its time series can be looked at.
+
+        Runs that no scenario links to (the reference of an earlier, aborted assessment) are removed first.
+        The scenarios later link to this run (`shared` in save_scenario).
+        """
+        with self.db:
+            self.discard_unlinked_runs()
+            self._write_run(run["run_id"], run, catalog, run.get("name") or "Reference")
+
+    def discard_unlinked_runs(self):
+        """Delete every run that no scenario links to; returns how many (inside the caller's transaction or its own)."""
+        ids = [r[0] for r in self.db.execute(
+            "SELECT id FROM analysis_runs WHERE id NOT IN (SELECT run_id FROM pf_scenario_runs)")]
+        for run_id in ids:
+            self.db.execute("DELETE FROM analysis_values WHERE series_id IN (SELECT id FROM analysis_series WHERE run_id=?)", (run_id,))
+            for table in ("analysis_series", "pf_element_limits", "analysis_metrics", "analysis_elements", "pf_run_notes"):
+                self.db.execute("DELETE FROM " + table + " WHERE run_id=?", (run_id,))
+            self.db.execute("DELETE FROM analysis_runs WHERE id=?", (run_id,))
+        return len(ids)
+
     def save_scenario(self, job, catalog, runs):
         """Commit the named scenario and all its result rows together after restoration.
 
@@ -322,41 +389,11 @@ class ScenarioStore:
             )
             for run in runs:
                 run_id = run.get("run_id") or job["id"] + "-" + run["kind"]
-                if run.get("shared") and self.db.execute(
-                    "SELECT 1 FROM analysis_runs WHERE id=?", (run_id,)
-                ).fetchone():
-                    self.db.execute(
-                        "INSERT INTO pf_scenario_runs VALUES(?,?,?)",
-                        (job["id"], run_id, run["kind"]),
-                    )
-                    continue
-                self.db.execute(
-                    "INSERT INTO analysis_runs VALUES(?,?,?,?,?,?)",
-                    (
-                        run_id,
-                        run.get("name") or job["payload"]["name"] + " · " + run["kind"],
-                        catalog["project"],
-                        catalog["study_case"],
-                        run.get("source", "PowerFactory"),
-                        "completed",
-                    ),
-                )
-                self.db.executemany(
-                    "INSERT INTO analysis_elements VALUES(?,?,?,?,?,?)",
-                    [(run_id, *element) for element in run["elements"]],
-                )
-                self.db.executemany(
-                    "INSERT INTO analysis_metrics VALUES(?,?,?,?,?,?)",
-                    [(run_id, *metric) for metric in run["metrics"]],
-                )
-                insert_values(self.db, run_id, run["samples"])
+                if not (run.get("shared") and self._run_exists(run_id)):
+                    self._write_run(run_id, run, catalog, job["payload"]["name"] + " · " + run["kind"])
                 self.db.execute(
                     "INSERT INTO pf_scenario_runs VALUES(?,?,?)",
                     (job["id"], run_id, run["kind"]),
-                )
-                self.db.executemany(
-                    "INSERT INTO pf_element_limits VALUES(?,?,?,?,?)",
-                    [(run_id, *limit) for limit in run.get("limits", [])],
                 )
             self.db.execute(
                 "UPDATE pf_jobs SET status='completed',finished_at=?,message=? WHERE id=?",
@@ -382,8 +419,9 @@ class ScenarioStore:
             scenario["runs"] = [
                 dict(r)
                 for r in self.db.execute(
-                    "SELECT r.run_id,r.kind,a.source FROM pf_scenario_runs r "
-                    "JOIN analysis_runs a ON a.id=r.run_id WHERE r.scenario_id=?",
+                    "SELECT r.run_id,r.kind,a.source,COALESCE(n.status,a.status) AS status,COALESCE(n.note,'') AS note "
+                    "FROM pf_scenario_runs r JOIN analysis_runs a ON a.id=r.run_id "
+                    "LEFT JOIN pf_run_notes n ON n.run_id=r.run_id WHERE r.scenario_id=?",
                     (row["id"],),
                 )
             ]

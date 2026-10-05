@@ -21,7 +21,19 @@ export interface ResultScenario {
   study_case?: string;
   created_at?: string;
   provenance?: ResultProvenance | null;
-  runs: { run_id: string; kind: string; source?: string }[];
+  runs: { run_id: string; kind: string; source?: string; status?: string; note?: string }[];
+}
+
+/** Runs that finished in a state other than "completed", with what PowerFactory left of them (not converged, gaps). */
+export function runProblems(scenarios: ResultScenario[]) {
+  return scenarios.flatMap((scenario) => scenario.runs
+    .filter((run) => run.status && run.status !== 'completed')
+    .map((run) => ({
+      scenario: scenario.name,
+      kind: run.kind,
+      state: run.status === 'not_converged' ? 'did not converge' : 'has time points without a result',
+      note: run.note ?? '',
+    })));
 }
 
 export function isSynthetic(provenance: ResultProvenance) {

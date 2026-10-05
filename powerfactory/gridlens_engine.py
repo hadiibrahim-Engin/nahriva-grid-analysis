@@ -524,6 +524,7 @@ def is_critical(item, stats):
     return False
 REFERENCE_ID = 'REF'
 CONVERGED = 'CONVERGED'
+NOT_CONVERGED = 'NOT CONVERGED'  # the calculation ended with an error code; the results up to that point are kept
 AXIS_MISMATCH = 'NOT EVALUATED'
 DELTA_KEYS = (('ref_min', 'delta_min', 'min'), ('ref_max', 'delta_max', 'max'), ('ref_mean', 'delta_mean', 'mean'))
 
@@ -1711,20 +1712,24 @@ def _run_calculation(app, study_case, qds, case_id, name, description,
                 case_id, _friendly_exception(exc))) from None
     elapsed = time.monotonic() - started
     code = return_code(returned)
+    # A calculation that ends with an error code (typically a load flow that did not converge) has still written
+    # the time points before it: they are read and kept, flagged, so that the cause can be looked at.
+    problem = None
     if code is None or code != 0.0:
-        raise GridLensError(
-            "{} calculation ended after {:.1f}s with {}. Review the "
-            "PowerFactory calculation messages and QDS configuration.".format(
+        problem = (
+            "{} calculation ended after {:.1f}s with {}. Review the PowerFactory calculation messages and QDS "
+            "configuration.".format(
                 case_id, elapsed,
-                "an unreadable return value" if code is None
-                else "error code {:g}".format(code)))
+                "an unreadable return value" if code is None else "error code {:g}".format(code)))
+        logger.write("CALCULATION", problem + " Reading the results calculated up to there.", 4, "WARN")
     if not _same_object(safe_attr(qds, "results"), snapshot):
         raise GridLensError(
             "ComStatsim.results changed during {}. Results were rejected."
             .format(case_id))
-    logger.write(
-        "CALCULATION", "{} completed successfully in {:.1f}s.".format(
-            case_id, elapsed), 4)
+    if problem is None:
+        logger.write(
+            "CALCULATION", "{} completed successfully in {:.1f}s.".format(
+                case_id, elapsed), 4)
     logger.write("EXTRACTION", "Reading and validating {} results.".format(case_id), 5)
     try:
         snapshot.Load()
@@ -1748,6 +1753,8 @@ def _run_calculation(app, study_case, qds, case_id, name, description,
                     unit, labels[0], labels[-1],
                     '{:g} h'.format(plot_times[-1] - plot_times[0])), 5)
     except Exception as exc:
+        if problem is not None:
+            raise GridLensError(problem + " No results could be read: " + _friendly_exception(exc)) from None
         raise GridLensError(
             "{} completed, but its ElmRes could not be evaluated: {}".format(
                 case_id, _friendly_exception(exc))) from None
@@ -1761,9 +1768,9 @@ def _run_calculation(app, study_case, qds, case_id, name, description,
         "name": name,
         "kind": "reference" if case_id == REFERENCE_CASE_ID else "planned_outage",
         "description": description,
-        "status": CONVERGED,
-        "error_code": 0,
-        "message": "Completed in {:.1f}s.".format(elapsed),
+        "status": CONVERGED if problem is None else NOT_CONVERGED,
+        "error_code": 0 if problem is None else code,
+        "message": "Completed in {:.1f}s.".format(elapsed) if problem is None else problem,
         "counters": counters,
     }
     result = case_result(case, series, labels, plot_times, unit)
