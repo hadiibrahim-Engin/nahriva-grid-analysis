@@ -192,7 +192,7 @@ def _available_names(app, class_name_):
         text = app.GetAvailableAttributes(class_name_, "", 1, "e")
     except Exception:
         return None
-    names = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    names = [line.strip().split(":", 1)[-1] for line in str(text or "").splitlines() if line.strip()]  # 'e:calcLodf' -> 'calcLodf'
     return names or None
 
 
@@ -254,10 +254,10 @@ def stage_lodf(app, study_case, analysis, chosen, created):
             known, linked = engine._read_setting(distribution, "pComSimoutage")
             detail(app, "pComSimoutage now points to {}.".format(_described(linked) if known and linked is not None else "nothing"))
             with StateGuard() as guard:
-                for attribute, value in (("calcLodf", 1), ("lodflim", lodf.RECORD_ALL)) + tuple(EXTRA_SETTINGS.items()):
-                    ok = guard.set(distribution, attribute, value, "ComVstab." + attribute)
-                    detail(app, "{} = {}: {}".format(attribute, value, "set" if ok else "CANNOT BE READ OR WRITTEN"), "" if ok else "ERROR")
-                    if not ok:
+                for attribute, value, outcome in lodf.set_run_settings(guard, distribution, tuple(EXTRA_SETTINGS.items())):
+                    failed = outcome == "CANNOT BE READ OR WRITTEN"
+                    detail(app, "{} = {}: {}".format(attribute, value, outcome), "ERROR" if failed else "")
+                    if failed:
                         raise Stop("stage 3: ComVstab.{} cannot be set".format(attribute))
                 detail(app, "Executing ...")
                 code = distribution.Execute()
@@ -273,7 +273,7 @@ def stage_lodf(app, study_case, analysis, chosen, created):
     except lodf.LodfError as exc:
         detail(app, str(exc), "ERROR")
         raise Stop("stage 3: " + str(exc)) from None
-    detail(app, "ComVstab settings are put back (calcLodf, lodflim, pComSimoutage).")
+    detail(app, "ComVstab settings are put back ({}, pComSimoutage).".format(", ".join(a for a, _ in lodf.RUN_SETTINGS)))
     return matrix
 
 
