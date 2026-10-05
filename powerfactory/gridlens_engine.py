@@ -43,13 +43,23 @@ RUN_REFERENCE_CASE = True
 GRID_NAME_FILTER = 'D7'
 VARIABLES = {'line': ('c:loading', 'm:loading'), 'transformer': ('c:loading', 'm:loading'), 'voltage': ('m:u', 'm:u1')}
 CLASS_CATEGORIES = {'ElmLne': ('line',), 'ElmTr2': ('transformer',), 'ElmTr3': ('transformer',), 'ElmTerm': ('voltage',)}
-# Further quantities stored for the dashboard (not assessed): active and reactive power of branches, read when the
-# result file records them. Lines at bus1, transformers at the HV side. READ_POWER False reads loading and voltage only.
-READ_POWER = True
+# Every other variable of the result file (P, Q, S, I, loading of busbars, ...) is stored too, for every element in
+# scope, so that the dashboard offers everything the ElmRes records. READ_ALL_VARIABLES False reads the assessed
+# loading and voltage only. Variables of the first side keep the dashboard's standard names; any other variable
+# is stored as its name with ':' replaced by '_' (m:P:bus2 -> m_P_bus2).
+READ_ALL_VARIABLES = True
+STANDARD_METRICS = {
+    'm:P:bus1': ('active_power', 'MW'), 'm:P:bushv': ('active_power', 'MW'),
+    'm:Q:bus1': ('reactive_power', 'Mvar'), 'm:Q:bushv': ('reactive_power', 'Mvar'),
+    'm:S:bus1': ('apparent_power', 'MVA'), 'm:S:bushv': ('apparent_power', 'MVA'),
+    'm:I:bus1': ('current', 'kA'), 'm:I:bushv': ('current', 'kA'),
+    'c:loading': ('loading', '%'), 'm:loading': ('loading', '%'),
+    'm:u': ('voltage', 'p.u.'), 'm:u1': ('voltage', 'p.u.'),
+}
 
 # Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
 # compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 5
+INTERFACE_VERSION = 6
 POWER_VARIABLES = {
     'ElmLne': {'m:P:bus1': 'active_power', 'm:Q:bus1': 'reactive_power'},
     'ElmTr2': {'m:P:bushv': 'active_power', 'm:Q:bushv': 'reactive_power'},
@@ -359,8 +369,8 @@ def collect_series(elmres, windows=(), counters=None):
         plot_times = list(hours)
     bounds = window_bounds(hours, windows) if absolute and windows else []
     chosen = {}
-    power = {}
-    census = {}  # (class, variable) -> number of columns: what the result file records, also what is not used
+    others = {}  # (metric id, element key) -> (column, obj, variable): everything else the result file records
+    census = {}  # (class, variable) -> number of columns: what the result file records
     out_of_scope = 0
     dc_nodes = set()
     for column in range(columns):
@@ -370,12 +380,13 @@ def collect_series(elmres, windows=(), counters=None):
             category = result_category(obj, variable)
         except Exception:
             continue
-        census[(class_name(obj), variable)] = census.get((class_name(obj), variable), 0) + 1
-        metric = POWER_VARIABLES.get(class_name(obj), {}).get(variable) if READ_POWER else None
-        if metric and element_in_scope(obj):
-            power[(metric, object_key(obj))] = (column, obj, variable)
+        if column == t_column or obj is None:
             continue
+        census[(class_name(obj), variable)] = census.get((class_name(obj), variable), 0) + 1
         if not category or variable not in VARIABLES[category]:
+            if READ_ALL_VARIABLES and not variable.startswith('b:') and element_in_scope(obj):
+                metric = STANDARD_METRICS.get(variable, (variable.replace(':', '_'), ''))[0]
+                others.setdefault((metric, object_key(obj)), (column, obj, variable))
             continue
         # Before the full path is fetched and before any value is read.
         if not element_in_scope(obj):
@@ -400,7 +411,10 @@ def collect_series(elmres, windows=(), counters=None):
             '{!r} ({} series were out of scope). Set GRID_NAME_FILTER at the top '
             'of gridlens_report.py, or to an empty string to assess every '
             'element.'.format(GRID_NAME_FILTER, out_of_scope))
-    cells = rows * (len(chosen) + len(power))
+    # A variable already stored as the assessed loading or voltage of the element is not stored a second time.
+    taken = {('voltage' if category == 'voltage' else 'loading', key) for (category, key) in chosen}
+    others = {k: v for k, v in others.items() if k not in taken}
+    cells = rows * (len(chosen) + len(others))
     if cells > MAX_RESULT_CELLS:
         raise RuntimeError('ElmRes contains {} evaluated cells ({} rows x {} series) and exceeds the limit of {} (MAX_RESULT_CELLS).'.format(cells, rows, len(chosen), MAX_RESULT_CELLS))
     series = []
@@ -440,13 +454,15 @@ def collect_series(elmres, windows=(), counters=None):
         raise RuntimeError('ElmRes contains no completely readable supported result series.')
     if counters is not None:
         extras = []
-        for (metric, key), (column, obj, variable) in sorted(power.items(), key=lambda item: item[0]):
+        for (metric, key), (column, obj, variable) in sorted(others.items(), key=lambda item: item[0]):
             try:
-                unit = str(elmres.GetUnit(column) or '') or POWER_UNITS[metric]
+                unit = str(elmres.GetUnit(column) or '')
             except Exception:
-                unit = POWER_UNITS[metric]
+                unit = ''
+            unit = unit or STANDARD_METRICS.get(variable, ('', ''))[1]
+            categories = CLASS_CATEGORIES.get(class_name(obj))
             extras.append({'metric': metric, 'key': key, 'object': obj, 'element_name': object_name(obj),
-                           'category': CLASS_CATEGORIES[class_name(obj)][0], 'variable_id': variable, 'unit': unit,
+                           'category': categories[0] if categories else 'other', 'variable_id': variable, 'unit': unit,
                            'values': read_column(elmres, column, rows)})  # None: no valid value at that time
         counters['extra_series'] = extras
     return (series, labels, plot_times, time_unit, absolute, origin)
@@ -1780,7 +1796,7 @@ def _run_calculation(app, study_case, qds, case_id, name, description,
             .format(len(series), len(labels), unit), 5)
         if counters.get('extra_series'):
             logger.write(
-                "EXTRACTION", "Also read {} active/reactive power series for the dashboard.".format(
+                "EXTRACTION", "Also read {} further series (power, current, ...) for the dashboard.".format(
                     len(counters['extra_series'])), 5)
         logger.write(
             "EXTRACTION",

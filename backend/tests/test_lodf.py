@@ -13,7 +13,7 @@ import pytest
 from app.simulation.store import ScenarioStore, outage_key
 from tests.test_powerfactory_worker import App, PFObject, assessment_module, worker
 
-# LODF in % at bus1 per contingency: line -> value. D is small: only recorded when the limit is 0.
+# LODF in % at bus1 per contingency (named by its equipment): line -> value. D is small: only recorded when the limit is 0.
 PERCENT = {
     "A": {"B": 60.0, "C": 40.0, "D": 4.0},
     "C": {"A": 70.0, "B": 30.0, "D": 2.0},
@@ -32,25 +32,26 @@ class LockedDistribution(PFObject):
 
 
 class NativeApp(App):
-    """Study Case with a Contingency Analysis and 'Sensitivities / Distribution Factors', like the real one."""
+    """A Study Case like the real one: a Contingency Analysis of the user, optionally 'Sensitivities / Distribution
+    Factors'. What the script creates (its own Contingency Analysis, contingencies, the command) behaves like PowerFactory:
+    CreateObject, SetObjs, GetObject, ClearCont, Delete; the tool calculates the contingencies of the analysis it is linked to.
+    """
 
-    def __init__(self, unsolvable=("E",), distribution_class=PFObject, with_combined=False, with_tool=True):
+    def __init__(self, unsolvable=("E",), distribution_class=PFObject, with_tool=True, fail_create=None, fail_setobjs=False):
         super().__init__()
         self.lines = {name: PFObject(name, "ElmLne", outserv=0) for name in "ABCD"}
         self.lines["E"] = PFObject("E", "ElmTr2", outserv=0)  # a generator step-up transformer
         self.outages[0].components = [self.lines["A"]]
         self.outages[1].components = [self.lines["C"]]
-        self.contingencies = {}
-        for name in ("A", "C", "E") + (("A+C",) if with_combined else ()):
-            contingency = PFObject(name, "ComOutage", outserv=0)
-            members = [self.lines[part] for part in name.split("+")]
-            contingency.GetObject = lambda line, members=members: members[line] if line < len(members) else None
-            contingency.GetContents = lambda *args: []
-            self.contingencies[name] = contingency
         self.unsolvable = set(unsolvable)
+        self.distribution_class = distribution_class
+        self.fail_create, self.fail_setobjs = fail_create, fail_setobjs
         self.rows = []
-        self.simulation = PFObject("Contingency Analysis", "ComSimoutage")
-        self.simulation.GetContents = lambda *args: list(self.contingencies.values())
+        self.deleted = []
+        self.analyses = []
+        self.user_analysis = self.new_analysis(None, "Contingency Analysis")  # the user's, with contingencies of its own
+        for name in ("A", "C", "E"):
+            self.add_contingency(self.user_analysis, name, [self.lines[part] for part in name.split("+")])
         self.result = PFObject("Distribution Factors Results (SYM)_LODF", "ElmRes")
         self.result.GetContents = lambda *args: []
         self.result.Load = self.result.Release = lambda: None
@@ -60,19 +61,69 @@ class NativeApp(App):
         self.result.GetObject = lambda column: self.columns()[column][1] or self.result
         self.result.GetObj = lambda index: self.rows[-index - 1][0] if -len(self.rows) <= index <= -1 else None
         self.result.GetValue = self.value
-        holder = PFObject("Distribution Factors Results (SYM)", "ElmRes")
-        holder.GetContents = lambda *args: [self.result]
-        self.distribution = distribution_class(
-            "Sensitivities / Distribution Factors", "ComVstab", calcLodf=1, lodflim=10,
-            pComSimoutage=self.simulation, pResult=holder)
+        self.holder = PFObject("Distribution Factors Results (SYM)", "ElmRes")
+        self.holder.GetContents = lambda *args: [self.result]
+        self.distribution = None
+        self.printed = []
+        self.PrintPlain = self.printed.append
+        self.study.GetContents = self.study_contents
+        self.study.CreateObject = self.study_create
+        self.GetFromStudyCase = self.from_study_case
+        if with_tool:
+            self.make_distribution("Sensitivities / Distribution Factors", self.user_analysis)
+
+    def make_distribution(self, name, analysis):
+        self.distribution = self.distribution_class(name, "ComVstab", calcLodf=1, lodflim=10, pComSimoutage=analysis, pResult=self.holder)
         self.distribution.GetContents = lambda *args: []
         self.distribution.runs = []
         self.distribution.Execute = self.execute
-        self.fail_with = None
-        self.printed = []
-        self.PrintPlain = self.printed.append
-        tools = {"*.ComVstab": [self.distribution] if with_tool else [], "*.ComSimoutage": [self.simulation]}
-        self.study.GetContents = lambda pattern, *args: tools.get(pattern, [])
+        self.distribution.Delete = lambda: self.deleted.append(name) or 0
+        return self.distribution
+
+    def new_analysis(self, parent, name):
+        analysis = PFObject(name, "ComSimoutage")
+        analysis.members = []
+        analysis.GetContents = lambda *args: list(analysis.members)
+        analysis.CreateObject = lambda class_name, name: self.create_contingency(analysis, class_name, name)
+        analysis.ClearCont = lambda: analysis.members.clear() or 0
+        analysis.Delete = lambda: self.deleted.append(name) or 0
+        self.analyses.append(analysis)
+        return analysis
+
+    def add_contingency(self, analysis, name, equipment):
+        contingency = PFObject(name, "ComOutage", outserv=0)
+        contingency.equipment = list(equipment)
+        contingency.GetObject = lambda line: contingency.equipment[line] if line < len(contingency.equipment) else None
+        contingency.GetContents = lambda *args: []
+        contingency.SetObjs = lambda objs: 1 if self.fail_setobjs else (setattr(contingency, "equipment", list(objs)) or 0)
+        analysis.members.append(contingency)
+        return contingency
+
+    def create_contingency(self, analysis, class_name, name):
+        assert class_name == "ComOutage"
+        return self.add_contingency(analysis, name, [])
+
+    def study_contents(self, pattern, *args):
+        if pattern == "*.ComVstab":
+            return [self.distribution] if self.distribution is not None else []
+        if pattern == "*.ComSimoutage":
+            return list(self.analyses)
+        return []
+
+    def study_create(self, class_name, name):
+        if self.fail_create:
+            raise RuntimeError(self.fail_create)
+        assert class_name == "ComSimoutage"
+        return self.new_analysis(self.study, name)
+
+    def from_study_case(self, kind):
+        if kind == "ComVstab":
+            return self.distribution or self.make_distribution("Sensitivities / Distribution Factors", None)
+        return (self.qds if kind == "ComStatsim" else self.clock if kind == "SetTime" else None)
+
+    @staticmethod
+    def label(contingency):
+        return "+".join(sorted(item.loc_name for item in contingency.equipment))
 
     def columns(self):
         columns = [("b:index", None), ("b:calcmod", None), ("b:outid", None)]
@@ -82,13 +133,15 @@ class NativeApp(App):
 
     def execute(self):
         self.distribution.runs.append((self.distribution.calcLodf, self.distribution.lodflim))
+        self.calculated = self.distribution.pComSimoutage  # the analysis the tool is linked to while it runs
         if self.fail_with is not None:
             if isinstance(self.fail_with, Exception):
                 raise self.fail_with
             return self.fail_with
         limit = self.distribution.lodflim
         self.rows = []
-        for name, contingency in self.contingencies.items():
+        for contingency in self.calculated.members:
+            name = self.label(contingency)
             if name in self.unsolvable or name not in PERCENT:
                 continue
             values = {line: v for line, v in PERCENT[name].items() if abs(v) >= limit}
@@ -96,6 +149,9 @@ class NativeApp(App):
         if self.distribution.__class__ is LockedDistribution:
             self.distribution.locked = True
         return 0
+
+    fail_with = None
+    calculated = None
 
     def value(self, row, column):
         variable, line = self.columns()[column]
@@ -159,18 +215,17 @@ def test_an_outage_without_a_solution_is_not_defined_while_the_others_keep_their
     assert any("not defined" in m for m in app.printed)
 
 
-def test_equipment_that_is_no_contingency_is_named_so_it_can_be_added():
+def test_a_contingency_is_created_for_every_scenario_so_nothing_has_to_be_defined_by_hand():
     app = NativeApp()
     rows, undefined = calculate(app, [scenario(app, "d", "D")])
-    assert rows == []
-    assert "D is no contingency of the Contingency Analysis" in undefined["d"] and "add it" in undefined["d"]
+    # D has no entry in the fake's results: PowerFactory found no solution, which is named, not "add it yourself"
+    assert rows == [] and "no solution without D" in undefined["d"]
+    mine = [a for a in app.analyses if a.loc_name == "Outage Assessment"]
+    assert len(mine) == 1 and [c.loc_name for c in mine[0].members] == ["d"]
 
 
-def test_a_combined_outage_needs_a_contingency_with_exactly_this_equipment():
+def test_a_combined_outage_gets_one_contingency_with_all_its_equipment():
     app = NativeApp()
-    rows, undefined = calculate(app, [scenario(app, "ac", "A", "C")])
-    assert rows == [] and "no contingency" in undefined["ac"]
-    app = NativeApp(with_combined=True)
     rows, undefined = calculate(app, [scenario(app, "ac", "C", "A")])  # the order does not matter
     assert {r[1]: r[2] for r in rows} == {"B": 1.0} and undefined == {}
 
@@ -181,11 +236,49 @@ def test_an_outage_without_equipment_is_reported():
     assert rows == [] and "switches no line, transformer or coupler" in undefined["busbar"]
 
 
-def test_a_study_case_without_the_tool_stops_the_lodf_with_a_clear_message():
+def test_the_missing_command_and_contingency_analysis_are_created_and_reported():
+    app = NativeApp(with_tool=False)
+    rows, undefined = calculate(app, [scenario(app, "a", "A")])
+    assert {r[1] for r in rows} == {"B", "C", "D"}
+    text = "\n".join(app.printed)
+    assert "Created 'Sensitivities / Distribution Factors'" in text and "Created Contingency Analysis 'Outage Assessment'" in text
+    assert "Contingencies created in 'Outage Assessment': a (A)" in text and "Left in Study Case" in text
+    assert app.deleted == []  # kept for inspection by default
+    assert app.distribution.pComSimoutage.loc_name == "Outage Assessment"  # a command the user can open and run
+
+
+def test_the_contingency_analysis_of_the_user_is_not_touched_and_stays_linked():
+    app = NativeApp()
+    calculate(app, [scenario(app, "a", "A")])
+    assert [c.loc_name for c in app.user_analysis.members] == ["A", "C", "E"]
+    assert app.calculated.loc_name == "Outage Assessment"  # the tool ran on ours ...
+    assert app.distribution.pComSimoutage is app.user_analysis  # ... and the user's link is back
+
+
+def test_an_earlier_analysis_is_emptied_and_reused_not_duplicated():
+    app = NativeApp()
+    calculate(app, [scenario(app, "a", "A")])
+    calculate(app, [scenario(app, "c", "C")])
+    mine = [a for a in app.analyses if a.loc_name == "Outage Assessment"]
+    assert len(mine) == 1 and [c.loc_name for c in mine[0].members] == ["c"]
+
+
+def test_what_a_run_created_is_deleted_when_asked(monkeypatch):
     import lodf
 
+    monkeypatch.setattr(lodf, "CLEAN_UP", True)
     app = NativeApp(with_tool=False)
-    with pytest.raises(lodf.LodfError, match="has no 'Sensitivities / Distribution Factors' command"):
+    calculate(app, [scenario(app, "a", "A")])
+    assert app.deleted == ["Outage Assessment", "Sensitivities / Distribution Factors"]  # analysis first, then the command
+
+
+def test_creating_in_the_study_case_can_fail_with_a_clear_message():
+    import lodf
+
+    with pytest.raises(lodf.LodfError, match="could not create 'Outage Assessment.ComSimoutage' in 'Study': project is read-only"):
+        calculate(NativeApp(fail_create="project is read-only"), [scenario(app := NativeApp(), "a", "A")])
+    with pytest.raises(lodf.LodfError, match="does not list its equipment"):
+        app = NativeApp(fail_setobjs=True)
         calculate(app, [scenario(app, "a", "A")])
 
 
@@ -241,14 +334,15 @@ def test_lodf_is_stored_before_simulation_and_the_assessment_goes_on(tmp_path):
     store.close()
 
 
-def test_the_lodf_tool_missing_or_failing_does_not_stop_the_assessment(tmp_path):
+def test_a_missing_command_is_created_and_a_failing_one_does_not_stop_the_assessment(tmp_path):
     app = NativeApp(with_tool=False)
     assert assessment_module().run_assessment(app, tmp_path / "none.sqlite3") == ["Chosen", "Other"]
-    assert any("WARN" in m and "ComVstab" in m for m in app.printed)
+    assert lodf_rows(tmp_path / "none.sqlite3")  # the command was created, the LODF is there
     app = NativeApp()
     app.fail_with = 1
     assert assessment_module().run_assessment(app, tmp_path / "fail.sqlite3") == ["Chosen", "Other"]
     assert lodf_rows(tmp_path / "fail.sqlite3") == {}
+    assert any("WARN" in m and "error code 1" in m for m in app.printed)
 
 
 def test_a_not_defined_lodf_is_stored_with_its_reason_for_the_dashboard(tmp_path):

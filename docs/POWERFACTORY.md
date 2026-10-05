@@ -13,20 +13,26 @@ Start, end, step size, profiles and result variables come from the active `ComSt
 
 ### Result variables
 
-The dashboard can only show what the result file (`ComStatsim.results`, an ElmRes) records. The script reads:
+The dashboard offers everything the result file (`ComStatsim.results`, an ElmRes) records, for every element in
+scope; what the result file does not record cannot be shown. Choose the variables in the ComStatsim result
+variables (for example `c:loading`, `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` for lines).
 
-| Class | Variable | Shown as |
-|---|---|---|
-| ElmLne | `c:loading` (else `m:loading`) | loading in % (assessed) |
-| ElmTr2, ElmTr3 | `c:loading` (else `m:loading`) | loading in % (assessed) |
-| ElmTerm | `m:u` (else `m:u1`) | voltage in p.u. (assessed) |
-| ElmLne | `m:P:bus1`, `m:Q:bus1` | active / reactive power (dashboard time series, not assessed) |
-| ElmTr2, ElmTr3 | `m:P:bushv`, `m:Q:bushv` | active / reactive power, HV side (dashboard time series, not assessed) |
+| Variable | Stored as (dashboard Measurement) |
+|---|---|
+| `c:loading`, `m:loading` | `loading` in % (assessed for lines and transformers) |
+| `m:u`, `m:u1` | `voltage` in p.u. (assessed for busbars) |
+| `m:P:bus1`, `m:P:bushv` | `active_power` |
+| `m:Q:bus1`, `m:Q:bushv` | `reactive_power` |
+| `m:S:bus1`, `m:S:bushv` | `apparent_power` |
+| `m:I:bus1`, `m:I:bushv` | `current` |
+| any other variable, e.g. `m:P:bus2`, `m:phiu` | its name with `:` replaced by `_` (`m_P_bus2`, `m_phiu`) |
 
-Everything else in the result file is not read. After the reference calculation the PowerFactory output lists
-what the result file records per class and variable and what is used, and warns when lines, transformers,
-busbars or power are missing, with the variable to add. Power about doubles the size of the database (two more series per branch);
-`READ_POWER = False` in `gridlens_engine.py` reads loading and voltage only.
+Calculation parameters (`b:...`, such as the time) are not stored. After the reference calculation the
+PowerFactory output lists what the result file records per class and variable and how each is stored, and warns
+when lines, transformers or busbars have no loading or voltage to assess. Only lines and transformers (loading)
+and busbars (voltage) are assessed; all other quantities are time series only. The database grows with every
+variable: `READ_ALL_VARIABLES = False` in `gridlens_engine.py` stores only loading and voltage; the limit
+`MAX_RESULT_CELLS` stops a result file that is too large with a clear message.
 
 ## Applying the outages
 

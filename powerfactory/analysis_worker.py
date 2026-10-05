@@ -31,7 +31,7 @@ from app.simulation.store import ScenarioStore, catalog_signature, outage_key
 
 # Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
 # compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 5
+INTERFACE_VERSION = 6
 
 
 def identifier(path):
@@ -142,14 +142,16 @@ def serialize_result(result, project_path, period):
                     raise RuntimeError('ElmRes timestamps lie outside the active QDS period.')
                 # (element, metric, epoch seconds UTC, value); None: no valid value at that time.
                 samples.append((element_id, code, int(round(epoch)), value))
-    names = {'active_power': 'Active power', 'reactive_power': 'Reactive power'}
+    names = {'active_power': 'Active power', 'reactive_power': 'Reactive power', 'apparent_power': 'Apparent power',
+             'current': 'Current', 'loading': 'Loading', 'voltage': 'Voltage'}
     for item in result.get('extras', []):
         if len(item['values']) != len(result['plot_times']):
             raise RuntimeError('Database export requires the complete ElmRes series, not plot downsampling.')
         element_id = identifier(project_path + '|' + item['key'])
         elements.setdefault(element_id, (element_id, item['element_name'], engine.class_name(item['object']),
-                                          item['category'], item['key']))
-        metrics[item['metric']] = (item['metric'], names[item['metric']], item['unit'], None, None)
+                                          'bus' if item['category'] == 'voltage' else item['category'], item['key']))
+        if item['metric'] not in metrics:
+            metrics[item['metric']] = (item['metric'], names.get(item['metric'], item['variable_id']), item['unit'], None, None)
         for hours, value in zip(result['plot_times'], item['values']):
             samples.append((element_id, item['metric'], int(round(origin + (hours - relative_offset) * 3600)), value))
     status, note = run_state(result, samples, origin)
@@ -157,36 +159,39 @@ def serialize_result(result, project_path, period):
             'limits': limits, 'status': status, 'note': note}
 
 
-# What the dashboard gets from a variable of the result file; everything else in it is not read.
-USES = {'c:loading': 'loading', 'm:loading': 'loading (if no c:loading)', 'm:u': 'voltage', 'm:u1': 'voltage (if no m:u)',
-        'm:P:bus1': 'active power', 'm:Q:bus1': 'reactive power', 'm:P:bushv': 'active power', 'm:Q:bushv': 'reactive power'}
 EXPECTED = {'ElmLne': 'line', 'ElmTr2': 'transformer', 'ElmTr3': 'transformer', 'ElmTerm': 'busbar'}
 
 
+def stored_as(variable):
+    """The name a variable of the result file gets in the database (and the dashboard's Measurement list)."""
+    if variable in ('c:loading', 'm:loading'):
+        return 'loading'
+    if variable in ('m:u', 'm:u1'):
+        return 'voltage'
+    if variable.startswith('b:'):
+        return 'not stored (calculation parameter)'
+    return engine.STANDARD_METRICS.get(variable, (variable.replace(':', '_'), ''))[0] if engine.READ_ALL_VARIABLES else 'not stored'
+
+
 def describe_columns(app, result):
-    """What the result file (ElmRes) records, per class and variable, and what of it the dashboard gets.
+    """What the result file (ElmRes) records, per class and variable, and what of it reaches the dashboard.
 
     Equipment or quantities missing in the dashboard are missing here: add them to the result variables of ComStatsim.
     """
     census = result.get('columns') or {}
     if not census:
         return
-    detail(app, 'Result file content (variables recorded per class; only these can be shown in the dashboard):')
+    detail(app, 'Result file content (variables recorded per class; everything stored here is offered in the dashboard):')
     table(app, ('Class', 'Variable', 'Columns', 'Stored as'),
-          [(cls, variable, count, USES.get(variable, 'not used') if cls in EXPECTED else 'not used')
-           for (cls, variable), count in sorted(census.items())])
+          [(cls, variable, count, stored_as(variable)) for (cls, variable), count in sorted(census.items())])
     recorded = {cls for cls, _variable in census}
     for cls, noun in EXPECTED.items():
         if cls == 'ElmTr3' and cls not in recorded:
             continue  # three-winding transformers are rare
-        used = [v for (c, v) in census if c == cls and v in USES]
-        if not used:
-            detail(app, "No {} ({}) values in the result file: add {} to the result variables of ComStatsim "
-                        "to see them in the dashboard.".format(
-                            noun + 's', cls, 'c:loading' if noun in ('line', 'transformer') else 'm:u'), 'WARN')
-    if engine.READ_POWER and not any(v.startswith('m:P:') for (_c, v) in census):
-        detail(app, 'No active/reactive power in the result file: add m:P:bus1 and m:Q:bus1 (lines), m:P:bushv and '
-                    'm:Q:bushv (transformers) to the result variables of ComStatsim to see power in the dashboard.', 'WARN')
+        needed = ('c:loading', 'm:loading') if noun != 'busbar' else ('m:u', 'm:u1')
+        if not any(c == cls and v in needed for (c, v) in census):
+            detail(app, "No {} ({}) {} in the result file: add {} to the result variables of ComStatsim to assess "
+                        "them.".format(noun + 's', cls, 'loading' if noun != 'busbar' else 'voltage', needed[0]), 'WARN')
 
 
 def run_state(result, samples, origin):

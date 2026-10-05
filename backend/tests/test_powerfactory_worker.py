@@ -609,22 +609,30 @@ def test_every_saved_scenario_gets_its_dashboard_summary_prepared(tmp_path):
     assert sum("Dashboard summary prepared" in line for line in printed) == 2
 
 
-# -- what the result file records: power and transformers for the dashboard ---------------------------
+# -- everything the result file records reaches the database ---------------------------------------------
 
-class ResultWithPower(Result):
-    """Line A with loading, P, Q and a current that is not used; a transformer with loading and P."""
+class ResultWithEverything(Result):
+    """Line A: loading, P, Q, I (both sides for P); transformer: loading, P, Q, I; busbar: voltage, loading, angle."""
 
     def __init__(self, start, count=300):
         super().__init__(start, count)
         self.transformer = PFObject("Trafo T1", "ElmTr2")
+        self.busbar = PFObject("Busbar 1", "ElmTerm", uknom=110)
+        n = lambda v: (lambda: [v] * len(self.times))
         self.columns = [
             (self.time, "b:tnow", "s", lambda: self.times),
             (self.line, "c:loading", "%", lambda: self.values),
-            (self.line, "m:P:bus1", "MW", lambda: [12.5] * len(self.times)),
-            (self.line, "m:Q:bus1", "Mvar", lambda: [-3.0] * len(self.times)),
-            (self.line, "m:I:bus1", "kA", lambda: [0.2] * len(self.times)),
-            (self.transformer, "c:loading", "%", lambda: [55.0] * len(self.times)),
-            (self.transformer, "m:P:bushv", "MW", lambda: [40.0] * len(self.times)),
+            (self.line, "m:P:bus1", "MW", n(12.5)),
+            (self.line, "m:P:bus2", "MW", n(-12.4)),
+            (self.line, "m:Q:bus1", "Mvar", n(-3.0)),
+            (self.line, "m:I:bus1", "kA", n(0.2)),
+            (self.transformer, "c:loading", "%", n(55.0)),
+            (self.transformer, "m:P:bushv", "MW", n(40.0)),
+            (self.transformer, "m:Q:bushv", "Mvar", n(5.0)),
+            (self.transformer, "m:I:bushv", "kA", n(0.3)),
+            (self.busbar, "m:u", "p.u.", n(1.01)),
+            (self.busbar, "c:loading", "%", n(20.0)),
+            (self.busbar, "m:phiu", "deg", n(-1.5)),
         ]
 
     def GetNumberOfColumns(self):
@@ -657,12 +665,12 @@ def app_with(result_class):
     return app
 
 
-def test_power_and_transformers_recorded_by_the_result_file_reach_the_dashboard(tmp_path):
+def test_every_variable_of_the_result_file_reaches_the_dashboard(tmp_path):
     assessment = assessment_module()
-    app = app_with(ResultWithPower)
+    app = app_with(ResultWithEverything)
     printed = []
     app.PrintPlain = printed.append
-    path = tmp_path / "power.sqlite3"
+    path = tmp_path / "everything.sqlite3"
     assessment.run_assessment(app, path)
     store = ScenarioStore(str(path))
     series = {(r["element"], r["element_type"], r["metric"], r["unit"]) for r in store.db.execute(
@@ -672,26 +680,27 @@ def test_power_and_transformers_recorded_by_the_result_file_reach_the_dashboard(
         "AND case_kind='REF' AND scenario='Chosen'").fetchone()
     store.close()
     assert series == {
-        ("Line A", "line", "loading", "%"), ("Line A", "line", "active_power", "MW"),
-        ("Line A", "line", "reactive_power", "Mvar"),
+        ("Line A", "line", "loading", "%"), ("Line A", "line", "active_power", "MW"), ("Line A", "line", "m_P_bus2", "MW"),
+        ("Line A", "line", "reactive_power", "Mvar"), ("Line A", "line", "current", "kA"),
         ("Trafo T1", "transformer", "loading", "%"), ("Trafo T1", "transformer", "active_power", "MW"),
+        ("Trafo T1", "transformer", "reactive_power", "Mvar"), ("Trafo T1", "transformer", "current", "kA"),
+        ("Busbar 1", "bus", "voltage", "p.u."), ("Busbar 1", "bus", "loading", "%"), ("Busbar 1", "bus", "m_phiu", "deg"),
     }
     assert tuple(values) == (12.5, 12.5, 300)
     text = "\n".join(printed)
-    assert "Result file content" in text and "m:I:bus1" in text and "not used" in text  # what is ignored, too
-    assert "No transformers" not in text and "No active/reactive power" not in text
+    assert "Result file content" in text and "m:P:bus2" in text and "m_P_bus2" in text
+    assert "WARN" not in text.split("Result file content")[1].split("STEP 3")[0]  # nothing missing
 
 
-def test_missing_transformers_and_power_in_the_result_file_are_named_with_the_fix(tmp_path):
+def test_missing_transformers_and_busbars_in_the_result_file_are_named_with_the_fix(tmp_path):
     assessment = assessment_module()
     app = App()  # the result file records the loading of one line only
     printed = []
     app.PrintPlain = printed.append
     assessment.run_assessment(app, tmp_path / "lines-only.sqlite3")
     text = "\n".join(printed)
-    assert "No transformers (ElmTr2) values in the result file: add c:loading" in text
-    assert "No busbars (ElmTerm) values" in text
-    assert "add m:P:bus1 and m:Q:bus1" in text
+    assert "No transformers (ElmTr2) loading in the result file: add c:loading" in text
+    assert "No busbars (ElmTerm) voltage in the result file: add m:u" in text
 
 
 def test_a_run_that_did_not_converge_is_offered_in_the_scenario_list_with_its_state(tmp_path, monkeypatch):

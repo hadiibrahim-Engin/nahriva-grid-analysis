@@ -263,8 +263,8 @@ def _branch_rows(elements, ref, out, equipment, lodf):
     lines, period_hours = [], 0.0
     for element_id, ref_stats in ref.items():
         element = elements.get(element_id)
-        if element is None or element["type"] == "bus":
-            continue
+        if element is None or element["type"] not in ("line", "transformer"):
+            continue  # busbars are assessed by voltage, everything else has no loading assessment
         outaged = element["name"] in equipment
         mine = out.get(element_id)
         value = mine["win_max"] if mine else None

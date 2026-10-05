@@ -63,7 +63,7 @@ from dashboard_launcher import launch_dashboard
 
 
 STEPS = 5
-INTERFACE_VERSION = 5  # every module must report the same; see check_installation
+INTERFACE_VERSION = 6  # every module must report the same; see check_installation
 
 
 def check_installation():

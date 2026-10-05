@@ -13,19 +13,24 @@ the recording limit set to 0 (otherwise values below ComVstab.lodflim are not wr
 the contingencies that match the equipment of each scenario. The LODF is signed, a fraction (73.6 % -> 0.736),
 and uses the bus1 side; the dashboard shows |LODF|.
 
+What this module sets up in the active Study Case (prepare): the command 'Sensitivities / Distribution Factors' when the
+Study Case has none, and its own Contingency Analysis named ANALYSIS_NAME with one contingency (ComOutage, filled with
+ComOutage.SetObjs) per distinct equipment of the scenarios. The Contingency Analysis of the user is not touched: the
+command is pointed at ours for the run (ComVstab.pComSimoutage) and at its original one afterwards. What was created
+stays in the Study Case for inspection (CLEAN_UP = True deletes it).
+
 What PowerFactory provides, and therefore what a scenario gets:
 - monitored: lines (ElmLne). Transformers and couplers are not part of the result.
 - outaged: every contingency that converged. A contingency without a row has no solution (typically a generator
-  step-up transformer: the generator is cut off); its LODF is not defined. Equipment that is not a contingency of
-  the Contingency Analysis is reported, it has to be added there.
-- combined outages: only when the Contingency Analysis has a contingency with exactly this equipment.
+  step-up transformer: the generator is cut off); its LODF is not defined.
+- combined outages: one contingency with exactly this equipment.
 
 Standard library plus the engine helpers only. ComVstab.calcLodf and ComVstab.lodflim go through
 pf_state.StateGuard: they are read back and restored; a restoration failure raises StateRestoreError.
 """
 
 import gridlens_engine as engine
-from pf_state import StateGuard
+from pf_state import StateGuard, StateRestoreError
 
 # Branch classes a planned outage can switch off.
 BRANCH_CLASSES = ("ElmLne", "ElmTr2", "ElmTr3", "ElmCoup")
@@ -34,10 +39,12 @@ OUTAGE_ID_VARIABLE = "b:outid"
 LODF_RESULT_SUFFIX = "_LODF"
 RECORD_ALL = 0  # ComVstab.lodflim: values below this limit (in %) are not written to the result file
 MAX_TABLE_ROWS = 50  # equipment per contingency read from its table
+ANALYSIS_NAME = "Outage Assessment"  # the Contingency Analysis this script creates and fills; the user's own is not touched
+CLEAN_UP = False  # True: delete what a run creates (contingency analysis, command) when it has read the LODF
 
 # Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
 # compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 5
+INTERFACE_VERSION = 6
 
 
 class LodfError(RuntimeError):
@@ -68,6 +75,110 @@ def _first(holder, class_name):
     except Exception:
         found = []
     return found[0] if found else None
+
+
+def _create(parent, class_name, name):
+    """Create `name.class_name` inside `parent`; LodfError with PowerFactory's reason when it cannot."""
+    try:
+        created = parent.CreateObject(class_name, name)
+    except Exception as exc:
+        raise LodfError("PowerFactory could not create '{}.{}' in '{}': {}".format(
+            name, class_name, engine.object_name(parent), exc)) from None
+    if created is None:
+        raise LodfError("PowerFactory could not create '{}.{}' in '{}'.".format(name, class_name, engine.object_name(parent)))
+    return created
+
+
+def prepare(app, study_case, scenarios, log):
+    """Make sure the Study Case has everything the LODF needs; returns (distribution, analysis, created).
+
+    - 'Sensitivities / Distribution Factors' (ComVstab): the Study Case's own, else a new one is created.
+    - Contingency Analysis: a separate one named ANALYSIS_NAME is created (or emptied when it exists from an earlier
+      run) and holds one contingency (ComOutage) per distinct equipment of the scenarios, so the Contingency Analysis
+      of the user is not touched and only what is needed is calculated.
+    `created` lists the objects this run created, for the output and for the optional clean-up.
+    """
+    created = []
+    distribution = _first(study_case, "ComVstab")
+    if distribution is None:
+        distribution = app.GetFromStudyCase("ComVstab")  # documented: the one of the Study Case, created if there is none
+        if distribution is None:
+            raise LodfError("PowerFactory could not create the 'Sensitivities / Distribution Factors' command (ComVstab) "
+                            "in Study Case '{}'.".format(engine.object_name(study_case)))
+        created.append(distribution)
+        log("Created 'Sensitivities / Distribution Factors' ({}) in Study Case '{}'.".format(
+            engine.object_name(distribution), engine.object_name(study_case)))
+    analysis = next((c for c in _contents(study_case, "ComSimoutage") if engine.object_name(c) == ANALYSIS_NAME), None)
+    if analysis is None:
+        analysis = _create(study_case, "ComSimoutage", ANALYSIS_NAME)
+        created.append(analysis)
+        log("Created Contingency Analysis '{}' in Study Case '{}'.".format(ANALYSIS_NAME, engine.object_name(study_case)))
+    else:
+        try:
+            analysis.ClearCont()  # our own analysis from an earlier run: start empty
+        except Exception as exc:
+            raise LodfError("Contingency Analysis '{}' of an earlier run could not be emptied: {}".format(ANALYSIS_NAME, exc)) from None
+    wanted = {}
+    for scenario in scenarios:
+        keys = frozenset(engine.object_key(b) for b in scenario["equipment"])
+        if keys and keys not in wanted:
+            wanted[keys] = scenario
+    for keys, scenario in wanted.items():
+        name = scenario.get("name") or scenario["key"]
+        contingency = _create(analysis, "ComOutage", name)
+        try:
+            code = contingency.SetObjs(list(scenario["equipment"]))
+        except Exception as exc:
+            raise LodfError("The equipment of '{}' could not be put into its contingency: {}".format(name, exc)) from None
+        if engine.finite_number(code) not in (0, None) or contingency_keys(contingency) != keys:
+            raise LodfError("Contingency '{}' does not list its equipment ({}) after SetObjs (return value {}).".format(
+                name, _names(scenario["equipment"]), code))
+    if wanted:
+        log("Contingencies created in '{}': {}.".format(
+            ANALYSIS_NAME, "; ".join("{} ({})".format(sc.get("name") or sc["key"], _names(sc["equipment"])) for sc in wanted.values())))
+    return distribution, analysis, created
+
+
+def _contents(holder, class_name):
+    try:
+        return list(holder.GetContents("*." + class_name, 1) or [])
+    except Exception:
+        return []
+
+
+class _Link:
+    """Point ComVstab.pComSimoutage at our Contingency Analysis for the run and put the original one back afterwards."""
+
+    def __init__(self, distribution, analysis):
+        self.distribution, self.analysis = distribution, analysis
+        self.original = engine.safe_attr(distribution, "pComSimoutage")
+
+    def __enter__(self):
+        if not engine._set_attribute(self.distribution, "pComSimoutage", self.analysis):
+            raise LodfError("ComVstab.pComSimoutage cannot be set to the Contingency Analysis '{}'.".format(ANALYSIS_NAME))
+        return self
+
+    def __exit__(self, kind, failure, _traceback):
+        if self.original is None or engine._same_object(self.original, self.analysis):
+            return False  # nothing was linked before: the link to our analysis stays, so the command is complete
+        if not engine._set_attribute(self.distribution, "pComSimoutage", self.original):
+            message = "ComVstab.pComSimoutage could not be restored to '{}'. Verify the Study Case manually.".format(
+                engine.object_name(self.original))
+            if failure is not None:
+                message += " The calculation had stopped before with: " + (str(failure) or type(failure).__name__)
+            raise StateRestoreError(message) from failure
+        return False
+
+
+def clean_up(created, log):
+    """Delete what this run created (CLEAN_UP): contingency analysis before the command."""
+    for item in reversed(created):
+        name = engine.object_name(item)
+        try:
+            code = item.Delete()
+            log("Deleted '{}' ({}).".format(name, "ok" if engine.finite_number(code) in (0, None) else "return value {}".format(code)))
+        except Exception as exc:
+            log("'{}' could not be deleted: {}".format(name, exc))
 
 
 def _names(branches, limit=5):
@@ -190,21 +301,24 @@ def calculate(app, scenarios, element_id, log=lambda message: None, undefined=No
     LodfError: nothing could be calculated. StateRestoreError: a setting could not be put back.
     """
     study_case = app.GetActiveStudyCase()
-    distribution = _first(study_case, "ComVstab") if study_case is not None else None
-    if distribution is None:
-        raise LodfError("The active Study Case has no 'Sensitivities / Distribution Factors' command (ComVstab); "
-                        "LODF was not calculated.")
-    simulation = engine.safe_attr(distribution, "pComSimoutage") or _first(study_case, "ComSimoutage")
-    if simulation is None:
-        raise LodfError("'Sensitivities / Distribution Factors' has no Contingency Analysis; LODF was not calculated.")
-    defined = {contingency_keys(c) for c in contingencies(study_case, simulation)} - {frozenset()}
-    if not defined:
-        raise LodfError("The Contingency Analysis has no contingencies; LODF was not calculated.")
-    solved = {}
-    for contingency, values in _execute(distribution):
-        keys = contingency_keys(contingency)
-        if keys:
-            solved[keys] = values
+    if study_case is None:
+        raise LodfError("There is no active Study Case; LODF was not calculated.")
+    defined, solved = set(), {}
+    if any(scenario["equipment"] for scenario in scenarios):  # without equipment nothing can be a contingency
+        distribution, analysis, created = prepare(app, study_case, scenarios, log)
+        try:
+            defined = {contingency_keys(c) for c in contingencies(study_case, analysis)} - {frozenset()}
+            with _Link(distribution, analysis):
+                for contingency, values in _execute(distribution):
+                    keys = contingency_keys(contingency)
+                    if keys:
+                        solved[keys] = values
+        finally:
+            if CLEAN_UP:
+                clean_up(created, log)
+            elif created:
+                log("Left in Study Case '{}' for inspection: {}. Set CLEAN_UP = True in lodf.py to delete what a run "
+                    "creates.".format(engine.object_name(study_case), ", ".join("'{}'".format(engine.object_name(c)) for c in created)))
     log("PowerFactory's LODF covers lines only: {} of {} contingencies have a solution.".format(len(solved), len(defined)))
     rows, without = [], []
     for scenario in scenarios:
@@ -221,9 +335,8 @@ def calculate(app, scenarios, element_id, log=lambda message: None, undefined=No
         elif wanted in defined:
             reason = ("LODF '{}': PowerFactory's contingency analysis found no solution without {}; not defined "
                       "(typically a generator or a part of the grid is cut off).").format(label, _names(equipment))
-        else:
-            reason = ("LODF '{}': {} is no contingency of the Contingency Analysis; add it to the contingency "
-                      "definition to get its LODF.").format(label, _names(equipment))
+        else:  # prepare() creates a contingency for every scenario that has equipment
+            reason = "LODF '{}': {} is not part of the calculated contingencies; no LODF.".format(label, _names(equipment))
         log(reason)
         without.append(label)
         if undefined is not None:

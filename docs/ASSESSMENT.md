@@ -135,10 +135,19 @@ equipment carried before (AC, as the Study Case calculates it). The values are s
 of the line (PowerFactory: 73.6 % → 0.736); the dashboard shows |LODF|. They are stored in `pf_lodf`, separate
 from the result runs, together with the equipment they belong to.
 
-**What has to be in the Study Case:** the command *Sensitivities / Distribution Factors* (open it once so that
-it exists) and the equipment of the planned outages as **contingencies of the Contingency Analysis**
-(*Contingency Definition*). The script sets `lodflim` (the recording limit) to 0 for the run, because values below
-it are not written to PowerFactory's result file, switches LODF on, and puts both settings back.
+**What the script sets up itself (nothing has to be prepared in the Study Case):**
+
+1. The command *Sensitivities / Distribution Factors*: the Study Case's own, or a new one when it has none.
+2. Its **own Contingency Analysis** named `Outage Assessment`, created in the Study Case (emptied and refilled
+   when it exists from an earlier run). It holds **one contingency (`ComOutage`) per scenario**, named like the
+   scenario and filled with the equipment of its planned outages (`ComOutage.SetObjs`); a combined outage is one
+   contingency with all its equipment. The Contingency Analysis of the user is **not touched**: the command is
+   pointed at ours for the run (`ComVstab.pComSimoutage`) and back at its original one afterwards.
+3. It sets `lodflim` (the recording limit) to 0 for the run, because values below it are not written to
+   PowerFactory's result file, switches LODF on, and puts both settings back.
+
+What the run created stays in the Study Case so that it can be opened and inspected; the output lists it. Set
+`CLEAN_UP = True` in `powerfactory/lodf.py` to delete it after the LODF is read.
 
 **How the result is read:** the result file `…_LODF` inside `ComVstab.pResult` has one row per contingency
 that converged. Its column `b:outid` is turned into the contingency by `ElmRes.GetObj`, and `ComOutage.GetObject(i)`
@@ -153,12 +162,11 @@ one calculation.
 - **Not defined** (the dashboard shows "no LODF" with the reason, the other outages are not affected):
   - the contingency has no solution: typically a generator step-up transformer, the generator is cut off
     and PowerFactory's contingency analysis fails to converge for it (it has no row in the result file),
-  - the equipment is not a contingency of the Contingency Analysis: add it there,
-  - the outage switches no line, transformer or coupler (e.g. a busbar), or it is a combination without its
-    own contingency.
+  - the outage switches no line, transformer or coupler (e.g. a busbar); no contingency is created for it.
 
 The reasons are stored in `pf_lodf_undefined` and listed in the view `v_lodf_undefined`. If PowerFactory's
-tool is missing or fails there is a warning, the scenarios still run and the dashboard shows "not calculated".
+tool cannot be set up or fails (for example a read-only project, or an error code of the calculation) there is a
+warning with PowerFactory's reason, the scenarios still run and the dashboard shows "not calculated".
 
 ## Large databases
 

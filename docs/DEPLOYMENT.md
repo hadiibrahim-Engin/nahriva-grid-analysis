@@ -115,5 +115,7 @@ subnet. The server then runs read-only (see "Security"). Never forward the port 
 
 The flows are verified with tests and real server processes on macOS. On the PowerFactory PC please
 confirm once: the Windows installer (only checked syntactically), that the server started by the
-script survives the PowerFactory process (otherwise use autostart), and the LODF: the Study Case needs the command
-*Sensitivities / Distribution Factors* and the planned-outage equipment as contingencies (see `docs/ASSESSMENT.md`).
+script survives the PowerFactory process (otherwise use autostart), and the LODF: the script creates the Contingency Analysis
+`Outage Assessment` with one contingency per scenario (and the command *Sensitivities / Distribution Factors* if the
+Study Case has none) through `CreateObject` / `ComOutage.SetObjs`; this is checked only against a fake, never against a
+real PowerFactory (see `docs/ASSESSMENT.md`).
