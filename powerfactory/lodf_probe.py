@@ -25,8 +25,14 @@ MAX_OUTAGES = 3
 PROBE_ANALYSIS_NAME = "LODF Probe"  # separate from the analysis of the assessment and from the user's own
 CLEAN_UP = False  # True: delete what this script created
 TOP = 5  # lines shown per contingency (largest |LODF|)
-# ComVstab attributes the assessment relies on, plus neighbours that may exist; shown with their value.
+# ComVstab attributes the assessment relies on; shown with their value.
 VSTAB_ATTRIBUTES = ("calcLodf", "lodflim", "calcPtdf", "ptdflim", "factors4trf", "pComSimoutage", "pResult")
+# More ComVstab settings for the run, put back afterwards, to try what PowerFactory asks for, for example
+# {"calcPtdf": 1}. The output lists every attribute of ComVstab that looks like a switch for a sensitivity factor.
+EXTRA_SETTINGS = {}
+_PREFIXES = ("", "calc", "iopt_", "iopt", "i", "b", "use", "en", "do", "sel", "p")
+_WORDS = ("lodf", "ptdf", "otdf", "psdf", "vsens", "sens", "factor", "factors", "dist", "distfac", "flow", "volt", "trf", "branch",
+          "gen", "load", "lod", "all", "sym", "dc", "ac", "vstab", "dv", "dq", "dp", "outage", "cont", "sensitivity", "sensitivities")
 
 sys.path.insert(0, str(PROJECT_DIR / "powerfactory"))
 
@@ -159,16 +165,49 @@ def stage_contingencies(app, study_case, chosen, created):
     return analysis
 
 
-def _vstab_attributes(app, distribution):
-    detail(app, "ComVstab '{}' attributes:".format(engine.object_name(distribution)))
-    for attribute in VSTAB_ATTRIBUTES:
-        known, value = engine._read_setting(distribution, attribute)
+def _has_attribute(obj, name):
+    checker = getattr(obj, "HasAttribute", None)
+    if callable(checker):
         try:
-            description = app.GetAttributeDescription("ComVstab", attribute, 1)
+            return bool(checker(name))
+        except Exception:
+            pass
+    return engine._read_setting(obj, name)[0]
+
+
+def _candidate_names():
+    names = list(VSTAB_ATTRIBUTES)
+    for prefix in _PREFIXES:
+        for word in _WORDS:
+            for name in (prefix + word, prefix + word.capitalize(), prefix + word.upper()):
+                if name not in names:
+                    names.append(name)
+    return names
+
+
+def _vstab_attributes(app, distribution):
+    """What the command offers: the attributes the assessment uses and every attribute whose name looks like a factor switch."""
+    detail(app, "ComVstab '{}':".format(engine.object_name(distribution)))
+    rows = []
+    for name in _candidate_names():
+        if not _has_attribute(distribution, name):
+            continue
+        known, value = engine._read_setting(distribution, name)
+        try:
+            description = distribution.GetAttributeDescription(name, 1)
         except Exception:
             description = None
-        shown = engine._format_setting_value(value) if known else "not readable"
-        detail(app, "    {:<14} {}{}".format(attribute, shown, "   [{}]".format(description) if description else ""))
+        rows.append((name, engine._format_setting_value(value) if known else "not readable", description or ""))
+    table(app, ("Attribute", "Value", "Description"), rows)
+    missing = [name for name in VSTAB_ATTRIBUTES if name not in {row[0] for row in rows}]
+    if missing:
+        detail(app, "Not found on this command: {}.".format(", ".join(missing)), "WARN")
+    try:
+        listed = [n for n in dir(distribution) if not n.startswith("_") and not callable(getattr(distribution, n, None))]
+    except Exception:
+        listed = []
+    if listed:
+        detail(app, "Attributes listed by Python: {}.".format(", ".join(listed[:120])))
 
 
 def _where_is_the_result(app, distribution):
@@ -206,7 +245,7 @@ def stage_lodf(app, study_case, analysis, chosen, created):
             known, linked = engine._read_setting(distribution, "pComSimoutage")
             detail(app, "pComSimoutage now points to {}.".format(_described(linked) if known and linked is not None else "nothing"))
             with StateGuard() as guard:
-                for attribute, value in (("calcLodf", 1), ("lodflim", lodf.RECORD_ALL)):
+                for attribute, value in (("calcLodf", 1), ("lodflim", lodf.RECORD_ALL)) + tuple(EXTRA_SETTINGS.items()):
                     ok = guard.set(distribution, attribute, value, "ComVstab." + attribute)
                     detail(app, "{} = {}: {}".format(attribute, value, "set" if ok else "CANNOT BE READ OR WRITTEN"), "" if ok else "ERROR")
                     if not ok:
