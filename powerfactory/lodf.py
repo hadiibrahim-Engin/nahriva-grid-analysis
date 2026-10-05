@@ -25,8 +25,9 @@ What PowerFactory provides, and therefore what a scenario gets:
   step-up transformer: the generator is cut off); its LODF is not defined.
 - combined outages: one contingency with exactly this equipment.
 
-Standard library plus the engine helpers only. ComVstab.calcLodf and ComVstab.lodflim go through
-pf_state.StateGuard: they are read back and restored; a restoration failure raises StateRestoreError.
+Standard library plus the engine helpers only. The ComVstab settings of a run (RUN_SETTINGS: 'Consider contingencies',
+LODF on, recording limit 0) go through pf_state.StateGuard: they are read back and restored; a restoration failure
+raises StateRestoreError.
 """
 
 import gridlens_engine as engine
@@ -38,6 +39,10 @@ LODF_VARIABLE = "m:LODF:bus1"
 OUTAGE_ID_VARIABLE = "b:outid"
 LODF_RESULT_SUFFIX = "_LODF"
 RECORD_ALL = 0  # ComVstab.lodflim: values below this limit (in %) are not written to the result file
+# ComVstab settings for the run. isContSens is 'Consider contingencies': without it PowerFactory stops with
+# "Please enable at least one sensitivity factor" although calcLodf is on. Not in every PowerFactory version.
+RUN_SETTINGS = (("isContSens", 1), ("calcLodf", 1), ("lodflim", RECORD_ALL))
+OPTIONAL_SETTINGS = ("isContSens",)
 MAX_TABLE_ROWS = 50  # equipment per contingency read from its table
 ANALYSIS_NAME = "Outage Assessment"  # the Contingency Analysis this script creates and fills; the user's own is not touched
 CLEAN_UP = False  # True: delete what a run creates (contingency analysis, command) when it has read the LODF
@@ -268,11 +273,29 @@ def read_matrix(result):
             pass
 
 
+def set_run_settings(guard, distribution, extra=()):
+    """Set what the run needs (RUN_SETTINGS and `extra`); [(attribute, value, outcome)], stops at the first that fails.
+
+    The outcome is 'set', 'not available in this PowerFactory version' (optional settings only) or
+    'CANNOT BE READ OR WRITTEN'. `guard` puts every setting back.
+    """
+    outcomes = []
+    for attribute, value in RUN_SETTINGS + tuple(extra):
+        if attribute in OPTIONAL_SETTINGS and not engine._read_setting(distribution, attribute)[0]:
+            outcomes.append((attribute, value, "not available in this PowerFactory version"))
+            continue
+        ok = guard.set(distribution, attribute, value, "ComVstab." + attribute)
+        outcomes.append((attribute, value, "set" if ok else "CANNOT BE READ OR WRITTEN"))
+        if not ok:
+            break
+    return outcomes
+
+
 def _execute(distribution):
     """Run 'Sensitivities / Distribution Factors' with LODF on and every value recorded, then put the settings back."""
     with StateGuard() as guard:
-        for attribute, value in (("calcLodf", 1), ("lodflim", RECORD_ALL)):
-            if not guard.set(distribution, attribute, value, "ComVstab." + attribute):
+        for attribute, _value, outcome in set_run_settings(guard, distribution):
+            if outcome == "CANNOT BE READ OR WRITTEN":
                 raise LodfError("ComVstab.{} cannot be read or written; LODF was not calculated.".format(attribute))
         try:
             code = distribution.Execute()
