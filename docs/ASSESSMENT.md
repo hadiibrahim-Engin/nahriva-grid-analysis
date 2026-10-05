@@ -23,6 +23,18 @@ unchanged; the only addition is the LODF table `pf_lodf`.
    the outage window and keeps it in service before and after. After saving, one line reports the
    highest loading in the window against REF, the number of elements above 100 % and the largest rise.
 
+**Reading the output.** The output window is structured in three levels, nothing is left out:
+
+- `====` sections: the start banner, one per step (`STEP 1/5 …`), then `SUMMARY`, and `DASHBOARD` or `ERROR` at
+  the end. Step 1 lists every planned outage with equipment, window and flags, step 3 says per scenario whether
+  its windows lie in the calculated period, step 4 gives the LODF status per scenario.
+- `----` subsections: one per scenario (`Scenario 3/20 · NE_L1`).
+- `.. Case OUTAGE · NE_L1 ....` lines: one QDS run. Below it are the enabled planned outages with their windows
+  and equipment, the disabled ones by name, the ComStatsim option and period; PowerFactory's own messages and the
+  `[GridLens]` progress lines follow, then the result of the scenario in one line.
+
+The `SUMMARY` table repeats, per scenario, the time, the LODF status and the result in the outage window.
+
 Every PowerFactory setting the script changes is restored after each step; a restoration failure stops
 the script. Stopping it with *Break* keeps the scenarios saved so far.
 

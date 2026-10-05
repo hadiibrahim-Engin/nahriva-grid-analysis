@@ -24,13 +24,13 @@ sys.path.insert(0, str(PROJECT_DIR / 'backend'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gridlens_engine as engine
 import lodf
-from pf_console import detail, log
+from pf_console import case, detail, log, table
 import run_summary
 from app.simulation.store import ScenarioStore, catalog_signature, outage_key
 
 # Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
 # compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 1
+INTERFACE_VERSION = 2
 
 
 def identifier(path):
@@ -148,7 +148,7 @@ class CaseLogger(engine.RunLogger):
     """GridLens progress lines without one warning per planned outage that a case disables on purpose.
 
     REF disables every planned outage and each OUTAGE run all but its own; those are counted and
-    reported in one line by _describe_case instead.
+    listed with their names in the case header by _describe_case instead.
     """
 
     DISABLED = 'Outage object is disabled (outserv=1).'
@@ -168,16 +168,18 @@ def _span(start, end):
     return engine._format_pf_time(start) + ' to ' + engine._format_pf_time(end)
 
 
-def _describe_case(app, kind, candidates, disabled, period):
-    if kind == 'REF':
-        detail(app, 'REF: QDS over the ComStatsim period with all {} planned outages disabled.'.format(disabled))
-        return
-    for record in candidates:
-        start, end = record['window']
-        detail(app, "OUTAGE: '{}' enabled, active {}; equipment: {}.".format(
-            record['name'], _span(start, end), record['equipment_name'] or 'none found'))
-    detail(app, 'QDS over {}: PowerFactory switches the equipment off inside the window and keeps it in '
-                'service before and after; {} other planned outages disabled.'.format(_span(*period), disabled))
+def _describe_case(app, kind, records, candidates, option, period):
+    """Everything about one case at a glance: what is enabled, what is disabled, how PowerFactory is set."""
+    disabled = [r for r in records if r['status'] == engine.OUTAGE_SKIPPED and r['skip_reason'] == CaseLogger.DISABLED]
+    detail(app, "ComStatsim option 'Planned Outages': {} | QDS period {}".format('on' if option else 'off', _span(*period)))
+    if candidates:
+        detail(app, 'Planned outages enabled ({}); PowerFactory switches the equipment off inside the window and keeps '
+                    'it in service before and after:'.format(len(candidates)))
+        table(app, ('Planned outage', 'Active', 'Equipment'),
+              [(r['name'], _span(*r['window']), r['equipment_name'] or 'none found') for r in candidates])
+    else:
+        detail(app, 'Planned outages enabled: none (reference case)')
+    detail(app, 'Planned outages disabled ({}): {}'.format(len(disabled), ', '.join(r['name'] for r in disabled) or 'none'))
 
 
 def _run_cases(app, catalog, cases):
@@ -211,13 +213,15 @@ def _run_cases(app, catalog, cases):
                 ignored = 0 if identifier(engine.object_key(obj)) in enabled else 1
                 if not engine._set_scalar_attribute(obj, 'outserv', ignored):
                     raise RuntimeError('Could not set the planned-outage selection for ' + kind + '.')
+            suffix = ' · ' + kind  # the name of a scenario case ends with its kind: "NE_L1 · OUTAGE"
+            case(app, 'Case {} · {}'.format(kind, name[:-len(suffix)] if name.endswith(suffix) else name))
             logger.disabled = 0
-            _records, candidates = engine.classify_planned_outages(app, logger, tuple(catalog['period']))
-            _describe_case(app, kind, candidates, logger.disabled, catalog['period'])
+            records, candidates = engine.classify_planned_outages(app, logger, tuple(catalog['period']))
             if len(candidates) != len(enabled):
                 raise RuntimeError('PowerFactory outage discovery differs from the selection for ' + kind + '.')
             if not engine._set_scalar_attribute(qds, engine.PLANNED_OUTAGE_OPTION, option):
                 raise RuntimeError('Cannot verify ComStatsim.iopt_maint for ' + kind)
+            _describe_case(app, kind, records, candidates, option, catalog['period'])
             results.append(engine._run_calculation(app, study_case, qds, kind, name,
                                                   'Named planned-outage scenario', original_result,
                                                   logger, temporary_results,
@@ -294,7 +298,10 @@ def calculate(app, job, catalog, reference=None):
 
 
 def execute(app, database_path=DATABASE_PATH, reference=None, period=None):
-    """Handle one queued job. A batch passes its shared `reference` and the `period` it covered."""
+    """Handle one queued job. A batch passes its shared `reference` and the `period` it covered.
+
+    Returns {'name', 'summary'} of the scenario that was saved, None for a job that only synchronised.
+    """
     store = ScenarioStore(str(database_path))
     job = None
     try:
@@ -321,6 +328,7 @@ def execute(app, database_path=DATABASE_PATH, reference=None, period=None):
             summary = run_summary.describe(runs, windows)
             if summary:
                 detail(app, 'Result ' + summary + '.')
+            return {'name': name, 'summary': summary}
         else:
             raise RuntimeError('Unsupported PowerFactory job kind.')
     except BaseException as exc:

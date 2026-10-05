@@ -57,13 +57,13 @@ if importlib.util.find_spec("powerfactory") is not None:  # only inside PowerFac
 
 import analysis_worker as worker
 import appconfig
-from pf_console import RULE, detail, log, step
+from pf_console import detail, log, section, step, subsection, table
 from outage_plan import scenario_plan, split_by_period
 from dashboard_launcher import launch_dashboard, validate_installation
 
 
 STEPS = 5
-INTERFACE_VERSION = 1  # every module must report the same; see check_installation
+INTERFACE_VERSION = 2  # every module must report the same; see check_installation
 
 
 def check_installation():
@@ -106,6 +106,10 @@ def _outage_line(outage):
     )
 
 
+def _window(outage):
+    return _span((outage["start"], outage["end"])) if outage.get("start") is not None else "unreadable"
+
+
 def run_assessment(app, database_path, definitions=None):
     """REF once, LODF, then one OUTAGE run per scenario; each scenario is saved as soon as it is restored.
 
@@ -117,20 +121,27 @@ def run_assessment(app, database_path, definitions=None):
     Names and outages are checked before anything is calculated. Outage windows are compared with the
     period the reference actually covered, not only with the one ComStatsim declares: a scenario outside
     it is skipped with a warning instead of being saved without values.
+
+    The output has one section per step and one subsection per scenario and case; the summary at the end
+    repeats the result of every scenario in one table.
     """
     started = time.monotonic()
     declared = worker.discover(app)
     plan = scenario_plan(declared, definitions)
+
     step(app, 1, STEPS, "Check the Study Case and the scenarios")
     detail(app, "Project: {} | Study Case: {} | ComStatsim: {}".format(
         declared["project"], declared["study_case"], declared["qds_command"]["name"]))
     detail(app, "Declared QDS period: " + _span(declared["period"]))
-    detail(app, "{} planned outages found, {} scenarios to calculate:".format(len(declared["outages"]), len(plan)))
+    detail(app, "Planned outages in the project ({}):".format(len(declared["outages"])))
+    table(app, ("Planned outage", "Equipment", "Window", "In period", "Disabled in Study Case"),
+          [(o["name"], o["equipment_name"] or "none found", _window(o), "yes" if o["in_period"] else "no",
+            "yes" if o["ignored"] else "no") for o in declared["outages"]])
     by_id = {o["id"]: o for o in declared["outages"]}
-    for number, selection in enumerate(plan, 1):
-        detail(app, "{:>3}. {}".format(number, selection["name"]))
-        for outage_id in selection["outage_ids"]:
-            detail(app, "       " + _outage_line(by_id[outage_id]))
+    detail(app, "Scenarios to calculate ({}):".format(len(plan)))
+    table(app, ("#", "Scenario", "Planned outages"),
+          [(number, selection["name"], "; ".join(by_id[i]["name"] for i in selection["outage_ids"]))
+           for number, selection in enumerate(plan, 1)])
 
     step(app, 2, STEPS, "Reference (REF): one QDS with every planned outage disabled")
     reference = worker.calculate_reference(app, declared)
@@ -139,17 +150,19 @@ def run_assessment(app, database_path, definitions=None):
         len(reference["labels"]), _span(period), sum(len(v) for v in reference["by_category"].values())))
 
     step(app, 3, STEPS, "Compare the outage windows with the simulated period")
+    detail(app, "Declared by ComStatsim: " + _span(declared["period"]))
+    detail(app, "Calculated by PowerFactory: " + _span(period))
     if any(d is None or abs(d - p) > 1 for d, p in zip(declared["period"], period)):
-        detail(app, "ComStatsim declares " + _span(declared["period"]) + ", PowerFactory calculated "
-               + _span(period) + ". Outage windows are compared with the calculated period; "
+        detail(app, "The two differ. Outage windows are compared with the calculated period; "
                "set the ComStatsim 'Time period' to cover the planned outages.", "WARN")
     catalog = worker.discover(app, period)
     plan, skipped = split_by_period(plan, catalog)
-    for selection in plan:
-        detail(app, "OK    '" + selection["name"] + "'")
-    for selection, outside in skipped:
-        detail(app, "SKIP  '" + selection["name"] + "': outside the simulated period " + _span(period) + ": "
-               + "; ".join(_outage_line(o) if o.get("start") is not None else o["name"] for o in outside), "WARN")
+    table(app, ("Result", "Scenario", "Reason"),
+          [("OK", s["name"], "all outages lie in the calculated period") for s in plan]
+          + [("SKIP", s["name"], "outside the calculated period: "
+              + "; ".join(_outage_line(o) if o.get("start") is not None else o["name"] for o in outside))
+             for s, outside in skipped],
+          level="")
     if not plan:
         raise RuntimeError(
             "No scenario lies in the simulated period " + _span(period) + " (" + str(len(skipped))
@@ -166,8 +179,23 @@ def run_assessment(app, database_path, definitions=None):
             store.save_lodf(rows, undefined)
         finally:
             store.close()
+    lines_per_outage = {}
+    for row in rows:
+        lines_per_outage[row[0]] = lines_per_outage.get(row[0], 0) + 1
+
+    def lodf_status(selection):
+        key = worker.outage_key(selection["outage_ids"])
+        if key in undefined:  # the reason starts with "LODF '<scenario>': ", the table row already names the scenario
+            reason = undefined[key]
+            return "none: " + (reason.split("': ", 1)[1] if reason.startswith("LODF '") and "': " in reason else reason)
+        return "{} lines".format(lines_per_outage[key]) if key in lines_per_outage else "not calculated"
+
+    detail(app, "LODF per scenario:")
+    table(app, ("#", "Scenario", "LODF"),
+          [(number, selection["name"], lodf_status(selection)) for number, selection in enumerate(plan, 1)])
 
     step(app, 5, STEPS, "Scenarios: one QDS per scenario with its planned outages enabled")
+    saved = []
     for number, selection in enumerate(plan, 1):
         current = worker.discover(app, period)
         store = worker.ScenarioStore(str(database_path))
@@ -179,14 +207,19 @@ def run_assessment(app, database_path, definitions=None):
             )
         finally:
             store.close()
-        log(app, "Scenario {}/{}: {}".format(number, len(plan), selection["name"]))
+        subsection(app, "Scenario {}/{} · {}".format(number, len(plan), selection["name"]))
         begun = time.monotonic()
-        worker.execute(app, database_path, reference, period)
-        detail(app, "Done in {:.1f} s.".format(time.monotonic() - begun))
+        outcome = worker.execute(app, database_path, reference, period) or {}
+        seconds = time.monotonic() - begun
+        detail(app, "Done in {:.1f} s.".format(seconds))
+        saved.append((number, selection["name"], seconds, lodf_status(selection), outcome.get("summary") or ""))
 
-    log(app, RULE)
-    log(app, "Summary: {} scenarios saved, {} skipped, {} LODF values, total {}.".format(
+    section(app, "SUMMARY")
+    detail(app, "{} scenarios saved, {} skipped, {} LODF values, total {}.".format(
         len(plan), len(skipped), len(rows), _minutes(time.monotonic() - started)))
+    table(app, ("#", "Scenario", "Time", "LODF", "Result in the outage window"),
+          [(number, name, "{:.0f} s".format(seconds), lodf, result.replace("in the outage window: ", ""))
+           for number, name, seconds, lodf, result in saved])
     for selection, outside in skipped:
         detail(app, "skipped '" + selection["name"] + "' (outside the simulated period)", "WARN")
     return [s["name"] for s in plan]
@@ -230,13 +263,13 @@ def show_dashboard(app, database, config):
             production=config["production"],
         )
     except Exception as exc:
-        log(app, "Dashboard not started: " + str(exc), "WARN")
+        detail(app, "Dashboard not started: " + str(exc), "WARN")
         return None
-    log(app, "Dashboard " + ("already running" if dashboard["reused"] else "started") + ": " + dashboard["url"])
+    detail(app, "Dashboard " + ("already running" if dashboard["reused"] else "started") + ": " + dashboard["url"])
     for url in dashboard["lan_urls"]:
-        log(app, "From other PCs in the network: " + url)
+        detail(app, "From other PCs in the network: " + url)
     for note in dashboard["notes"]:
-        log(app, note, "NOTE")
+        detail(app, note, "NOTE")
     return dashboard
 
 
@@ -246,9 +279,10 @@ def show_saved_results(app, database, config):
         return
     try:
         if database.is_file() and has_results(database):
+            section(app, "DASHBOARD")
             show_dashboard(app, database, config)
     except Exception as exc:
-        log(app, "Dashboard not started: " + str(exc), "WARN")
+        detail(app, "Dashboard not started: " + str(exc), "WARN")
 
 
 def main():
@@ -274,17 +308,20 @@ def main():
         check_installation()
         validate_installation(python=DASHBOARD_PYTHON)
         free = preflight(database)
-        log(app, RULE)
-        log(app, "Outage assessment started")
-        detail(app, f"Scripts: {Path(__file__).resolve().parent}")
+        section(app, "OUTAGE ASSESSMENT · started " + time.strftime("%Y-%m-%d %H:%M:%S"))
+        detail(app, f"Scripts:  {Path(__file__).resolve().parent}")
         detail(app, f"Database: {database} ({free:.0f} GB free)")
+        detail(app, "Dashboard: {}:{}{}".format(config["host"], config["port"], "" if SHOW_DASHBOARD else " (not started)"))
         run_assessment(app, database, SCENARIOS)
     except KeyboardInterrupt:
-        log(app, "Stopped by the user. Scenarios saved before stay in the database; "
-            "the scenario that was running was not saved. PowerFactory settings were restored.", "ERROR")
+        section(app, "STOPPED BY THE USER")
+        detail(app, "Scenarios saved before stay in the database; the scenario that was running was not saved.", "ERROR")
+        detail(app, "PowerFactory settings were restored.", "ERROR")
         raise
     except BaseException as exc:
-        log(app, str(exc) or type(exc).__name__, "ERROR")
+        section(app, "ERROR")
+        for line in (str(exc) or type(exc).__name__).splitlines():
+            detail(app, line, "ERROR")
         raise
     finally:
         show_saved_results(app, database, config)

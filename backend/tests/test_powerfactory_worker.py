@@ -370,8 +370,8 @@ def test_outage_outside_the_simulated_period_is_skipped_not_saved_empty(tmp_path
     path = tmp_path / "period.sqlite3"
     assert assessment.run_assessment(app, path) == ["Chosen"]
     assert app.calls == [(0, []), (1, ["Chosen"])]  # no OUTAGE run whose window cannot be in the results
-    assert any("WARN" in m and "Other" in m and "outside the simulated period" in m for m in messages)
-    assert any("declares" in m for m in messages)  # the period mismatch itself is reported
+    assert any("SKIP" in m and "Other" in m and "outside the calculated period" in m for m in messages)
+    assert any("WARN" in m and "The two differ" in m for m in messages)  # the period mismatch itself is reported
     store = ScenarioStore(str(path))
     assert [s["name"] for s in store.overview()["scenarios"]] == ["Chosen"]
     assert store.catalog()["period"] == [app.original.times[0], app.original.times[-1]]
@@ -392,22 +392,54 @@ def test_no_scenario_in_the_simulated_period_stops_with_a_clear_message(tmp_path
     restored(app)
 
 
-def test_output_shows_each_step_and_the_result_of_each_scenario(tmp_path):
+def test_output_is_structured_in_sections_and_keeps_every_detail(tmp_path):
     assessment = assessment_module()
     app = App()
     messages = []
     app.PrintPlain = messages.append
     assessment.run_assessment(app, tmp_path / "output.sqlite3")
     text = "\n".join(messages)
-    for number in range(1, 6):
-        assert f"Step {number}/5" in text
-    assert "Scenario 2/2: Other" in text
-    # what the OUTAGE run does, in plain words
-    assert "'Chosen' enabled, active" in text and "keeps it in service before and after" in text
+    heavy, light = "=" * 78, "-" * 78
+
+    # one heavy-ruled section per step, in order, then the summary
+    titles = [m.replace("[Outage Assessment]", "").strip() for i, m in enumerate(messages)
+              if 0 < i < len(messages) - 1 and messages[i - 1].endswith(heavy) and messages[i + 1].endswith(heavy)]
+    assert titles[:-1] == [
+        "STEP 1/5 · Check the Study Case and the scenarios",
+        "STEP 2/5 · Reference (REF): one QDS with every planned outage disabled",
+        "STEP 3/5 · Compare the outage windows with the simulated period",
+        "STEP 4/5 · LODF: PowerFactory's Sensitivities / Distribution Factors for the equipment of each scenario",
+        "STEP 5/5 · Scenarios: one QDS per scenario with its planned outages enabled",
+    ]
+    assert titles[-1] == "SUMMARY"
+    assert text.count(heavy) == 2 * (5 + 1)  # every section is ruled above and below
+
+    # one light-ruled subsection per scenario, one dotted line per case; a blank line before a header separates blocks
+    for header in ("Scenario 1/2 · Chosen", "Scenario 2/2 · Other"):
+        assert any(header in m and messages[i - 1].endswith(light) for i, m in enumerate(messages) if i), header
+    cases = [m for m in messages if ".. Case " in m]
+    assert [c.split(" ......")[0].replace("[Outage Assessment] ", "") for c in cases] == [
+        ".. Case REF · Reference · all planned outages disabled",
+        ".. Case OUTAGE · Chosen",  # not "Chosen · OUTAGE · OUTAGE"
+        ".. Case OUTAGE · Other",
+    ]
+    assert all(len(c) == len("[Outage Assessment] ") + 78 for c in cases)  # the dots fill the line
+    assert "" in messages  # blank separator lines
+
+    # nothing was lost: the catalogue, the enabled and the disabled outages with names, the result per scenario
+    assert "Planned outages in the project (2):" in text and "Disabled in Study Case" in text
+    assert "Planned outages enabled (1)" in text and "Chosen" in text and "Planned outages disabled (1): Other" in text
+    assert "Planned outages enabled: none (reference case)" in text and "Planned outages disabled (2): Chosen, Other" in text
+    assert "keeps it in service before and after" in text
     assert "highest loading 110.0 % (Line A), REF 90.0 %" in text
-    assert "Summary: 2 scenarios saved, 0 skipped" in text
-    # the planned outages a case disables on purpose are counted, not warned about one by one
-    assert "Outage object is disabled" not in text
+    assert "Outage object is disabled" not in text  # replaced by the named list, not repeated per outage
+
+    # the summary table: one row per scenario with time, LODF status and the result
+    summary = text[text.index("SUMMARY"):]
+    assert "2 scenarios saved, 0 skipped" in summary
+    assert "Scenario" in summary and "Result in the outage window" in summary
+    assert "Chosen" in summary and "Other" in summary and "highest loading 110.0 %" in summary
+
 
 
 class Terminal(PFObject):
