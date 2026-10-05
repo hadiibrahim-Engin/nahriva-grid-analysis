@@ -6,6 +6,10 @@ the import contract both go through here.
 
 from datetime import datetime
 
+# Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
+# compares it across all modules, so files of different versions are named instead of failing in a confusing way.
+INTERFACE_VERSION = 1
+
 
 def epoch(value):
     """Epoch seconds (int) of a datetime, an ISO string or a number."""

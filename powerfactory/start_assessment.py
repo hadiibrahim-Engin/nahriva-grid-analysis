@@ -63,6 +63,33 @@ from dashboard_launcher import launch_dashboard, validate_installation
 
 
 STEPS = 5
+INTERFACE_VERSION = 1  # every module must report the same; see check_installation
+
+
+def check_installation():
+    """Stop with a clear message when the files of this installation are of different versions.
+
+    PowerFactory runs whatever files it finds. After an update by copying single files, a new script can meet an
+    old module and fail with errors like "too many values to unpack" or "has no attribute". Every module that
+    the others depend on states its INTERFACE_VERSION; this compares them with the one of this script.
+    """
+    import importlib
+
+    names = ["analysis_worker", "lodf", "pf_console", "pf_state", "outage_plan", "run_summary",
+             "app.simulation.store", "app.analysis.schema", "app.analysis.series"]
+    wrong = []
+    for name in names:
+        module = importlib.import_module(name)
+        version = getattr(module, "INTERFACE_VERSION", None)
+        if version != INTERFACE_VERSION:
+            wrong.append("    {:<24} version {}  ({})".format(
+                name, "unknown (older)" if version is None else version, getattr(module, "__file__", "?")))
+    if wrong:
+        raise RuntimeError(
+            "The files of this installation are from different versions (this script is version {}):\n{}\n"
+            "Replace the complete folders powerfactory\\ and backend\\app\\ with the ones of the same release "
+            "(for example with git pull); single files cannot be mixed.".format(INTERFACE_VERSION, "\n".join(wrong))
+        )
 
 
 def _span(period):
@@ -244,6 +271,7 @@ def main():
     )
     database = config["database"]
     try:
+        check_installation()
         validate_installation(python=DASHBOARD_PYTHON)
         free = preflight(database)
         log(app, RULE)

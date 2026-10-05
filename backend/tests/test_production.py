@@ -300,3 +300,22 @@ def test_modules_of_an_earlier_run_are_not_reused():
     modules = {**stale, "json": ModuleType("json"), "powerfactory": ModuleType("powerfactory")}
     assessment.forget_cached_modules(modules)
     assert set(modules) == {"json", "powerfactory"}  # only this project's modules are dropped
+
+
+def test_files_of_different_versions_are_named_before_anything_runs(tmp_path, monkeypatch):
+    """A new script with an old analysis_worker.py (no INTERFACE_VERSION) must not fail with 'too many values to unpack'."""
+    from tests.test_lodf import NativeApp
+
+    monkeypatch.setenv("OA_DATABASE", str(tmp_path / "r.sqlite3"))
+    app = NativeApp()
+    monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
+    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
+    monkeypatch.delattr(assessment.worker, "INTERFACE_VERSION")  # an older copy of the file
+    with pytest.raises(RuntimeError) as caught:
+        assessment.main()
+    message = str(caught.value)
+    assert "different versions" in message and "analysis_worker" in message and "unknown (older)" in message
+    assert "analysis_worker.py" in message  # the path of the file, so it can be found
+    assert "lodf" not in message.replace("analysis_worker", "")  # only the files that are wrong are listed
+    assert any("ERROR" in line and "different versions" in line for line in app.printed)
+    assert app.calls == []  # nothing was calculated

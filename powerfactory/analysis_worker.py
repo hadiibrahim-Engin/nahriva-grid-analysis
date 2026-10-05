@@ -28,6 +28,10 @@ from pf_console import detail, log
 import run_summary
 from app.simulation.store import ScenarioStore, catalog_signature, outage_key
 
+# Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
+# compares it across all modules, so files of different versions are named instead of failing in a confusing way.
+INTERFACE_VERSION = 1
+
 
 def identifier(path):
     return hashlib.sha256(path.encode('utf-8')).hexdigest()

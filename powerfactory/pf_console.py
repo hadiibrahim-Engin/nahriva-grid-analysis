@@ -14,6 +14,10 @@ import sys
 PREFIX = "[Outage Assessment]"
 RULE = "-" * 72
 
+# Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
+# compares it across all modules, so files of different versions are named instead of failing in a confusing way.
+INTERFACE_VERSION = 1
+
 
 def log(app, message, level=""):
     line = PREFIX + ("[" + level + "] " if level else " ") + message

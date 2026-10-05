@@ -6,6 +6,10 @@ the scenario's outage windows, so the reader sees at once whether the outage cha
 
 LOADING = "loading"
 
+# Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
+# compares it across all modules, so files of different versions are named instead of failing in a confusing way.
+INTERFACE_VERSION = 1
+
 
 def window_maxima(run, windows):
     """Highest loading per element inside the windows (the whole run without windows).
