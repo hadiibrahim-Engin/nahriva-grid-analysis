@@ -593,3 +593,118 @@ def test_a_missing_result_file_or_option_is_named_not_lumped_together(tmp_path):
     app.qds.iopt_maint = 7
     with pytest.raises(RuntimeError, match="reads 7, expected 0 or 1"):
         assessment.run_assessment(app, tmp_path / "b.sqlite3")
+
+
+def test_every_saved_scenario_gets_its_dashboard_summary_prepared(tmp_path):
+    assessment = assessment_module()
+    path = tmp_path / "prepared.sqlite3"
+    printed = []
+    app = App()
+    app.PrintPlain = printed.append
+    assessment.run_assessment(app, path)
+    store = ScenarioStore(str(path))
+    prepared = store.db.execute("SELECT COUNT(*) FROM pf_scenario_cells").fetchone()[0]
+    store.close()
+    assert prepared == 2
+    assert sum("Dashboard summary prepared" in line for line in printed) == 2
+
+
+# -- what the result file records: power and transformers for the dashboard ---------------------------
+
+class ResultWithPower(Result):
+    """Line A with loading, P, Q and a current that is not used; a transformer with loading and P."""
+
+    def __init__(self, start, count=300):
+        super().__init__(start, count)
+        self.transformer = PFObject("Trafo T1", "ElmTr2")
+        self.columns = [
+            (self.time, "b:tnow", "s", lambda: self.times),
+            (self.line, "c:loading", "%", lambda: self.values),
+            (self.line, "m:P:bus1", "MW", lambda: [12.5] * len(self.times)),
+            (self.line, "m:Q:bus1", "Mvar", lambda: [-3.0] * len(self.times)),
+            (self.line, "m:I:bus1", "kA", lambda: [0.2] * len(self.times)),
+            (self.transformer, "c:loading", "%", lambda: [55.0] * len(self.times)),
+            (self.transformer, "m:P:bushv", "MW", lambda: [40.0] * len(self.times)),
+        ]
+
+    def GetNumberOfColumns(self):
+        return len(self.columns)
+
+    def GetVariable(self, column):
+        return self.columns[column][1]
+
+    def GetObject(self, column):
+        return self.columns[column][0]
+
+    def GetUnit(self, column):
+        return self.columns[column][2]
+
+    def GetColumnValues(self, column):
+        return self.columns[column][3]()
+
+
+def app_with(result_class):
+    app = App()
+    app.original = result_class(app.start)
+    app.qds.results = app.original
+
+    def copy(result):
+        clone = result_class(app.start)
+        app.copies.append(clone)
+        return clone
+
+    app.study.AddCopy = copy
+    return app
+
+
+def test_power_and_transformers_recorded_by_the_result_file_reach_the_dashboard(tmp_path):
+    assessment = assessment_module()
+    app = app_with(ResultWithPower)
+    printed = []
+    app.PrintPlain = printed.append
+    path = tmp_path / "power.sqlite3"
+    assessment.run_assessment(app, path)
+    store = ScenarioStore(str(path))
+    series = {(r["element"], r["element_type"], r["metric"], r["unit"]) for r in store.db.execute(
+        "SELECT DISTINCT element, element_type, metric, unit FROM v_series")}
+    values = store.db.execute(
+        "SELECT MIN(value), MAX(value), COUNT(*) FROM v_samples WHERE element='Line A' AND metric='active_power' "
+        "AND case_kind='REF' AND scenario='Chosen'").fetchone()
+    store.close()
+    assert series == {
+        ("Line A", "line", "loading", "%"), ("Line A", "line", "active_power", "MW"),
+        ("Line A", "line", "reactive_power", "Mvar"),
+        ("Trafo T1", "transformer", "loading", "%"), ("Trafo T1", "transformer", "active_power", "MW"),
+    }
+    assert tuple(values) == (12.5, 12.5, 300)
+    text = "\n".join(printed)
+    assert "Result file content" in text and "m:I:bus1" in text and "not used" in text  # what is ignored, too
+    assert "No transformers" not in text and "No active/reactive power" not in text
+
+
+def test_missing_transformers_and_power_in_the_result_file_are_named_with_the_fix(tmp_path):
+    assessment = assessment_module()
+    app = App()  # the result file records the loading of one line only
+    printed = []
+    app.PrintPlain = printed.append
+    assessment.run_assessment(app, tmp_path / "lines-only.sqlite3")
+    text = "\n".join(printed)
+    assert "No transformers (ElmTr2) values in the result file: add c:loading" in text
+    assert "No busbars (ElmTerm) values" in text
+    assert "add m:P:bus1 and m:Q:bus1" in text
+
+
+def test_a_run_that_did_not_converge_is_offered_in_the_scenario_list_with_its_state(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app as web
+    from app.simulation import settings
+
+    assessment = assessment_module()
+    path = tmp_path / "list.sqlite3"
+    assessment.run_assessment(App(not_converged_call=2), path)
+    monkeypatch.setattr(settings, "ANALYSIS_MODE", "sqlite")
+    monkeypatch.setattr(settings, "ANALYSIS_DB_PATH", str(path))
+    with TestClient(web) as client:
+        names = [f["name"] for f in client.get("/api/simulation/facilities").json()]
+    assert "Chosen · OUTAGE (not converged)" in names and "Other · OUTAGE" in names and len(names) == 3

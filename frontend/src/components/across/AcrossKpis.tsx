@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { ANALYSIS, bandOf, type BandId } from '../../config/loadingBands';
 import { VERDICTS, type Verdict } from '../../config/assessment';
 import { verdictCounts, type Assessment } from '../../util/outageAssessment';
+import { lodfStatus } from '../../util/lodfStatus';
 import {
   fmtHours,
   fmtLodf,
@@ -104,8 +105,8 @@ export default function AcrossKpis({ kpis, scenarios, assessments }: Props) {
       <Kpi
         label="Highest |LODF|"
         value={kpis.maxLodf ? fmtLodf(kpis.maxLodf.value) : '–'}
-        sub={kpis.maxLodf ? place(kpis.maxLodf.line, kpis.maxLodf.scenarioId) : 'not calculated yet'}
-        title={kpis.maxLodf ? place(kpis.maxLodf.line, kpis.maxLodf.scenarioId) : undefined}
+        sub={kpis.maxLodf ? place(kpis.maxLodf.line, kpis.maxLodf.scenarioId) : lodfStatus(scenarios.map((s) => s.scenario))?.short ?? '–'}
+        title={kpis.maxLodf ? place(kpis.maxLodf.line, kpis.maxLodf.scenarioId) : lodfStatus(scenarios.map((s) => s.scenario))?.text}
       />
       <Kpi
         label="Most critical scenario"

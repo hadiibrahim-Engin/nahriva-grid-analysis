@@ -11,6 +11,23 @@ first calculation run. Database, address and port: `outage-assessment.config.jso
 
 Start, end, step size, profiles and result variables come from the active `ComStatsim`.
 
+### Result variables
+
+The dashboard can only show what the result file (`ComStatsim.results`, an ElmRes) records. The script reads:
+
+| Class | Variable | Shown as |
+|---|---|---|
+| ElmLne | `c:loading` (else `m:loading`) | loading in % (assessed) |
+| ElmTr2, ElmTr3 | `c:loading` (else `m:loading`) | loading in % (assessed) |
+| ElmTerm | `m:u` (else `m:u1`) | voltage in p.u. (assessed) |
+| ElmLne | `m:P:bus1`, `m:Q:bus1` | active / reactive power (dashboard time series, not assessed) |
+| ElmTr2, ElmTr3 | `m:P:bushv`, `m:Q:bushv` | active / reactive power, HV side (dashboard time series, not assessed) |
+
+Everything else in the result file is not read. After the reference calculation the PowerFactory output lists
+what the result file records per class and variable and what is used, and warns when lines, transformers,
+busbars or power are missing, with the variable to add. Power about doubles the size of the database (two more series per branch);
+`READ_POWER = False` in `gridlens_engine.py` reads loading and voltage only.
+
 ## Applying the outages
 
 As in GridLens, `ComStatsim.iopt_maint=0` is used for REF and `1` for OUTAGE. PowerFactory honours

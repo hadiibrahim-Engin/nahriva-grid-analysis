@@ -109,9 +109,9 @@ def grid_list(db=Depends(store)):
 @router.get("/facilities")
 def scenarios(repo=Depends(get_repository)):
     return [
-        {"id": r["id"], "name": r["name"], "project": r["project"]}
+        {"id": r["id"], "name": r["name"] + ("" if r["status"] == "completed" else " (" + r["status"].replace("_", " ") + ")"),
+         "project": r["project"]}
         for r in repo.runs()
-        if r["status"] == "completed"
     ]
 
 

@@ -222,3 +222,37 @@ def test_grid_filter_data_lists_lines_buses_components_and_profile(tmp_path, mon
             f"/api/simulation/across-scenarios/{scenario['id']}/profile", params={"grid": "D7 Grid", "top": 10}
         ).json()
         assert profile["series"] and all(s["id"] in north for s in profile["series"])
+
+
+def test_the_summary_prepared_by_the_script_is_read_instead_of_reducing_every_value(tmp_path, monkeypatch):
+    import json
+
+    from app.simulation import across
+
+    store = ScenarioStore(str(create_dummy_database(tmp_path / "prepared.sqlite3")))
+    ids = [row[0] for row in store.db.execute("SELECT id FROM pf_scenarios")]
+    computed = {i: json.loads(json.dumps(across._scenario_cells(store, i, across.DEFAULT_LIMITS))) for i in ids}
+    for i in ids:
+        assert across.prepare_cells(store, i)
+
+    def no_reduction(*args):
+        raise AssertionError("reduced although a prepared summary exists")
+
+    monkeypatch.setattr(across, "_scenario_cells", no_reduction)
+    assert {i: across.scenario_cells(store, i) for i in ids} == computed
+    store.close()
+
+
+def test_a_prepared_summary_is_not_used_after_its_lodf_was_calculated_again(tmp_path, monkeypatch):
+    import json
+
+    from app.simulation import across
+
+    store = ScenarioStore(str(create_dummy_database(tmp_path / "stale.sqlite3")))
+    row = store.db.execute("SELECT id, outages FROM pf_scenarios").fetchone()
+    across.prepare_cells(store, row["id"])
+    assert across._prepared_cells(store.db, row["id"], across.DEFAULT_LIMITS) is not None
+    key = ",".join(sorted(json.loads(row["outages"])))
+    store.save_lodf([(key, "line-ring", 0.5, None, None)])
+    assert across._prepared_cells(store.db, row["id"], across.DEFAULT_LIMITS) is None
+    store.close()

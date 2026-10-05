@@ -12,7 +12,7 @@ from app.analysis.series import insert_values
 
 # Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
 # compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 4
+INTERFACE_VERSION = 5
 
 
 def now():
@@ -75,6 +75,13 @@ PF_TABLES = """
     -- Why a run is not simply "completed": status 'not_converged' or 'incomplete' with the explanation.
     CREATE TABLE IF NOT EXISTS pf_run_notes (
         run_id TEXT PRIMARY KEY REFERENCES analysis_runs(id), status TEXT NOT NULL, note TEXT NOT NULL
+    );
+    -- The dashboard's summary of a scenario (reduced values per element), prepared by the script right after
+    -- saving it, so the dashboard does not have to read millions of values on first view. Valid for the
+    -- loading limits and the LODF of its outages (lodf_stamp = their pf_lodf.computed_at) it was made with.
+    CREATE TABLE IF NOT EXISTS pf_scenario_cells (
+        scenario_id TEXT PRIMARY KEY REFERENCES pf_scenarios(id), limits TEXT NOT NULL, lodf_stamp TEXT,
+        payload TEXT NOT NULL
     );
     -- Outages whose LODF is not defined (AC load flow without solution, equipment cut off), with the reason.
     CREATE TABLE IF NOT EXISTS pf_lodf_undefined (
@@ -177,7 +184,7 @@ VIEWS = """
 
 # PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
 # database is brought up to date once when it is next opened.
-LAYOUT_VERSION = 6
+LAYOUT_VERSION = 7
 
 
 class ScenarioStore:

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import * as echarts from 'echarts/core';
 import { BarChart, ScatterChart } from 'echarts/charts';
-import { GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from 'echarts/components';
+import { DataZoomComponent, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import ReactECharts from '../charts/ReactECharts';
 import { useChartTheme } from '../../hooks/useChartTheme';
@@ -18,11 +18,31 @@ import {
   type ScenarioStats,
 } from '../../util/acrossScenarios';
 import { SectionCard } from './shared';
+import { lodfStatus } from '../../util/lodfStatus';
 
-echarts.use([BarChart, ScatterChart, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([BarChart, ScatterChart, DataZoomComponent, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent, CanvasRenderer]);
 
 const TOP = 12;
 const ROW = 28;
+/** Room for a zoom slider next to the plot area. */
+const ZOOM_SPACE = 22;
+
+function zoomSlider(theme: ReturnType<typeof useAcrossTheme>['theme']) {
+  return {
+    type: 'slider' as const,
+    filterMode: 'none' as const,
+    showDetail: false,
+    brushSelect: false,
+    borderColor: theme.axis,
+    backgroundColor: 'transparent',
+    fillerColor: withAlpha(theme.mutedText, 0.18),
+    dataBackground: { lineStyle: { opacity: 0 }, areaStyle: { opacity: 0 } },
+    selectedDataBackground: { lineStyle: { opacity: 0 }, areaStyle: { opacity: 0 } },
+    handleStyle: { color: theme.mutedText, borderColor: theme.text },
+    moveHandleStyle: { color: theme.mutedText },
+    textStyle: { color: theme.mutedText },
+  };
+}
 
 interface Props {
   lines: LineStats[];
@@ -59,7 +79,8 @@ const yCategory = (theme: ReturnType<typeof useChartTheme>, names: string[], edg
 
 const xValue = (theme: ReturnType<typeof useChartTheme>, unit: string, extra: object = {}) => ({
   type: 'value' as const,
-  axisLabel: { color: theme.mutedText, fontSize: 10, formatter: `{value}${unit}` },
+  // Rounded and without overlaps: a zoomed axis starts and ends at arbitrary values.
+  axisLabel: { color: theme.mutedText, fontSize: 10, hideOverlap: true, formatter: (v: number) => `${Math.round(v * 10) / 10}${unit}` },
   axisLine: { show: false },
   splitLine: { lineStyle: { color: theme.grid } },
   ...extra,
@@ -97,9 +118,17 @@ export function LoadingRangeChart({ lines, scenarios, top = TOP }: { lines: Line
           ].join('<br/>');
         },
       },
-      grid: { left: 8, right: 64, top: 8, bottom: 24, containLabel: true },
+      grid: { left: 8, right: 64 + ZOOM_SPACE, top: 8, bottom: 24 + ZOOM_SPACE, containLabel: true },
       xAxis: xValue(theme, ' %', { min: 0, max }),
       yAxis: yCategory(theme, names),
+      // Zoomable on both axes: sliders below (loading) and on the right (equipment), drag inside the chart to move,
+      // Ctrl + mouse wheel to zoom (the plain wheel keeps scrolling the page).
+      dataZoom: [
+        { type: 'inside' as const, xAxisIndex: 0, filterMode: 'none' as const, zoomOnMouseWheel: 'ctrl' as const, moveOnMouseWheel: false },
+        { type: 'inside' as const, yAxisIndex: 0, filterMode: 'none' as const, zoomOnMouseWheel: 'ctrl' as const, moveOnMouseWheel: false },
+        { ...zoomSlider(theme), xAxisIndex: 0, bottom: 4, height: 14 },
+        { ...zoomSlider(theme), yAxisIndex: 0, right: 4, width: 14 },
+      ],
       series: [
         {
           type: 'bar', stack: 'range', silent: true, barWidth: 6, itemStyle: { color: 'transparent' },
@@ -133,7 +162,7 @@ export function LoadingRangeChart({ lines, scenarios, top = TOP }: { lines: Line
     };
   }, [rows, theme, colors, scenarios]);
   if (rows.length === 0) return <div className="ab-empty">No loading values available.</div>;
-  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: rows.length * ROW + 40 }} />;
+  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: rows.length * ROW + 40 + ZOOM_SPACE }} />;
 }
 
 /** Time above the limits, as share of the simulation period (worst scenario per line). */
@@ -281,7 +310,7 @@ export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; s
       }],
     };
   }, [points, theme, colors]);
-  if (!hasLodf) return <div className="ab-empty">LODF has not been calculated yet. The PowerFactory script writes it to the database before the first simulation.</div>;
+  if (!hasLodf) return <div className="ab-empty">{lodfStatus(scenarios.map((s) => s.scenario))?.text ?? 'No LODF for the scenarios shown.'}</div>;
   if (points.length === 0) return <div className="ab-empty">No points with LODF and change available.</div>;
   return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: 360 }} />;
 }
@@ -289,7 +318,7 @@ export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; s
 export default function AcrossCharts({ lines, scenarios, periodHours, hasLodf }: Props) {
   return (
     <div className="ab-charts">
-      <SectionCard title="Highest loading per equipment" hint="Base (REF) → maximum over all scenarios on the loading bands. The most conspicuous equipment.">
+      <SectionCard title="Highest loading per equipment" hint="Base (REF) → maximum over all scenarios on the loading bands. The most conspicuous equipment. Zoom with the sliders or Ctrl + mouse wheel; drag to move.">
         <LoadingRangeChart lines={lines} scenarios={scenarios} />
       </SectionCard>
       <SectionCard title="Overload duration (overload rate)" hint="Time above 100 % in the worst scenario, relative to the simulation period.">

@@ -53,6 +53,7 @@ REF run: it is stored once and linked to each of them.
 | `pf_scenario_provenance` | per scenario: PowerFactory version, project and Study Case paths, operational scenario, grids, QDS command (JSON) |
 | `pf_element_limits` | voltage band per busbar and run: `lower`, `upper` |
 | `pf_run_notes` | only for a run that is not `completed`: `status` (`not_converged`: the calculation ended with an error code and the results stop there; `incomplete`: time points without any value) and the explanation `note` |
+| `pf_scenario_cells` | per scenario the dashboard's summary (reduced values per element, JSON), prepared by the script right after it saved the scenario, so the first view does not read every value again (measured: 23 ms instead of 780 ms per scenario with 455 series × 8,784 h). Used only while it matches the loading limits and the LODF it was made with; otherwise the dashboard reduces the values itself. Can be deleted at any time |
 | `pf_lodf` | `outage_key`, `element_id`, `lodf` (signed fraction at the bus1 side, from PowerFactory), `p_pre`, `p_post` (always NULL: PowerFactory's tool gives no flows), `computed_at` |
 | `pf_progress` | one row: what the script is doing right now (`state` running / finished / failed / stopped, `step`, `detail`, `current` of `total` scenarios, `started_at`, `updated_at`); the dashboard shows it as a banner while the script calculates |
 | `pf_lodf_undefined` | `outage_key`, `reason`: outages whose LODF is not defined (no contingency, no solution, no equipment), see [ASSESSMENT.md](ASSESSMENT.md) |

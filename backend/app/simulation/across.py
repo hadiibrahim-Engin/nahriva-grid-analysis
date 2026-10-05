@@ -208,12 +208,54 @@ def scenario_index(store):
     }
 
 
+def _lodf_stamp(db):
+    return db.execute("SELECT MAX(computed_at) FROM pf_lodf").fetchone()[0]
+
+
+def _scenario_lodf_stamp(db, scenario_id):
+    """When the LODF of this scenario's outages was calculated (None without LODF): a later LODF run of other
+    outages leaves the summary of this scenario valid."""
+    row = db.execute("SELECT outages FROM pf_scenarios WHERE id=?", (scenario_id,)).fetchone()
+    if row is None:
+        return None
+    key = outage_key(json.loads(row[0]))
+    return db.execute("SELECT MAX(computed_at) FROM pf_lodf WHERE outage_key=?", (key,)).fetchone()[0]
+
+
+def _prepared_cells(db, scenario_id, limits):
+    """The summary the PowerFactory script stored when it saved the scenario, if it is still valid."""
+    row = db.execute(
+        "SELECT payload FROM pf_scenario_cells WHERE scenario_id=? AND limits=? AND lodf_stamp IS ?",
+        (scenario_id, json.dumps(list(limits)), _scenario_lodf_stamp(db, scenario_id)),
+    ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
 def scenario_cells(store, scenario_id, limits=DEFAULT_LIMITS):
-    """Per element the reduced values of one scenario (cached); None for an unknown scenario."""
+    """Per element the reduced values of one scenario (cached); None for an unknown scenario.
+
+    Read from pf_scenario_cells when the script prepared it, otherwise reduced from the stored values.
+    """
     db = store.db
-    stamp = db.execute("SELECT MAX(computed_at) FROM pf_lodf").fetchone()[0]
+    stamp = _lodf_stamp(db)
     key = (getattr(store, "path", None), scenario_id, tuple(limits), stamp)
-    return _CELLS_CACHE.get_or_compute(key, lambda: _scenario_cells(store, scenario_id, limits))
+    return _CELLS_CACHE.get_or_compute(
+        key,
+        lambda: _prepared_cells(db, scenario_id, limits) or _scenario_cells(store, scenario_id, limits),
+    )
+
+
+def prepare_cells(store, scenario_id, limits=DEFAULT_LIMITS):
+    """Reduce a just-saved scenario once and store the result for the dashboard (called by the script)."""
+    cells = _scenario_cells(store, scenario_id, limits)
+    if cells is None:
+        return False
+    with store.db:
+        store.db.execute(
+            "INSERT OR REPLACE INTO pf_scenario_cells VALUES(?,?,?,?)",
+            (scenario_id, json.dumps(list(limits)), _scenario_lodf_stamp(store.db, scenario_id), json.dumps(cells)),
+        )
+    return True
 
 
 def _branch_rows(elements, ref, out, equipment, lodf):

@@ -43,6 +43,19 @@ RUN_REFERENCE_CASE = True
 GRID_NAME_FILTER = 'D7'
 VARIABLES = {'line': ('c:loading', 'm:loading'), 'transformer': ('c:loading', 'm:loading'), 'voltage': ('m:u', 'm:u1')}
 CLASS_CATEGORIES = {'ElmLne': ('line',), 'ElmTr2': ('transformer',), 'ElmTr3': ('transformer',), 'ElmTerm': ('voltage',)}
+# Further quantities stored for the dashboard (not assessed): active and reactive power of branches, read when the
+# result file records them. Lines at bus1, transformers at the HV side. READ_POWER False reads loading and voltage only.
+READ_POWER = True
+
+# Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
+# compares it across all modules, so files of different versions are named instead of failing in a confusing way.
+INTERFACE_VERSION = 5
+POWER_VARIABLES = {
+    'ElmLne': {'m:P:bus1': 'active_power', 'm:Q:bus1': 'reactive_power'},
+    'ElmTr2': {'m:P:bushv': 'active_power', 'm:Q:bushv': 'reactive_power'},
+    'ElmTr3': {'m:P:bushv': 'active_power', 'm:Q:bushv': 'reactive_power'},
+}
+POWER_UNITS = {'active_power': 'MW', 'reactive_power': 'Mvar'}
 MAX_RESULT_ROWS = 35040
 MAX_RESULT_CELLS = 20000000
 MAX_RUN_CELLS = 120000000
@@ -346,6 +359,8 @@ def collect_series(elmres, windows=(), counters=None):
         plot_times = list(hours)
     bounds = window_bounds(hours, windows) if absolute and windows else []
     chosen = {}
+    power = {}
+    census = {}  # (class, variable) -> number of columns: what the result file records, also what is not used
     out_of_scope = 0
     dc_nodes = set()
     for column in range(columns):
@@ -354,6 +369,11 @@ def collect_series(elmres, windows=(), counters=None):
             variable = str(elmres.GetVariable(column))
             category = result_category(obj, variable)
         except Exception:
+            continue
+        census[(class_name(obj), variable)] = census.get((class_name(obj), variable), 0) + 1
+        metric = POWER_VARIABLES.get(class_name(obj), {}).get(variable) if READ_POWER else None
+        if metric and element_in_scope(obj):
+            power[(metric, object_key(obj))] = (column, obj, variable)
             continue
         if not category or variable not in VARIABLES[category]:
             continue
@@ -369,6 +389,7 @@ def collect_series(elmres, windows=(), counters=None):
         if key not in chosen or priority < chosen[key][0]:
             chosen[key] = (priority, column, obj, variable)
     if counters is not None:
+        counters['columns'] = census
         counters['out_of_scope'] = out_of_scope
         counters['dc_nodes'] = len(dc_nodes)
         counters['deenergized_nodes'] = 0
@@ -379,7 +400,7 @@ def collect_series(elmres, windows=(), counters=None):
             '{!r} ({} series were out of scope). Set GRID_NAME_FILTER at the top '
             'of gridlens_report.py, or to an empty string to assess every '
             'element.'.format(GRID_NAME_FILTER, out_of_scope))
-    cells = rows * len(chosen)
+    cells = rows * (len(chosen) + len(power))
     if cells > MAX_RESULT_CELLS:
         raise RuntimeError('ElmRes contains {} evaluated cells ({} rows x {} series) and exceeds the limit of {} (MAX_RESULT_CELLS).'.format(cells, rows, len(chosen), MAX_RESULT_CELLS))
     series = []
@@ -417,6 +438,17 @@ def collect_series(elmres, windows=(), counters=None):
         item['points'] = sampled_plot_points(item)
     if not series:
         raise RuntimeError('ElmRes contains no completely readable supported result series.')
+    if counters is not None:
+        extras = []
+        for (metric, key), (column, obj, variable) in sorted(power.items(), key=lambda item: item[0]):
+            try:
+                unit = str(elmres.GetUnit(column) or '') or POWER_UNITS[metric]
+            except Exception:
+                unit = POWER_UNITS[metric]
+            extras.append({'metric': metric, 'key': key, 'object': obj, 'element_name': object_name(obj),
+                           'category': CLASS_CATEGORIES[class_name(obj)][0], 'variable_id': variable, 'unit': unit,
+                           'values': read_column(elmres, column, rows)})  # None: no valid value at that time
+        counters['extra_series'] = extras
     return (series, labels, plot_times, time_unit, absolute, origin)
 
 def check_run_budget(results):
@@ -1746,6 +1778,10 @@ def _run_calculation(app, study_case, qds, case_id, name, description,
             "EXTRACTION",
             "Validated {} supported series across {} time point(s); time unit '{}'."
             .format(len(series), len(labels), unit), 5)
+        if counters.get('extra_series'):
+            logger.write(
+                "EXTRACTION", "Also read {} active/reactive power series for the dashboard.".format(
+                    len(counters['extra_series'])), 5)
         logger.write(
             "EXTRACTION",
             "Time axis: {} scale, unit '{}'; first {}; last {}; span {}."
@@ -1774,6 +1810,10 @@ def _run_calculation(app, study_case, qds, case_id, name, description,
         "counters": counters,
     }
     result = case_result(case, series, labels, plot_times, unit)
+    result["extras"] = counters.pop("extra_series", [])
+    result["columns"] = counters.pop("columns", {})
+    result["counters"].pop("extra_series", None)
+    result["counters"].pop("columns", None)
     result["window"] = ((None, None) if origin is None else
                         (origin * 3600.0, (origin + plot_times[-1]) * 3600.0))
     return result

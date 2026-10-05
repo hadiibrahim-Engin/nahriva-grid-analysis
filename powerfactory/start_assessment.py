@@ -63,7 +63,7 @@ from dashboard_launcher import launch_dashboard
 
 
 STEPS = 5
-INTERFACE_VERSION = 4  # every module must report the same; see check_installation
+INTERFACE_VERSION = 5  # every module must report the same; see check_installation
 
 
 def check_installation():
@@ -75,7 +75,7 @@ def check_installation():
     """
     import importlib
 
-    names = ["analysis_worker", "lodf", "pf_console", "pf_state", "outage_plan", "run_summary",
+    names = ["analysis_worker", "gridlens_engine", "lodf", "pf_console", "pf_state", "outage_plan", "run_summary",
              "app.simulation.store", "app.analysis.schema", "app.analysis.series"]
     wrong = []
     for name in names:
