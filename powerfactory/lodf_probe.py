@@ -304,6 +304,10 @@ def run(app):
     study_case = app.GetActiveStudyCase()
     section(app, "LODF TEST")
     detail(app, "Project: {}".format(engine.object_name(app.GetActiveProject())))
+    detail(app, "Files:   {}  +  {}".format(Path(__file__).resolve(), Path(lodf.__file__).resolve()))
+    if not hasattr(lodf, "set_run_settings"):
+        detail(app, "lodf.py is older than lodf_probe.py: copy both files (and the rest of powerfactory\\) from the same release.", "ERROR")
+        return "lodf.py is older than lodf_probe.py"
     if study_case is None:
         detail(app, "There is no active Study Case.", "ERROR")
         return "no active Study Case"
