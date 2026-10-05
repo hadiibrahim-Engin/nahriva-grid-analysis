@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.simulation import settings
+from app.simulation.store import ScenarioStore
 from tests.test_powerfactory_worker import App
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -169,7 +170,7 @@ def test_launcher_starts_once_then_reuses_and_falls_back_when_the_port_is_taken(
 
 # -- the PowerFactory script ---------------------------------------------------------------------------
 
-def test_script_saves_into_the_configured_database_and_shows_the_dashboard_afterwards(tmp_path, monkeypatch):
+def test_script_starts_the_dashboard_before_the_calculation_and_the_database_exists_from_the_start(tmp_path, monkeypatch):
     database = tmp_path / "results" / "outages.sqlite3"
     monkeypatch.setenv("OA_DATABASE", str(database))
     monkeypatch.setenv("OA_HOST", "0.0.0.0")
@@ -189,16 +190,69 @@ def test_script_saves_into_the_configured_database_and_shows_the_dashboard_after
     monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
 
     def fake_launch(db, **kwargs):
-        events.append(("dashboard", kwargs["host"], kwargs["port"], kwargs["production"], kwargs["reuse"]))
-        assert Path(db).is_file() and events.count("calculate") == 3  # shown only after all calculations
+        events.append(("dashboard", kwargs["host"], kwargs["port"], kwargs["production"], kwargs["reuse"], kwargs["open_browser"]))
+        assert Path(db).is_file()  # the dashboard needs the file, and it is there before the first calculation
         return {"url": "http://127.0.0.1:8765", "lan_urls": ["http://pf-pc:8765"], "reused": False, "notes": [], "pid": 1, "process": None}
 
     monkeypatch.setattr(assessment, "launch_dashboard", fake_launch)
     assessment.main()
-    assert events[-1] == ("dashboard", "0.0.0.0", 8765, True, True)  # shown after the calculation; read-only, reuses a running one
+    # started once, with the browser, before any calculation; the end only says where it is
+    assert events[0] == ("dashboard", "0.0.0.0", 8765, True, True, True)
     assert events.count("calculate") == 3  # one REF, then OUTAGE of two scenarios
+    assert sum(1 for e in events if e != "calculate") == 1  # no second start, no second browser window
     assert any("pf-pc:8765" in line for line in printed)  # the address for other PCs is printed
+    assert any("Running: http://127.0.0.1:8765" in line for line in printed)
     assert database.is_file()
+
+
+def test_the_dashboard_is_told_where_the_run_is(tmp_path, monkeypatch):
+    """The banner 'PowerFactory is working ...' needs a note per step and scenario, also while no scenario is saved."""
+    database = tmp_path / "progress.sqlite3"
+    monkeypatch.setenv("OA_DATABASE", str(database))
+    app = App()
+    seen = []
+    original = app.calculate
+
+    def calculate():
+        store = ScenarioStore(str(database))  # what the dashboard does at this moment
+        seen.append(store.progress())
+        store.close()
+        return original()
+
+    app.qds.Execute = calculate
+    monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
+    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
+    monkeypatch.setattr(assessment, "SHOW_DASHBOARD", False)
+    assessment.main()
+    reference, first, second = seen
+    assert reference["state"] == "running" and reference["step"].startswith("STEP 2/5") and reference["current"] is None
+    assert first["step"] == "STEP 5/5 · Scenarios" and first["detail"] == "Scenario 1/2 · Chosen" and (first["current"], first["total"]) == (1, 2)
+    assert second["detail"] == "Scenario 2/2 · Other" and second["started_at"] == reference["started_at"]  # one run
+    store = ScenarioStore(str(database))
+    final = store.progress()
+    store.close()
+    assert final["state"] == "finished" and "2 scenarios saved" in final["detail"] and (final["current"], final["total"]) == (2, 2)
+
+
+def test_a_stopped_or_failed_run_is_visible_in_the_dashboard(tmp_path, monkeypatch):
+    database = tmp_path / "failed.sqlite3"
+    monkeypatch.setenv("OA_DATABASE", str(database))
+    app = App(fail=True)
+    monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
+    monkeypatch.setattr(assessment, "validate_installation", lambda **kwargs: None)
+    monkeypatch.setattr(assessment, "SHOW_DASHBOARD", False)
+    with pytest.raises(Exception, match="failed"):
+        assessment.main()
+    store = ScenarioStore(str(database))
+    progress = store.progress()
+    store.close()
+    assert progress["state"] == "failed" and "failed" in progress["detail"]
+
+
+def test_a_progress_note_can_never_stop_the_calculation(tmp_path, monkeypatch):
+    monkeypatch.setattr(ScenarioStore, "set_progress", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    app = App()
+    assert assessment.run_assessment(app, tmp_path / "locked.sqlite3") == ["Chosen", "Other"]
 
 
 def test_a_failing_dashboard_does_not_waste_the_calculation(tmp_path, monkeypatch):

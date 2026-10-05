@@ -8,7 +8,7 @@ LOADING = "loading"
 
 # Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
 # compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 2
+INTERFACE_VERSION = 3
 
 
 def window_maxima(run, windows):

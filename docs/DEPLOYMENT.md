@@ -39,7 +39,7 @@ flowchart LR
    if a step fails, the message names the step and the call stack.
    Without internet access use `-Wheelhouse <folder>` (build the package with
    `python scripts/package_release.py --wheelhouse`). `-Autostart` is optional: without it the
-   PowerFactory script starts the dashboard after the calculation, and
+   PowerFactory script starts the dashboard itself, and
    `backend\.venv\Scripts\python.exe scripts\serve.py` starts it by hand.
 4. **In PowerFactory** create an external ComPython script that points to
    `C:\OutageAssessment\powerfactory\start_assessment.py`. Set `SCENARIOS` at the top if needed
@@ -47,10 +47,13 @@ flowchart LR
 
 ## Daily use
 
-- **Calculate:** activate project and study case, run the script. It checks folder and free space,
+- **Calculate:** activate project and study case, run the script. It checks folder and free space, creates the
+  database, **starts the dashboard right away** (or reuses a running one) and opens `http://127.0.0.1:8765`, then
   calculates the scenarios one after another and saves each one at once.
-- **View:** when the calculation is finished the script starts the dashboard (or reuses a running one) and
-  opens `http://127.0.0.1:8765` in the browser. Even if a calculation fails, the scenarios saved so far are shown.
+- **View while it calculates:** the dashboard reads while the script writes (SQLite WAL). A banner at the top of
+  the Outage Management page names the current step and scenario with a progress bar; every finished scenario
+  appears within a few seconds, without reloading. When the script fails or is stopped, the banner says so and the
+  scenarios saved so far stay.
 - **Later:** the dashboard stays available with all saved results, also when PowerFactory is closed
   (with autostart; otherwise run the script again or start `serve.py`).
 

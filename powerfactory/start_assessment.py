@@ -63,7 +63,7 @@ from dashboard_launcher import launch_dashboard, validate_installation
 
 
 STEPS = 5
-INTERFACE_VERSION = 2  # every module must report the same; see check_installation
+INTERFACE_VERSION = 3  # every module must report the same; see check_installation
 
 
 def check_installation():
@@ -106,6 +106,21 @@ def _outage_line(outage):
     )
 
 
+def report(database, state, step_title, detail_text="", current=None, total=None, restart=False):
+    """Tell the dashboard where the run is (the banner "PowerFactory is working ...").
+
+    Never raises: a progress note must not be able to stop a calculation that may have run for hours.
+    """
+    try:
+        store = worker.ScenarioStore(str(database))
+        try:
+            store.set_progress(state, step_title, detail_text, current, total, restart)
+        finally:
+            store.close()
+    except Exception:
+        pass
+
+
 def _window(outage):
     return _span((outage["start"], outage["end"])) if outage.get("start") is not None else "unreadable"
 
@@ -126,10 +141,15 @@ def run_assessment(app, database_path, definitions=None):
     repeats the result of every scenario in one table.
     """
     started = time.monotonic()
+
+    def begin(number, title):
+        step(app, number, STEPS, title)
+        report(database_path, "running", "STEP {}/{} · {}".format(number, STEPS, title), restart=number == 1)
+
     declared = worker.discover(app)
     plan = scenario_plan(declared, definitions)
 
-    step(app, 1, STEPS, "Check the Study Case and the scenarios")
+    begin(1, "Check the Study Case and the scenarios")
     detail(app, "Project: {} | Study Case: {} | ComStatsim: {}".format(
         declared["project"], declared["study_case"], declared["qds_command"]["name"]))
     detail(app, "Declared QDS period: " + _span(declared["period"]))
@@ -143,13 +163,13 @@ def run_assessment(app, database_path, definitions=None):
           [(number, selection["name"], "; ".join(by_id[i]["name"] for i in selection["outage_ids"]))
            for number, selection in enumerate(plan, 1)])
 
-    step(app, 2, STEPS, "Reference (REF): one QDS with every planned outage disabled")
+    begin(2, "Reference (REF): one QDS with every planned outage disabled")
     reference = worker.calculate_reference(app, declared)
     period = worker.simulated_period(reference, declared["period"])
     detail(app, "REF done: {} time points from {}, {} series.".format(
         len(reference["labels"]), _span(period), sum(len(v) for v in reference["by_category"].values())))
 
-    step(app, 3, STEPS, "Compare the outage windows with the simulated period")
+    begin(3, "Compare the outage windows with the simulated period")
     detail(app, "Declared by ComStatsim: " + _span(declared["period"]))
     detail(app, "Calculated by PowerFactory: " + _span(period))
     if any(d is None or abs(d - p) > 1 for d, p in zip(declared["period"], period)):
@@ -171,7 +191,7 @@ def run_assessment(app, database_path, definitions=None):
     detail(app, "{} scenarios will be calculated, {} skipped.".format(len(plan), len(skipped)))
 
     # LODF depends only on topology: once, for the equipment of the scenarios that are calculated.
-    step(app, 4, STEPS, "LODF: PowerFactory's Sensitivities / Distribution Factors for the equipment of each scenario")
+    begin(4, "LODF: PowerFactory's Sensitivities / Distribution Factors for the equipment of each scenario")
     rows, undefined = worker.compute_lodf(app, catalog, plan)
     if rows or undefined:
         store = worker.ScenarioStore(str(database_path))
@@ -194,7 +214,7 @@ def run_assessment(app, database_path, definitions=None):
     table(app, ("#", "Scenario", "LODF"),
           [(number, selection["name"], lodf_status(selection)) for number, selection in enumerate(plan, 1)])
 
-    step(app, 5, STEPS, "Scenarios: one QDS per scenario with its planned outages enabled")
+    begin(5, "Scenarios: one QDS per scenario with its planned outages enabled")
     saved = []
     for number, selection in enumerate(plan, 1):
         current = worker.discover(app, period)
@@ -208,6 +228,8 @@ def run_assessment(app, database_path, definitions=None):
         finally:
             store.close()
         subsection(app, "Scenario {}/{} · {}".format(number, len(plan), selection["name"]))
+        report(database_path, "running", "STEP 5/5 · Scenarios", "Scenario {}/{} · {}".format(number, len(plan), selection["name"]),
+               number, len(plan))
         begun = time.monotonic()
         outcome = worker.execute(app, database_path, reference, period) or {}
         seconds = time.monotonic() - begun
@@ -222,6 +244,8 @@ def run_assessment(app, database_path, definitions=None):
            for number, name, seconds, lodf, result in saved])
     for selection, outside in skipped:
         detail(app, "skipped '" + selection["name"] + "' (outside the simulated period)", "WARN")
+    report(database_path, "finished", "Finished", "{} scenarios saved, {} skipped, total {}".format(
+        len(plan), len(skipped), _minutes(time.monotonic() - started)), len(plan), len(plan))
     return [s["name"] for s in plan]
 
 
@@ -237,8 +261,9 @@ def preflight(database):
     free_gb = shutil.disk_usage(database.parent).free / 1e9
     if free_gb < 2:
         raise RuntimeError(f"Not enough free space in the database folder: {free_gb:.1f} GB.")
-    if database.is_file():
-        worker.ScenarioStore(str(database)).close()  # a file of an earlier version is refused here, not after REF
+    # Created now, not after the reference run: the dashboard can open it from the start, and a file of an
+    # earlier version is refused here, not after hours of calculation.
+    worker.ScenarioStore(str(database)).close()
     return free_gb
 
 
@@ -273,12 +298,29 @@ def show_dashboard(app, database, config):
     return dashboard
 
 
-def show_saved_results(app, database, config):
-    """Show whatever was saved, also after a failure. Never raises: the error that ended the run must stay visible."""
+def start_dashboard(app, database, config):
+    """Start (or reuse) the dashboard before the calculation, so that every scenario can be looked at as soon as
+    it is saved. Returns the dashboard, or None when it is switched off or could not be started."""
+    if not SHOW_DASHBOARD:
+        return None
+    section(app, "DASHBOARD")
+    detail(app, "Started before the calculation: scenarios appear in it as soon as PowerFactory has saved them "
+                "(it refreshes itself every few seconds).")
+    return show_dashboard(app, database, config)
+
+
+def show_saved_results(app, database, config, dashboard=None):
+    """At the end: say where the dashboard is, also after a failure; start it when it could not be started before.
+
+    Never raises: the error that ended the run must stay visible.
+    """
     if not SHOW_DASHBOARD:
         return
     try:
-        if database.is_file() and has_results(database):
+        if dashboard is not None:
+            section(app, "DASHBOARD")
+            detail(app, "Running: " + dashboard["url"])
+        elif database.is_file() and has_results(database):
             section(app, "DASHBOARD")
             show_dashboard(app, database, config)
     except Exception as exc:
@@ -304,6 +346,7 @@ def main():
         PROJECT_DIR, database=directory / DATABASE_NAME, host=DASHBOARD_HOST, port=DASHBOARD_PORT
     )
     database = config["database"]
+    dashboard = None
     try:
         check_installation()
         validate_installation(python=DASHBOARD_PYTHON)
@@ -312,19 +355,22 @@ def main():
         detail(app, f"Scripts:  {Path(__file__).resolve().parent}")
         detail(app, f"Database: {database} ({free:.0f} GB free)")
         detail(app, "Dashboard: {}:{}{}".format(config["host"], config["port"], "" if SHOW_DASHBOARD else " (not started)"))
+        dashboard = start_dashboard(app, database, config)
         run_assessment(app, database, SCENARIOS)
     except KeyboardInterrupt:
+        report(database, "stopped", "Stopped by the user", "Scenarios saved before stay in the database.")
         section(app, "STOPPED BY THE USER")
         detail(app, "Scenarios saved before stay in the database; the scenario that was running was not saved.", "ERROR")
         detail(app, "PowerFactory settings were restored.", "ERROR")
         raise
     except BaseException as exc:
+        report(database, "failed", "Stopped by an error", (str(exc) or type(exc).__name__).splitlines()[0][:300])
         section(app, "ERROR")
         for line in (str(exc) or type(exc).__name__).splitlines():
             detail(app, line, "ERROR")
         raise
     finally:
-        show_saved_results(app, database, config)
+        show_saved_results(app, database, config, dashboard)
 
 
 if __name__ == "__main__":

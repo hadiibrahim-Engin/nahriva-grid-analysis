@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import { SectionCard } from './across/shared';
+import { progressView, type PfProgress } from '../util/progress';
 import { isSynthetic, provenancePeriod, resultContexts, type ResultProvenance, type ResultScenario } from '../util/resultProvenance';
 interface Job { id: string; status: string; name?: string | null; message?: string }
-interface Overview { catalog: ResultProvenance | null; scenarios: ResultScenario[]; database_path: string; jobs?: Job[]; }
+interface Overview { catalog: ResultProvenance | null; scenarios: ResultScenario[]; database_path: string; jobs?: Job[]; progress?: PfProgress | null; }
 export default function OutageManagement({ onResultsChanged }: { onResultsChanged: () => void }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState('');
@@ -35,8 +36,17 @@ export default function OutageManagement({ onResultsChanged }: { onResultsChange
     ? [`${overview?.scenarios.length ?? 0} scenarios`, first?.project, first?.study_case].filter(Boolean).join(' · ')
     : 'No results yet';
   const running = overview?.jobs?.find((job) => job.status === 'running' || job.status === 'queued');
+  // The script's own note says more than a job (it also covers the reference run and the LODF, where no job
+  // exists yet); the job is the fallback for a database written by a script without progress notes.
+  const note = progressView(overview?.progress);
   return <>
-    {running && (
+    {note ? (
+      <div className="ab-progress" role={note.tone === 'running' ? 'status' : 'alert'} aria-live="polite" data-tone={note.tone}>
+        {note.tone === 'running' && <span className="ab-live" aria-hidden />}
+        {note.fraction !== null && <span className="ab-progress__bar" aria-hidden><span style={{ width: `${note.fraction * 100}%` }} /></span>}
+        {note.text}
+      </div>
+    ) : running && (
       <div className="ab-progress" role="status" aria-live="polite">
         <span className="ab-live" aria-hidden />
         PowerFactory is calculating{running.name ? `: ${running.name}` : ''}

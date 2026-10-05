@@ -12,7 +12,7 @@ from app.analysis.series import insert_values
 
 # Raise when the way this module is called by the others changes (arguments, return values). start_assessment.py
 # compares it across all modules, so files of different versions are named instead of failing in a confusing way.
-INTERFACE_VERSION = 2
+INTERFACE_VERSION = 3
 
 
 def now():
@@ -66,6 +66,11 @@ PF_TABLES = """
         outage_key TEXT NOT NULL, element_id TEXT NOT NULL,
         lodf REAL NOT NULL, p_pre REAL, p_post REAL, computed_at TEXT NOT NULL,
         PRIMARY KEY(outage_key, element_id)
+    );
+    -- Where the PowerFactory script is, so the dashboard can say so while no scenario is saved yet.
+    CREATE TABLE IF NOT EXISTS pf_progress (
+        id INTEGER PRIMARY KEY CHECK(id=1), state TEXT NOT NULL, step TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+        current INTEGER, total INTEGER, started_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     -- Outages whose LODF is not defined (AC load flow without solution, equipment cut off), with the reason.
     CREATE TABLE IF NOT EXISTS pf_lodf_undefined (
@@ -150,7 +155,7 @@ VIEWS = """
 
 # PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
 # database is brought up to date once when it is next opened.
-LAYOUT_VERSION = 4
+LAYOUT_VERSION = 5
 
 
 class ScenarioStore:
@@ -197,6 +202,27 @@ class ScenarioStore:
                 "INSERT INTO pf_catalog VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
                 (json.dumps(catalog), now()),
             )
+
+    def set_progress(self, state, step, detail="", current=None, total=None, restart=False):
+        """Record where the script is: state 'running' / 'finished' / 'failed' / 'stopped', the step and the scenario.
+
+        `restart` starts a new run (its start time is remembered). Written often and read by the dashboard
+        every few seconds; it is a single row, so it costs nothing.
+        """
+        stamp = now()
+        with self.db:
+            row = self.db.execute("SELECT started_at FROM pf_progress WHERE id=1").fetchone()
+            started = stamp if restart or row is None else row["started_at"]
+            self.db.execute(
+                "INSERT INTO pf_progress VALUES(1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                "state=excluded.state, step=excluded.step, detail=excluded.detail, current=excluded.current, "
+                "total=excluded.total, started_at=excluded.started_at, updated_at=excluded.updated_at",
+                (state, step, detail, current, total, started, stamp),
+            )
+
+    def progress(self):
+        row = self.db.execute("SELECT * FROM pf_progress WHERE id=1").fetchone()
+        return None if row is None else {k: row[k] for k in row.keys() if k != "id"}
 
     def save_lodf(self, rows, undefined=None):
         """Replace the stored LODF values of each outage combination in `rows` and `undefined`.
@@ -362,4 +388,4 @@ class ScenarioStore:
                 )
             ]
             scenarios.append(scenario)
-        return {"catalog": self.catalog(), "jobs": jobs, "scenarios": scenarios}
+        return {"catalog": self.catalog(), "jobs": jobs, "scenarios": scenarios, "progress": self.progress()}

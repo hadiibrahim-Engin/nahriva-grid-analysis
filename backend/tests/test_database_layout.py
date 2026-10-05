@@ -119,3 +119,50 @@ def test_views_are_read_only(tmp_path):
     with pytest.raises(sqlite3.OperationalError):
         store.db.execute("DELETE FROM v_samples")
     store.close()
+
+
+def test_the_dashboard_reads_while_powerfactory_is_writing_and_sees_a_scenario_once_it_is_saved(tmp_path, monkeypatch):
+    """PowerFactory saves a scenario in one long transaction; the dashboard must answer at once meanwhile."""
+    import json
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.simulation import settings
+
+    path = create_dummy_database(tmp_path / "live.sqlite3")
+    monkeypatch.setattr(settings, "ANALYSIS_MODE", "sqlite")
+    monkeypatch.setattr(settings, "ANALYSIS_DB_PATH", str(path))
+    script = sqlite3.connect(path, isolation_level=None)  # the PowerFactory script
+    script.execute("BEGIN IMMEDIATE")  # the write lock is held until the scenario is complete
+    script.execute("INSERT INTO pf_jobs(id,kind,payload,status,created_at) VALUES('j','run','{}','completed','x')")
+    script.execute("INSERT INTO pf_scenarios VALUES('j','New outage','P','SC',?, 'x')", (json.dumps(["o"]),))
+    script.execute("INSERT INTO pf_progress VALUES(1,'running','STEP 5/5 · Scenarios','Scenario 9/9 · New outage',9,9,'t0','t1')")
+    with TestClient(app) as client:
+        started = time.perf_counter()
+        overview = client.get("/api/simulation/outage-management").json()
+        index = client.get("/api/simulation/across-scenarios/index").json()
+        runs = client.get("/api/simulation/facilities").json()
+        assert time.perf_counter() - started < 2  # no waiting for the writer
+        assert len(overview["scenarios"]) == 8 and len(index["scenarios"]) == 8 and runs  # the saved state, not a half one
+        assert overview["progress"] is None  # the progress note is part of the same, still open, transaction
+        script.execute("COMMIT")
+        overview = client.get("/api/simulation/outage-management").json()
+        assert len(overview["scenarios"]) == 9  # now it is there
+        assert overview["progress"]["state"] == "running" and overview["progress"]["detail"] == "Scenario 9/9 · New outage"
+    script.close()
+
+
+def test_the_progress_row_is_created_by_the_first_note_and_updated_in_place(tmp_path):
+    store = ScenarioStore(str(tmp_path / "p.sqlite3"))
+    assert store.progress() is None and store.overview()["progress"] is None
+    store.set_progress("running", "STEP 1/5", restart=True)
+    first = store.progress()
+    store.set_progress("running", "STEP 5/5", "Scenario 1/2 · A", 1, 2)
+    second = store.progress()
+    assert second["started_at"] == first["started_at"] and second["step"] == "STEP 5/5" and second["current"] == 1
+    store.set_progress("running", "STEP 1/5", restart=True)  # a new run
+    assert store.progress()["started_at"] >= first["started_at"] and store.progress()["current"] is None
+    assert store.db.execute("SELECT COUNT(*) FROM pf_progress").fetchone()[0] == 1
+    store.close()
