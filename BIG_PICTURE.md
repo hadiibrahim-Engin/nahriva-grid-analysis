@@ -88,7 +88,7 @@ flowchart TD
     More -->|No| Done[All scenarios saved: start the dashboard and open the browser]
 ```
 
-The LODF calculation runs once before the first simulation; the two ComVstab settings it changes (LODF on, recording limit 0) are restored and verified.
+The LODF calculation runs once before the first simulation; the three ComVstab settings it changes (consider contingencies, LODF on, recording limit 0) are restored and verified.
 If it fails there is a warning; the scenarios run anyway.
 
 Scenarios that were saved successfully are kept if a later calculation fails. Every new batch creates

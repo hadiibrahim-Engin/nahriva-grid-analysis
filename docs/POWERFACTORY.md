@@ -17,6 +17,12 @@ The dashboard offers everything the result file (`ComStatsim.results`, an ElmRes
 scope; what the result file does not record cannot be shown. Choose the variables in the ComStatsim result
 variables (for example `c:loading`, `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` for lines).
 
+Active power, reactive power and current of **lines and transformers** are added by the script itself: with
+`ENSURE_VARIABLES = True` in `gridlens_engine.py` it adds `m:P`, `m:Q` and `m:I` (`bus1` for lines, `bushv` for
+transformers) of every element in scope to the temporary copy of the result file before each calculation; the
+result file of the Study Case is not changed. The output names what could not be added, and warns when the result
+file still records none of them (then select them in ComStatsim). The loading stays a result variable of ComStatsim.
+
 | Variable | Stored as (dashboard Measurement) |
 |---|---|
 | `c:loading`, `m:loading` | `loading` in % (assessed for lines and transformers) |

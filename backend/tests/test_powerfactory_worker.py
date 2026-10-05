@@ -729,6 +729,49 @@ def test_only_terminals_used_as_busbar_are_stored_not_junction_or_internal_nodes
     assert every == {"Busbar 1", "Junction 1", "Internal 1"}
 
 
+class ResultThatTakesVariables(ResultWithEverything):
+    """A temporary result file that records the variables the script adds (ElmRes.AddVariable)."""
+
+    answer = 0
+
+    def __init__(self, start, count=300):
+        super().__init__(start, count)
+        self.added = []
+
+    def AddVariable(self, element, name):
+        self.added.append((element.loc_name, name))
+        return self.answer
+
+
+def test_power_reactive_power_and_current_of_lines_and_transformers_are_added_to_the_temporary_result_file(tmp_path):
+    assessment = assessment_module()
+    app = app_with(ResultThatTakesVariables)
+    lookup = {"*.ElmLne": [app.original.line], "*.ElmTr2": [app.original.transformer]}
+    app.GetCalcRelevantObjects = lambda pattern, *args: lookup.get(pattern, [])
+    assessment.run_assessment(app, tmp_path / "vars.sqlite3")
+    wanted = {("Line A", "m:P:bus1"), ("Line A", "m:Q:bus1"), ("Line A", "m:I:bus1"),
+              ("Trafo T1", "m:P:bushv"), ("Trafo T1", "m:Q:bushv"), ("Trafo T1", "m:I:bushv")}
+    assert app.copies and all(set(copy.added) == wanted for copy in app.copies)  # every calculation, on the copy
+    assert app.original.added == []  # the result file of the user is not changed
+
+
+def test_a_variable_that_cannot_be_added_is_named_and_the_calculation_goes_on(tmp_path):
+    assessment = assessment_module()
+    app = app_with(ResultThatTakesVariables)
+    app.GetCalcRelevantObjects = lambda pattern, *args: [app.original.line] if pattern == "*.ElmLne" else []
+    printed = []
+    app.PrintPlain = printed.append
+    ResultThatTakesVariables.answer = 1
+    try:
+        assessment.run_assessment(app, tmp_path / "novars.sqlite3")
+    finally:
+        ResultThatTakesVariables.answer = 0
+    assert any("3 could not be added (first: m:P:bus1 of Line A: return value 1)" in line and "WARN" in line for line in printed)
+    store = ScenarioStore(str(tmp_path / "novars.sqlite3"))
+    assert store.db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] > 0  # the scenarios were still saved
+    store.close()
+
+
 def test_missing_transformers_and_busbars_in_the_result_file_are_named_with_the_fix(tmp_path):
     assessment = assessment_module()
     app = App()  # the result file records the loading of one line only

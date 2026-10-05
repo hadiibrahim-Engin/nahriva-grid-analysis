@@ -256,3 +256,34 @@ def test_a_prepared_summary_is_not_used_after_its_lodf_was_calculated_again(tmp_
     store.save_lodf([(key, "line-ring", 0.5, None, None)])
     assert across._prepared_cells(store.db, row["id"], across.DEFAULT_LIMITS) is None
     store.close()
+
+
+def test_a_scenario_calculated_again_replaces_the_earlier_runs_in_the_scenario_list(tmp_path, monkeypatch):
+    """Every assessment of one results file adds a reference and its scenarios; the list offers the newest of each name."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.simulation import settings
+    from app.simulation.store import catalog_signature
+    from tests.qds_fixture import ELEMENTS, METRICS
+
+    path = create_dummy_database(tmp_path / "again.sqlite3")
+    store = ScenarioStore(str(path))
+    earlier = {r[0] for r in store.db.execute(
+        "SELECT run_id FROM pf_scenario_runs r JOIN pf_scenarios s ON s.id = r.scenario_id WHERE s.name = 'Outage Line North'")}
+    catalog = store.catalog()
+    store.enqueue("run", {"name": "Outage Line North", "outage_ids": ["outage-line"], "catalog_signature": catalog_signature(catalog)})
+    job = store.claim()
+    run = {"elements": ELEMENTS, "metrics": METRICS, "samples": [], "limits": []}
+    store.save_scenario(job, catalog, [
+        {**run, "kind": "REF", "run_id": "reference-2", "name": "Reference", "shared": True},
+        {**run, "kind": "OUTAGE", "run_id": "outage-2", "name": "Outage Line North · OUTAGE"},
+    ])
+    store.close()
+    monkeypatch.setattr(settings, "ANALYSIS_MODE", "sqlite")
+    monkeypatch.setattr(settings, "ANALYSIS_DB_PATH", str(path))
+    with TestClient(app) as client:
+        offered = client.get("/api/simulation/facilities").json()
+    ids = {run["id"] for run in offered}
+    assert len(earlier) == 2 and not earlier & ids  # the earlier calculation of this scenario is not offered again
+    assert {"reference-2", "outage-2"} <= ids
+    assert len(offered) == 7 * 2 + 2  # the seven scenarios that were not calculated again keep their runs

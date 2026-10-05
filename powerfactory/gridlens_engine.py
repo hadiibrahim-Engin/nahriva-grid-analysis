@@ -49,6 +49,16 @@ CLASS_CATEGORIES = {'ElmLne': ('line',), 'ElmTr2': ('transformer',), 'ElmTr3': (
 # is stored as its name with ':' replaced by '_' (m:P:bus2 -> m_P_bus2).
 READ_ALL_VARIABLES = True
 BUSBARS_ONLY = True  # terminals: only those with usage 'Busbar'; junction and internal nodes are left out
+# The result file records only what the result variables of ComStatsim select. With ENSURE_VARIABLES every line and
+# transformer in scope gets the variables below added to the temporary copy of the result file (never to the original),
+# so that active power, reactive power and current are stored next to the loading and offered by the dashboard. A
+# variable the file records already is harmless: its second column is ignored. False: only what ComStatsim selects.
+ENSURE_VARIABLES = True
+REQUIRED_VARIABLES = {
+    'ElmLne': ('m:P:bus1', 'm:Q:bus1', 'm:I:bus1'),
+    'ElmTr2': ('m:P:bushv', 'm:Q:bushv', 'm:I:bushv'),
+    'ElmTr3': ('m:P:bushv', 'm:Q:bushv', 'm:I:bushv'),
+}
 STANDARD_METRICS = {
     'm:P:bus1': ('active_power', 'MW'), 'm:P:bushv': ('active_power', 'MW'),
     'm:Q:bus1': ('reactive_power', 'Mvar'), 'm:Q:bushv': ('reactive_power', 'Mvar'),
@@ -1743,6 +1753,43 @@ def _temporary_result(study_case, template, case_id):
     return snapshot
 
 
+def _ensure_result_variables(app, result, logger):
+    """Add REQUIRED_VARIABLES for the lines and transformers in scope to the temporary result file.
+
+    Never stops the calculation: what cannot be added is counted and named, the dashboard then offers what is recorded.
+    """
+    lister = getattr(app, "GetCalcRelevantObjects", None)
+    if not callable(lister):
+        return
+    started = time.monotonic()
+    added = failed = 0
+    reason = ""
+    for kind, variables in REQUIRED_VARIABLES.items():
+        try:
+            elements = [e for e in _as_objects(lister("*." + kind)) if element_in_scope(e)]
+        except Exception as exc:
+            logger.write("CALCULATION", "The {} objects could not be listed to add P, Q and I: {}".format(kind, exc), 4, "WARN")
+            continue
+        for element in elements:
+            for variable in variables:
+                try:
+                    code = result.AddVariable(element, variable)
+                except Exception as exc:
+                    failed += 1
+                    reason = reason or "{} of {}: {}".format(variable, object_name(element), exc)
+                    continue
+                if finite_number(code) in (0.0, None):
+                    added += 1
+                else:
+                    failed += 1
+                    reason = reason or "{} of {}: return value {}".format(variable, object_name(element), code)
+    if added or failed:
+        logger.write(
+            "CALCULATION", "Added {} result variable(s) (P, Q, I of lines and transformers) to the temporary result file in {:.1f}s{}.".format(
+                added, time.monotonic() - started, "; {} could not be added (first: {})".format(failed, reason) if failed else ""),
+            4, "WARN" if failed else "INFO")
+
+
 def _run_calculation(app, study_case, qds, case_id, name, description,
                      original_result, logger, temporary_results, windows=()):
     snapshot = _temporary_result(study_case, original_result, case_id)
@@ -1751,6 +1798,8 @@ def _run_calculation(app, study_case, qds, case_id, name, description,
         raise GridLensError(
             "PowerFactory did not bind ComStatsim.results to the temporary "
             "ElmRes. No calculation was started.")
+    if ENSURE_VARIABLES:
+        _ensure_result_variables(app, snapshot, logger)
     logger.write(
         "CALCULATION",
         "Starting {} with the active ComStatsim settings; only the "

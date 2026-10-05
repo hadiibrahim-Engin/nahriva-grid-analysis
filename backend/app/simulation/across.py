@@ -25,6 +25,7 @@ without stored limits no violation is derived.
 """
 
 import json
+import sqlite3
 from datetime import datetime, timezone
 
 from app.core.cache import TTLCache
@@ -146,6 +147,23 @@ def _scenario_rows(db):
         rows.append(row)
     rows.reverse()
     return rows
+
+
+def current_run_ids(db):
+    """Ids of the runs the dashboard offers: those of the newest scenario of each name, plus runs no scenario links to
+    (a reference saved before its scenarios). Every assessment of one results file adds its own reference and
+    scenarios; the ones a newer calculation of the same name replaced are not offered again.
+    None for a file without scenarios tables: everything is offered.
+    """
+    try:
+        newest = {row["id"] for row in _scenario_rows(db)}
+        linked = db.execute("SELECT scenario_id, run_id FROM pf_scenario_runs").fetchall()
+    except sqlite3.OperationalError:
+        return None
+    kept = {row["run_id"] for row in linked if row["scenario_id"] in newest}
+    unlinked = {row["id"] for row in db.execute(
+        "SELECT id FROM analysis_runs WHERE id NOT IN (SELECT run_id FROM pf_scenario_runs)")}
+    return kept | unlinked
 
 
 def _runs(db, scenario_id):

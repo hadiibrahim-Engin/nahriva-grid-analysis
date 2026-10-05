@@ -128,6 +128,8 @@ Results in kV are judged against the limits stored with them; without limits no 
 
 ## LODF
 
+The complete description with flow charts and code is in [LODF.md](LODF.md); this is the summary.
+
 The LODF comes from **PowerFactory's own tool "Sensitivities / Distribution Factors"** (`ComVstab`, LODF on),
 which `powerfactory/lodf.py` executes **once before the first scenario simulation**. For every contingency of
 the Contingency Analysis the tool gives, per line, the change of its flow related to the flow the outaged
@@ -143,8 +145,10 @@ from the result runs, together with the equipment they belong to.
    scenario and filled with the equipment of its planned outages (`ComOutage.SetObjs`); a combined outage is one
    contingency with all its equipment. The Contingency Analysis of the user is **not touched**: the command is
    pointed at ours for the run (`ComVstab.pComSimoutage`) and back at its original one afterwards.
-3. It sets `lodflim` (the recording limit) to 0 for the run, because values below it are not written to
-   PowerFactory's result file, switches LODF on, and puts both settings back.
+3. For the run it switches on `isContSens` ("Consider contingencies"; without it PowerFactory stops with
+   "Please enable at least one sensitivity factor"), switches LODF on (`calcLodf`) and sets `lodflim` (the
+   recording limit) to 0, because values below it are not written to PowerFactory's result file. All three are put
+   back afterwards.
 
 What the run created stays in the Study Case so that it can be opened and inspected; the output lists it. Set
 `CLEAN_UP = True` in `powerfactory/lodf.py` to delete it after the LODF is read.

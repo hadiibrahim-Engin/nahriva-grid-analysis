@@ -108,10 +108,12 @@ def grid_list(db=Depends(store)):
 
 @router.get("/facilities")
 def scenarios(repo=Depends(get_repository)):
+    offered = across.current_run_ids(repo.db)
     return [
         {"id": r["id"], "name": r["name"] + ("" if r["status"] == "completed" else " (" + r["status"].replace("_", " ") + ")"),
          "project": r["project"]}
         for r in repo.runs()
+        if offered is None or r["id"] in offered
     ]
 
 

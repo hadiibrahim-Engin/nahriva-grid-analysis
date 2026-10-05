@@ -369,3 +369,20 @@ def test_scenarios_with_the_same_outages_share_one_calculation(tmp_path):
     definitions = [{"name": "X", "outages": ["Chosen"]}, {"name": "Y", "outages": ["Chosen"]}]
     assessment_module().run_assessment(app, tmp_path / "same.sqlite3", definitions)
     assert len(app.distribution.runs) == 1  # PowerFactory's tool runs once, however many scenarios
+
+
+def test_consider_contingencies_is_switched_on_for_the_run_and_back_off():
+    """PowerFactory 2026 stops with "Please enable at least one sensitivity factor" when it is off, although LODF is on."""
+    app = NativeApp()
+    app.distribution.isContSens = 0
+    app.distribution.calcLodf = 0
+    seen, original = [], app.distribution.Execute
+
+    def execute():
+        seen.append((app.distribution.isContSens, app.distribution.calcLodf))
+        return 1 if not app.distribution.isContSens else original()
+
+    app.distribution.Execute = execute
+    rows, undefined = calculate(app, [scenario(app, "a", "A")])
+    assert seen == [(1, 1)] and rows and undefined == {}
+    assert app.distribution.isContSens == 0 and app.distribution.calcLodf == 0  # as they were

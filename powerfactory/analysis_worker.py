@@ -188,6 +188,13 @@ def describe_columns(app, result):
         if not any(c == cls and v in needed for (c, v) in census):
             detail(app, "No {} ({}) {} in the result file: add {} to the result variables of ComStatsim to assess "
                         "them.".format(noun + 's', cls, 'loading' if noun != 'busbar' else 'voltage', needed[0]), 'WARN')
+    for cls, variables in engine.REQUIRED_VARIABLES.items():
+        missing = [v for v in variables if cls in recorded and (cls, v) not in census]
+        if missing:
+            detail(app, "{} record no {} in the result file, so the dashboard cannot show them. Add them to the result "
+                        "variables of ComStatsim{}.".format(
+                            cls, ', '.join(missing), '' if not engine.ENSURE_VARIABLES else
+                            " (the script tried to add them to its temporary copy; see the CALCULATION messages above)"), 'WARN')
 
 
 def run_state(result, samples, origin):
