@@ -17,11 +17,40 @@ The dashboard offers everything the result file (`ComStatsim.results`, an ElmRes
 scope; what the result file does not record cannot be shown. Choose the variables in the ComStatsim result
 variables (for example `c:loading`, `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` for lines).
 
-Active power, reactive power and current of **lines and transformers** are added by the script itself: with
-`ENSURE_VARIABLES = True` in `gridlens_engine.py` it adds `m:P`, `m:Q` and `m:I` (`bus1` for lines, `bushv` for
-transformers) of every element in scope to the temporary copy of the result file before each calculation; the
-result file of the Study Case is not changed. The output names what could not be added, and warns when the result
-file still records none of them (then select them in ComStatsim). The loading stays a result variable of ComStatsim.
+The script adds the variables it needs itself: with `ENSURE_VARIABLES = True` in `gridlens_engine.py` it adds the
+variables of `REQUIRED_VARIABLES` for every element of these classes that is in scope to the temporary copy of the
+result file before each calculation. The result file of the Study Case is not changed.
+
+| Class | Element | Variables added | Assessed |
+|---|---|---|---|
+| `ElmLne` | line | `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` | loading |
+| `ElmTr2` | two-winding transformer | `m:P:bushv`, `m:Q:bushv`, `m:I:bushv` | loading |
+| `ElmTr3` | three-winding transformer | the same at `bushv`, `busmv` and `buslv` (stored as `m_P_busmv`, `m_I_buslv`, ...) | loading |
+| `ElmGenstat`, `ElmSym` | static generator, synchronous machine | `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` | time series only |
+| `ElmLod` | load | `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` | time series only |
+| `ElmShnt` | shunt | `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` | time series only |
+| `ElmXnet` | external grid | `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` | time series only |
+| `ElmCoup` | switch / coupler | `m:P:bus1`, `m:Q:bus1`, `m:I:bus1` | time series only |
+| `ElmTerm` | busbar (usage *Busbar* only) | `m:u`, `m:phiu`, `m:Ul` | voltage |
+
+A variable that PowerFactory does not list for the class (`Application.GetAvailableAttributes`) is skipped and named
+in the output; what cannot be added is counted with the first reason. The loading (`c:loading`) stays a result
+variable of ComStatsim, and the script warns when the result file records no loading or voltage to assess. Take a
+class out of `REQUIRED_VARIABLES` to leave it out: every class adds elements x variables x time points to the results,
+and `MAX_RESULT_CELLS` stops a result file that gets too large (a year at 15 minutes is 35 040 points per variable,
+so 20 million cells are about 570 series).
+
+### Grids (ElmNet)
+
+`ElmNet` is PowerFactory's **grid**: the folder object that holds the elements of one network ("D7 Grid"). It is
+not monitored and has no result variables. The script uses only its **name**, read from the path of every element
+(`...\D7 Grid.ElmNet\Line 1.ElmLne`):
+
+- `GRID_NAME_FILTER` (`gridlens_engine.py`) keeps only the elements of the grids whose name contains the text, so
+  that foreign networks in the project are not read. An empty text reads everything.
+- The dashboard's *Grid* dropdown and the equipment lists are filtered by it.
+
+Without the need to separate grids, set `GRID_NAME_FILTER = ''` and leave the dropdown on *All grids*.
 
 | Variable | Stored as (dashboard Measurement) |
 |---|---|

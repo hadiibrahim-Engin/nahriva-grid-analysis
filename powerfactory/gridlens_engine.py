@@ -49,16 +49,29 @@ CLASS_CATEGORIES = {'ElmLne': ('line',), 'ElmTr2': ('transformer',), 'ElmTr3': (
 # is stored as its name with ':' replaced by '_' (m:P:bus2 -> m_P_bus2).
 READ_ALL_VARIABLES = True
 BUSBARS_ONLY = True  # terminals: only those with usage 'Busbar'; junction and internal nodes are left out
-# The result file records only what the result variables of ComStatsim select. With ENSURE_VARIABLES every line and
-# transformer in scope gets the variables below added to the temporary copy of the result file (never to the original),
-# so that active power, reactive power and current are stored next to the loading and offered by the dashboard. A
-# variable the file records already is harmless: its second column is ignored. False: only what ComStatsim selects.
+# The result file records only what the result variables of ComStatsim select. With ENSURE_VARIABLES every element of
+# the classes below that is in scope (GRID_NAME_FILTER) gets its variables added to the temporary copy of the result
+# file (never to the original), so that power, current and voltage are stored and offered by the dashboard whatever
+# ComStatsim selects. A variable the file records already is harmless: its second column is ignored. False: only what
+# ComStatsim selects. Remove a class to leave it out: every class adds its elements x variables x time points to the
+# results, and MAX_RESULT_CELLS stops a result file that gets too large.
 ENSURE_VARIABLES = True
 REQUIRED_VARIABLES = {
     'ElmLne': ('m:P:bus1', 'm:Q:bus1', 'm:I:bus1'),
     'ElmTr2': ('m:P:bushv', 'm:Q:bushv', 'm:I:bushv'),
-    'ElmTr3': ('m:P:bushv', 'm:Q:bushv', 'm:I:bushv'),
+    'ElmTr3': ('m:P:bushv', 'm:Q:bushv', 'm:I:bushv', 'm:P:busmv', 'm:Q:busmv', 'm:I:busmv',
+              'm:P:buslv', 'm:Q:buslv', 'm:I:buslv'),  # all three sides
+    'ElmGenstat': ('m:P:bus1', 'm:Q:bus1', 'm:I:bus1'),
+    'ElmSym': ('m:P:bus1', 'm:Q:bus1', 'm:I:bus1'),
+    'ElmLod': ('m:P:bus1', 'm:Q:bus1', 'm:I:bus1'),
+    'ElmShnt': ('m:P:bus1', 'm:Q:bus1', 'm:I:bus1'),
+    'ElmXnet': ('m:P:bus1', 'm:Q:bus1', 'm:I:bus1'),  # external grid
+    'ElmCoup': ('m:P:bus1', 'm:Q:bus1', 'm:I:bus1'),  # switch / coupler
+    'ElmTerm': ('m:u', 'm:phiu', 'm:Ul'),  # busbars only (BUSBARS_ONLY)
 }
+# What a class is called in the database (analysis_elements.type) when it is not assessed; others are 'other'.
+CLASS_KINDS = {'ElmGenstat': 'generator', 'ElmSym': 'generator', 'ElmLod': 'load', 'ElmShnt': 'shunt',
+               'ElmXnet': 'external grid', 'ElmCoup': 'coupler'}
 STANDARD_METRICS = {
     'm:P:bus1': ('active_power', 'MW'), 'm:P:bushv': ('active_power', 'MW'),
     'm:Q:bus1': ('reactive_power', 'Mvar'), 'm:Q:bushv': ('reactive_power', 'Mvar'),
@@ -482,7 +495,7 @@ def collect_series(elmres, windows=(), counters=None):
             unit = unit or STANDARD_METRICS.get(variable, ('', ''))[1]
             categories = CLASS_CATEGORIES.get(class_name(obj))
             extras.append({'metric': metric, 'key': key, 'object': obj, 'element_name': object_name(obj),
-                           'category': categories[0] if categories else 'other', 'variable_id': variable, 'unit': unit,
+                           'category': categories[0] if categories else CLASS_KINDS.get(class_name(obj), 'other'), 'variable_id': variable, 'unit': unit,
                            'values': read_column(elmres, column, rows)})  # None: no valid value at that time
         counters['extra_series'] = extras
     return (series, labels, plot_times, time_unit, absolute, origin)
@@ -1753,10 +1766,24 @@ def _temporary_result(study_case, template, case_id):
     return snapshot
 
 
-def _ensure_result_variables(app, result, logger):
-    """Add REQUIRED_VARIABLES for the lines and transformers in scope to the temporary result file.
+def _available_variables(app, kind):
+    """The result variables PowerFactory knows for a class ('m:P:bus1', ...); None when it cannot say."""
+    getter = getattr(app, "GetAvailableAttributes", None)
+    if not callable(getter):
+        return None
+    try:
+        text = getter(kind, "", 1, "")
+    except Exception:
+        return None
+    names = {line.strip() for line in str(text or "").splitlines() if line.strip()}
+    return names if any(name.startswith("m:") for name in names) else None
 
-    Never stops the calculation: what cannot be added is counted and named, the dashboard then offers what is recorded.
+
+def _ensure_result_variables(app, result, logger):
+    """Add REQUIRED_VARIABLES of the elements in scope to the temporary result file.
+
+    A variable PowerFactory does not list for the class is skipped and named. Never stops the calculation: what cannot be
+    added is counted and named, the dashboard then offers what is recorded.
     """
     lister = getattr(app, "GetCalcRelevantObjects", None)
     if not callable(lister):
@@ -1765,13 +1792,21 @@ def _ensure_result_variables(app, result, logger):
     added = failed = 0
     reason = ""
     for kind, variables in REQUIRED_VARIABLES.items():
+        known = _available_variables(app, kind)
+        wanted = [v for v in variables if known is None or v in known]
+        if len(wanted) < len(variables):
+            logger.write("CALCULATION", "{}: PowerFactory lists no result variable {}; not added.".format(
+                kind, ", ".join(v for v in variables if v not in wanted)), 4, "WARN")
         try:
             elements = [e for e in _as_objects(lister("*." + kind)) if element_in_scope(e)]
         except Exception as exc:
-            logger.write("CALCULATION", "The {} objects could not be listed to add P, Q and I: {}".format(kind, exc), 4, "WARN")
+            logger.write("CALCULATION", "The {} objects could not be listed to add their variables: {}".format(kind, exc), 4, "WARN")
             continue
+        if kind == "ElmTerm" and BUSBARS_ONLY:
+            elements = [e for e in elements if is_busbar(e)]
+        done = 0
         for element in elements:
-            for variable in variables:
+            for variable in wanted:
                 try:
                     code = result.AddVariable(element, variable)
                 except Exception as exc:
@@ -1779,13 +1814,17 @@ def _ensure_result_variables(app, result, logger):
                     reason = reason or "{} of {}: {}".format(variable, object_name(element), exc)
                     continue
                 if finite_number(code) in (0.0, None):
-                    added += 1
+                    done += 1
                 else:
                     failed += 1
                     reason = reason or "{} of {}: return value {}".format(variable, object_name(element), code)
+        added += done
+        if elements:
+            logger.write("CALCULATION", "{}: {} element(s), {} variable(s) added ({}).".format(
+                kind, len(elements), done, ", ".join(wanted) or "none"), 4)
     if added or failed:
         logger.write(
-            "CALCULATION", "Added {} result variable(s) (P, Q, I of lines and transformers) to the temporary result file in {:.1f}s{}.".format(
+            "CALCULATION", "Added {} result variable(s) to the temporary result file in {:.1f}s{}.".format(
                 added, time.monotonic() - started, "; {} could not be added (first: {})".format(failed, reason) if failed else ""),
             4, "WARN" if failed else "INFO")
 

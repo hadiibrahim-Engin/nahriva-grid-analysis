@@ -755,6 +755,32 @@ def test_power_reactive_power_and_current_of_lines_and_transformers_are_added_to
     assert app.original.added == []  # the result file of the user is not changed
 
 
+def test_generators_loads_and_busbars_get_their_variables_and_unknown_ones_are_named(tmp_path):
+    assessment = assessment_module()
+    app = app_with(ResultThatTakesVariables)
+    load, genstat, machine = (PFObject("Load 1", "ElmLod"), PFObject("PV 1", "ElmGenstat"), PFObject("Gen 1", "ElmSym"))
+    busbar, junction = PFObject("Busbar 1", "ElmTerm", iUsage=0), PFObject("Junction 1", "ElmTerm", iUsage=1)
+    shunt, grid, coupler = PFObject("Shunt 1", "ElmShnt"), PFObject("Grid 1", "ElmXnet"), PFObject("Coupler 1", "ElmCoup")
+    trafo3 = PFObject("T3 1", "ElmTr3")
+    lookup = {"*.ElmLod": [load], "*.ElmGenstat": [genstat], "*.ElmSym": [machine], "*.ElmTerm": [busbar, junction],
+              "*.ElmShnt": [shunt], "*.ElmXnet": [grid], "*.ElmCoup": [coupler], "*.ElmTr3": [trafo3]}
+    app.GetCalcRelevantObjects = lambda pattern, *args: lookup.get(pattern, [])
+    app.GetAvailableAttributes = lambda kind, *args: (  # no current, no line-line voltage
+        "m:P:bus1\nm:Q:bus1\nm:u\nm:phiu\nm:P:bushv\nm:P:busmv\nm:P:buslv\n")
+    printed = []
+    app.PrintPlain = printed.append
+    assessment.run_assessment(app, tmp_path / "classes.sqlite3")
+    expected = {("Load 1", "m:P:bus1"), ("Load 1", "m:Q:bus1"), ("PV 1", "m:P:bus1"), ("PV 1", "m:Q:bus1"),
+                ("Gen 1", "m:P:bus1"), ("Gen 1", "m:Q:bus1"), ("Busbar 1", "m:u"), ("Busbar 1", "m:phiu"),
+                ("Shunt 1", "m:P:bus1"), ("Shunt 1", "m:Q:bus1"), ("Grid 1", "m:P:bus1"), ("Grid 1", "m:Q:bus1"),
+                ("Coupler 1", "m:P:bus1"), ("Coupler 1", "m:Q:bus1"),
+                ("T3 1", "m:P:bushv"), ("T3 1", "m:P:busmv"), ("T3 1", "m:P:buslv")}
+    assert app.copies and all(set(copy.added) == expected for copy in app.copies)  # no junction node, nothing PowerFactory does not list
+    text = "\n".join(printed)
+    assert "ElmLod: PowerFactory lists no result variable m:I:bus1; not added." in text
+    assert "ElmTerm: PowerFactory lists no result variable m:Ul; not added." in text
+
+
 def test_a_variable_that_cannot_be_added_is_named_and_the_calculation_goes_on(tmp_path):
     assessment = assessment_module()
     app = app_with(ResultThatTakesVariables)

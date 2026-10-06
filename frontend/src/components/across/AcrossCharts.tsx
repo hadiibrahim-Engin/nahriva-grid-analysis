@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import * as echarts from 'echarts/core';
 import { BarChart, ScatterChart } from 'echarts/charts';
 import { DataZoomComponent, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from 'echarts/components';
@@ -290,7 +290,14 @@ export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; s
           ].join('<br/>');
         },
       },
-      grid: { left: 8, right: 16, top: 30, bottom: 36, containLabel: true },
+      grid: { left: 8, right: 16 + ZOOM_SPACE, top: 30, bottom: 36 + ZOOM_SPACE, containLabel: true },
+      // Zoom on both axes: sliders, or Ctrl + mouse wheel inside the plot; drag inside to move.
+      dataZoom: [
+        { type: 'inside' as const, xAxisIndex: 0, filterMode: 'none' as const, zoomOnMouseWheel: 'ctrl' as const, moveOnMouseWheel: false },
+        { type: 'inside' as const, yAxisIndex: 0, filterMode: 'none' as const, zoomOnMouseWheel: 'ctrl' as const, moveOnMouseWheel: false },
+        { ...zoomSlider(theme), xAxisIndex: 0, bottom: 4, height: 14 },
+        { ...zoomSlider(theme), yAxisIndex: 0, right: 4, width: 14 },
+      ],
       xAxis: xValue(theme, '', { min: 0, max: xMax, name: '|LODF|', nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: theme.mutedText }, axisLabel: { color: theme.mutedText, fontSize: 10, formatter: (v: number) => fmtLodf(v) } }),
       yAxis: xValue(theme, '', { min: yMin, max: yMax, name: 'Δ Loading (pp)', nameTextStyle: { color: theme.mutedText, align: 'left' }, axisLabel: { color: theme.mutedText, fontSize: 10, formatter: (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}` } }),
       series: [{
@@ -312,7 +319,87 @@ export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; s
   }, [points, theme, colors]);
   if (!hasLodf) return <div className="ab-empty">{lodfStatus(scenarios.map((s) => s.scenario))?.text ?? 'No LODF for the scenarios shown.'}</div>;
   if (points.length === 0) return <div className="ab-empty">No points with LODF and change available.</div>;
-  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: 360 }} />;
+  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: 360 + ZOOM_SPACE }} />;
+}
+
+/** Equipment shown at once in the LODF bars; the rest is reached by zooming. */
+const LODF_VISIBLE = 15;
+
+/** The LODF of every line for the outage of one scenario, largest |LODF| first; zoom to reach the small ones. */
+export function LodfBarsChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; scenarios: ScenarioStats[]; hasLodf: boolean }) {
+  const { theme, colors } = useAcrossTheme();
+  const best = useMemo(
+    () => scenarios.reduce<ScenarioStats | null>((a, b) => ((b.maxAbsLodf ?? -1) > (a?.maxAbsLodf ?? -1) ? b : a), null),
+    [scenarios],
+  );
+  const [chosen, setChosen] = useState<string | null>(null);
+  const scenario = scenarios.find((s) => s.scenario.id === chosen) ?? best;
+  const rows = useMemo(() => {
+    if (!scenario) return [];
+    const result: { name: string; lodf: number; delta: number | null; value: number | null }[] = [];
+    for (const s of lines) {
+      const cell = s.line.cells[scenario.scenario.id];
+      if (cell && !cell.outaged && cell.lodf !== null) result.push({ name: s.line.name, lodf: cell.lodf, delta: cell.delta, value: cell.value });
+    }
+    return result.sort((a, b) => Math.abs(b.lodf) - Math.abs(a.lodf));
+  }, [lines, scenario]);
+  const option = useMemo(() => {
+    const limit = Math.max(0.1, ...rows.map((r) => Math.abs(r.lodf))) * 1.2;
+    const shown = Math.min(100, (LODF_VISIBLE / Math.max(rows.length, 1)) * 100);
+    return {
+      ...common(theme),
+      tooltip: {
+        ...common(theme).tooltip,
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: { dataIndex: number }[]) => {
+          const r = rows[params[0]?.dataIndex ?? 0];
+          if (!r) return '';
+          return [
+            `<strong>${escapeHtml(r.name)}</strong>`,
+            `LODF: <strong>${r.lodf > 0 ? '+' : ''}${fmtLodf(r.lodf)}</strong> (share of the lost flow it takes over; the sign is the direction)`,
+            `Loading: ${fmtPct(r.value)} · Δ Loading: ${fmtPp(r.delta)}`,
+          ].join('<br/>');
+        },
+      },
+      grid: { left: 8, right: 56 + ZOOM_SPACE, top: 8, bottom: 24, containLabel: true },
+      xAxis: xValue(theme, '', {
+        min: -limit, max: limit, name: 'LODF', nameLocation: 'end', nameTextStyle: { color: theme.mutedText },
+        axisLabel: { color: theme.mutedText, fontSize: 10, hideOverlap: true, formatter: (v: number) => `${v > 0 ? '+' : ''}${Math.round(v * 100) / 100}` },
+      }),
+      yAxis: yCategory(theme, rows.map((r) => r.name), true),
+      // The rows are many: the slider on the right moves through them, Ctrl + mouse wheel zooms, dragging inside moves.
+      dataZoom: [
+        { type: 'inside' as const, yAxisIndex: 0, filterMode: 'none' as const, start: 0, end: shown, zoomOnMouseWheel: 'ctrl' as const, moveOnMouseWheel: false },
+        { type: 'inside' as const, xAxisIndex: 0, filterMode: 'none' as const, zoomOnMouseWheel: 'ctrl' as const, moveOnMouseWheel: false },
+        { ...zoomSlider(theme), yAxisIndex: 0, start: 0, end: shown, right: 4, width: 14 },
+      ],
+      series: [{
+        type: 'bar', barWidth: 12,
+        markLine: { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: theme.mutedText, width: 1 }, data: [{ xAxis: 0 }] },
+        label: { show: true, color: theme.text, fontSize: 11, fontWeight: 600, formatter: (p: { value: number }) => `${p.value > 0 ? '+' : ''}${fmtLodf(p.value)}` },
+        data: rows.map((r) => ({
+          value: r.lodf,
+          itemStyle: { color: r.lodf >= 0 ? colors.pos : colors.neg, borderRadius: r.lodf >= 0 ? [0, 3, 3, 0] : [3, 0, 0, 3] },
+          label: { position: r.lodf >= 0 ? 'right' : 'left' },
+        })),
+      }],
+    };
+  }, [rows, theme, colors]);
+  if (!hasLodf) return <div className="ab-empty">{lodfStatus(scenarios.map((s) => s.scenario))?.text ?? 'No LODF for the scenarios shown.'}</div>;
+  if (!scenario || rows.length === 0) return <div className="ab-empty">This scenario has no LODF values.</div>;
+  return (
+    <div className="grid gap-2">
+      <label className="ab-toolbar" style={{ justifyContent: 'flex-start', gap: 8 }}>
+        <span className="text-xs text-[var(--grid-muted)]">Outage</span>
+        <select className="ab-control" aria-label="Scenario" value={scenario.scenario.id} onChange={(e) => setChosen(e.target.value)}>
+          {scenarios.map((s) => <option key={s.scenario.id} value={s.scenario.id}>{`${s.code} · ${s.scenario.name}${s.scenario.has_lodf ? '' : ' (no LODF)'}`}</option>)}
+        </select>
+        <span className="text-xs text-[var(--grid-muted)]">{rows.length} lines</span>
+      </label>
+      <ReactECharts echarts={echarts} option={option} notMerge style={{ height: Math.min(rows.length, LODF_VISIBLE) * ROW + 40 }} />
+    </div>
+  );
 }
 
 export default function AcrossCharts({ lines, scenarios, periodHours, hasLodf }: Props) {
@@ -327,7 +414,10 @@ export default function AcrossCharts({ lines, scenarios, periodHours, hasLodf }:
       <SectionCard title="Change of loading" hint="Largest change against REF in the same outage window in percentage points (pp): relief on the left, additional load on the right.">
         <DeltaChart lines={lines} scenarios={scenarios} />
       </SectionCard>
-      <SectionCard title="LODF and change of loading" hint="Each point is a line in one scenario. Top right: high |LODF| with a large additional load. Colour = loading band.">
+      <SectionCard title="LODF per line of one outage" hint="How much of the flow of the switched-off equipment each line takes over (signed: the sign is the direction of the change). Largest first; zoom with the slider on the right or Ctrl + mouse wheel, drag to move.">
+        <LodfBarsChart lines={lines} scenarios={scenarios} hasLodf={hasLodf} />
+      </SectionCard>
+      <SectionCard title="LODF and change of loading" hint="Each point is a line in one scenario. Top right: high |LODF| with a large additional load. Colour = loading band. Zoom with the sliders or Ctrl + mouse wheel; drag to move.">
         <LodfChart lines={lines} scenarios={scenarios} hasLodf={hasLodf} />
       </SectionCard>
     </div>

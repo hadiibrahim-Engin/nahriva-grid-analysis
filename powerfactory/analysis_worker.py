@@ -189,7 +189,7 @@ def describe_columns(app, result):
             detail(app, "No {} ({}) {} in the result file: add {} to the result variables of ComStatsim to assess "
                         "them.".format(noun + 's', cls, 'loading' if noun != 'busbar' else 'voltage', needed[0]), 'WARN')
     for cls, variables in engine.REQUIRED_VARIABLES.items():
-        missing = [v for v in variables if cls in recorded and (cls, v) not in census]
+        missing = [v for v in variables if v.startswith(('m:P', 'm:Q', 'm:I')) and cls in recorded and (cls, v) not in census]
         if missing:
             detail(app, "{} record no {} in the result file, so the dashboard cannot show them. Add them to the result "
                         "variables of ComStatsim{}.".format(

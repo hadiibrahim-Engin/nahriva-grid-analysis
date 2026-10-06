@@ -29,6 +29,16 @@ class AnalysisRepository:
         with self._lock:
             return [dict(r) for r in self.db.execute(query, params).fetchall()]
 
+    def tuples(self, query, params=()):
+        """Rows as plain tuples: for the large reads of a series, where a dict per row costs more than the query."""
+        with self._lock:
+            cursor = self.db.cursor()
+            cursor.row_factory = None
+            try:
+                return cursor.execute(query, params).fetchall()
+            finally:
+                cursor.close()
+
     def import_bundle(self, bundle: RunBundle):
         """Atomic append-only import: a duplicate run is an error, never an overwrite."""
         with self._lock, self.db:
@@ -83,6 +93,14 @@ class AnalysisRepository:
             "SELECT id,name,className,type,path FROM analysis_elements WHERE run_id=? ORDER BY name,id",
             (run_id,),
         )
+
+    def element(self, run_id, element_id):
+        """One element of a run, or None; ResourceNotFoundError for an unknown run."""
+        self.run(run_id)
+        rows = self._all(
+            "SELECT id,name,className,type,path FROM analysis_elements WHERE run_id=? AND id=?", (run_id, element_id)
+        )
+        return rows[0] if rows else None
 
     def metrics(self, run_id):
         self.run(run_id)

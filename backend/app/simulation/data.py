@@ -26,7 +26,12 @@ METRIC_CODES = {
 def percentile(values, probability):
     if not values:
         return None
-    ordered = sorted(values)
+    return _sorted_percentile(sorted(values), probability)
+
+
+def _sorted_percentile(ordered, probability):
+    if not ordered:
+        return None
     position = (len(ordered) - 1) * probability
     lo = math.floor(position)
     hi = math.ceil(position)
@@ -52,7 +57,7 @@ def resolve(repo, identifier):
         raise InvalidRequestError(
             "Invalid scenario or equipment identifier."
         ) from None
-    element = next((e for e in repo.elements(run_id) if e["id"] == element_id), None)
+    element = repo.element(run_id, element_id)
     if element is None:
         raise ResourceNotFoundError("Equipment not found in the scenario.")
     return run_id, element
@@ -70,7 +75,14 @@ def parse_time(value):
     )
 
 
+# A series is handled as two lists, epoch seconds and values: a year at 15 minutes is 35 040 points, and a
+# datetime, an ISO string and a dict per point cost far more than the query. ISO strings are made only for what is sent.
+def _iso(epoch):
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat()
+
+
 def dataset(repo, identifier, code, start=None, end=None):
+    """(description, epoch seconds, values) of one series; a value is None where PowerFactory had none."""
     run_id, element = resolve(repo, identifier)
     metric = next(
         (m for m in repo.metrics(run_id) if METRIC_CODES.get(m["id"], m["id"]) == code),
@@ -92,7 +104,7 @@ def dataset(repo, identifier, code, start=None, end=None):
     if finish:
         conditions.append("v.t <= ?")
         params.append(finish.timestamp())
-    stored = repo._all(
+    stored = repo.tuples(
         "SELECT v.t, v.value FROM analysis_series se JOIN analysis_values v ON v.series_id = se.id WHERE "
         + " AND ".join(conditions)
         + " ORDER BY v.t LIMIT 200001",
@@ -100,26 +112,19 @@ def dataset(repo, identifier, code, start=None, end=None):
     )
     if len(stored) > 200000:
         raise RawRangeTooLargeError(estimated_points=len(stored), max_points=200000)
-    rows = [
-        {"timestamp": datetime.fromtimestamp(r["t"], timezone.utc).isoformat(), "value": r["value"]}
-        for r in stored
-    ]
-    points = [row for row in rows if row["value"] is not None]
     base = {
         "component_id": identifier,
         "component_name": element["name"],
         "measurement_type": code,
         "unit": metric["unit"],
     }
-    return base, points, rows
+    return base, [row[0] for row in stored], [row[1] for row in stored]
 
 
-def native_step(rows):
-    gaps = [
-        (parse_time(b["timestamp"]) - parse_time(a["timestamp"])).total_seconds()
-        for a, b in zip(rows, rows[1:])
-    ]
-    return min((gap for gap in gaps if gap > 0), default=0)
+def native_step(stamps):
+    """The smallest positive gap between two consecutive times, in seconds (0 when there is none)."""
+    gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b > a]
+    return float(min(gaps)) if gaps else 0
 
 
 def timeseries(
@@ -133,37 +138,30 @@ def timeseries(
     limit=50000,
     cursor=None,
 ):
-    base, points, rows = dataset(repo, identifier, code, start, end)
-    step = native_step(rows)
+    base, stamps, values = dataset(repo, identifier, code, start, end)
+    step = native_step(stamps)
+    points = [(t, v) for t, v in zip(stamps, values) if v is not None]
     if bucket is not None:
         if bucket <= 0 or method not in ("AVG", "MIN", "MAX", "SUM"):
             raise InvalidRequestError(
                 "Invalid aggregation interval or method."
             )
         groups = defaultdict(list)
-        for point in points:
-            groups[
-                int(parse_time(point["timestamp"]).timestamp()) // bucket * bucket
-            ].append(point["value"])
+        for t, v in points:
+            groups[t // bucket * bucket].append(v)
         aggregate = {"AVG": fmean, "MIN": min, "MAX": max, "SUM": sum}[method]
-        points = [
-            {
-                "timestamp": datetime.fromtimestamp(t, timezone.utc).isoformat(),
-                "value": aggregate(values),
-            }
-            for t, values in sorted(groups.items())
-        ]
+        points = [(t, aggregate(group)) for t, group in sorted(groups.items())]
     next_cursor = None
     if bucket is None:
         if cursor:
-            cursor_time = parse_time(cursor)
-            points = [p for p in points if parse_time(p["timestamp"]) > cursor_time]
+            cursor_time = parse_time(cursor).timestamp()
+            points = [p for p in points if p[0] > cursor_time]
         if len(points) > limit:
-            next_cursor = points[limit - 1]["timestamp"]
+            next_cursor = _iso(points[limit - 1][0])
             points = points[:limit]
     return {
         **base,
-        "data": points,
+        "data": [{"timestamp": _iso(t), "value": v} for t, v in points],
         "next_cursor": next_cursor,
         "meta": {
             "is_raw": bucket is None,
@@ -180,16 +178,32 @@ def timeseries(
     }
 
 
+class _Calendar:
+    """Weekday, month and date (UTC) of an epoch second, worked out once per day."""
+
+    def __init__(self):
+        self._days = {}
+
+    def day(self, epoch):
+        number = epoch // 86400
+        found = self._days.get(number)
+        if found is None:
+            date = datetime.fromtimestamp(number * 86400, timezone.utc)
+            found = self._days[number] = (date.weekday(), date.month, date.date().isoformat())
+        return found
+
+
 def metric_analytics(
     repo, identifier, code, kind, start=None, end=None, group_by="hour", threshold=100
 ):
-    base, points, rows = dataset(repo, identifier, code, start, end)
-    values = [p["value"] for p in points]
+    base, stamps, series = dataset(repo, identifier, code, start, end)
+    values = [v for v in series if v is not None]
     if kind == "duration-curve":
+        ordered = sorted(values)
         return {
             **base,
             "data": [
-                {"percent": p, "value": percentile(values, 1 - p / 100)}
+                {"percent": p, "value": _sorted_percentile(ordered, 1 - p / 100)}
                 for p in range(101)
             ]
             if values
@@ -198,16 +212,19 @@ def metric_analytics(
     if kind == "boxplot":
         if group_by not in ("hour", "weekday", "month", "weekday_weekend"):
             raise InvalidRequestError("Invalid boxplot grouping.")
+        calendar = _Calendar()
         groups = defaultdict(list)
-        for point in points:
-            time = parse_time(point["timestamp"])
+        for t, value in zip(stamps, series):
+            if value is None:
+                continue
+            weekday, month, _date = calendar.day(t)
             key = {
-                "hour": time.hour,
-                "weekday": time.weekday(),
-                "month": time.month,
-                "weekday_weekend": int(time.weekday() >= 5),
+                "hour": t // 3600 % 24,
+                "weekday": weekday,
+                "month": month,
+                "weekday_weekend": int(weekday >= 5),
             }[group_by]
-            groups[key].append(point["value"])
+            groups[key].append(value)
         return {
             **base,
             "group_by": group_by,
@@ -226,19 +243,18 @@ def metric_analytics(
             ],
         }
     if kind == "exceedance":
-        step = native_step(rows)
+        step = native_step(stamps)
+        calendar = _Calendar()
         days = defaultdict(list)
         total = duration = 0
-        for row, following in zip(rows, rows[1:]):
-            span = (
-                parse_time(following["timestamp"]) - parse_time(row["timestamp"])
-            ).total_seconds()
-            if span > step * 1.5 or row["value"] is None:
+        for t, value, following in zip(stamps, series, stamps[1:]):
+            span = float(following - t)
+            if span > step * 1.5 or value is None:
                 continue
             duration += span
-            if row["value"] > threshold:
+            if value > threshold:
                 total += span
-                days[row["timestamp"][:10]].append((span / 60, row["value"]))
+                days[calendar.day(t)[2]].append((span / 60, value))
         return {
             **base,
             "threshold": threshold,
@@ -290,7 +306,11 @@ def component_analytics(
     codes = {METRIC_CODES.get(m["id"], m["id"]): m["unit"] for m in available}
 
     def series(code):
-        return dataset(repo, identifier, code, start, end)[1] if code in codes else []
+        """{epoch second: value} of the valid values of one measurement."""
+        if code not in codes:
+            return {}
+        _base, stamps, values = dataset(repo, identifier, code, start, end)
+        return {t: v for t, v in zip(stamps, values) if v is not None}
 
     base = {"component_name": element["name"]}
     if kind == "correlation-matrix":
@@ -299,17 +319,15 @@ def component_analytics(
             raise ResourceNotFoundError(
                 "The required measurements are not in the results."
             )
-        lookup = {
-            code: {p["timestamp"]: p["value"] for p in series(code)}
-            for code in selected
-        }
-        matrix = []
-        for a in selected:
-            row = []
-            for b in selected:
+        lookup = {code: series(code) for code in selected}
+        matrix = [[None] * len(selected) for _ in selected]
+        for i, a in enumerate(selected):
+            for j, b in enumerate(selected):
+                if j < i:  # the coefficient is symmetric, to the last digit: the same products in the same order
+                    matrix[i][j] = matrix[j][i]
+                    continue
                 keys = sorted(lookup[a].keys() & lookup[b].keys())
-                row.append(pearson([lookup[a][k] for k in keys], [lookup[b][k] for k in keys]))
-            matrix.append(row)
+                matrix[i][j] = pearson([lookup[a][k] for k in keys], [lookup[b][k] for k in keys])
         return {
             **base,
             "types": selected,

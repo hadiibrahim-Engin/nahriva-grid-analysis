@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ConfigDict
 from app.analysis.bootstrap import get_repository, select_database
 from app.simulation import across, data, grids, settings
@@ -167,9 +168,10 @@ def raw(
     cursor: str | None = None,
     repo=Depends(get_repository),
 ):
-    return data.timeseries(
+    # Large answers (a year of 15-minute values): sent as they are, FastAPI would first walk every point once more.
+    return JSONResponse(data.timeseries(
         repo, identifier, code, start, end, limit=limit, cursor=cursor
-    )
+    ))
 
 
 @router.get("/timeseries/aggregate/{identifier}/{code}")
@@ -182,9 +184,9 @@ def aggregate(
     aggregation_method: str = "AVG",
     repo=Depends(get_repository),
 ):
-    return data.timeseries(
+    return JSONResponse(data.timeseries(
         repo, identifier, code, start, end, bucket, aggregation_method
-    )
+    ))
 
 
 @router.get("/analytics/{identifier}/{code}/{kind}")
@@ -198,9 +200,10 @@ def metric_analysis(
     threshold: float = Query(100, allow_inf_nan=False),
     repo=Depends(get_repository),
 ):
-    return data.metric_analytics(
+    # Large answers (a year of 15-minute values): sent as they are, FastAPI would first walk every point once more.
+    return JSONResponse(data.metric_analytics(
         repo, identifier, code, kind, start, end, group_by, threshold
-    )
+    ))
 
 
 @router.get("/analytics/{identifier}/{kind}")
@@ -212,6 +215,7 @@ def component_analysis(
     types: str | None = None,
     repo=Depends(get_repository),
 ):
-    return data.component_analytics(
+    # Large answers (a year of 15-minute values): sent as they are, FastAPI would first walk every point once more.
+    return JSONResponse(data.component_analytics(
         repo, identifier, kind, start, end, types
-    )
+    ))

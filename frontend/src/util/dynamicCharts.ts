@@ -136,6 +136,14 @@ export const MTYPE_LABELS: Record<string, string> = {
   S: 'Apparent power (S)',
   U: 'Voltage (U)',
   I: 'Current (I)',
+  m_P_busmv: 'Active power, MV side (P)',
+  m_Q_busmv: 'Reactive power, MV side (Q)',
+  m_I_busmv: 'Current, MV side (I)',
+  m_P_buslv: 'Active power, LV side (P)',
+  m_Q_buslv: 'Reactive power, LV side (Q)',
+  m_I_buslv: 'Current, LV side (I)',
+  m_phiu: 'Voltage angle',
+  m_Ul: 'Voltage (line-line)',
 };
 
 export function seriesLabel(series: DashboardSeries): string {

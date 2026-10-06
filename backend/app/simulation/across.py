@@ -446,30 +446,41 @@ def scenario_profile(store, scenario_id, top=5, points=240, grid=None):
         return {"scenario_id": scenario_id, "times": [], "windows": windows, "series": []}
 
     marks = ",".join("?" for _ in ranked)
-
-    def samples(run_id):
-        result = {}
+    # The time grid of the first series decides the buckets. The reduction runs in the database: a series of a year
+    # has 35 040 values, and only `points` buckets per series have to leave it.
+    stamps = [
+        r[0]
         for r in db.execute(
-            "SELECT se.element_id, v.t, v.value FROM analysis_series se JOIN analysis_values v ON v.series_id = se.id "
-            "WHERE se.run_id=? AND se.metric_id=? AND se.element_id IN (" + marks + ") ORDER BY v.t",
+            "SELECT v.t FROM analysis_series se JOIN analysis_values v ON v.series_id = se.id "
+            "WHERE se.run_id=? AND se.metric_id=? AND se.element_id=? ORDER BY v.t",
+            (runs["OUTAGE"], LOADING, ranked[0]),
+        )
+    ]
+    size = max(1, -(-len(stamps) // max(points, 1)))
+    times = [stamps[i] for i in range(0, len(stamps), size)]
+    db.execute("DROP TABLE IF EXISTS temp.profile_bucket")
+    db.execute("CREATE TEMP TABLE profile_bucket (t INTEGER PRIMARY KEY, b INTEGER NOT NULL)")
+    db.executemany("INSERT INTO profile_bucket VALUES(?,?)", ((t, i // size) for i, t in enumerate(stamps)))
+
+    def reduced(run_id):
+        """{element: [maximum per bucket, None where a bucket has no value]}"""
+        result = {}
+        for element_id, bucket, peak in db.execute(
+            "SELECT se.element_id, k.b, MAX(v.value) FROM analysis_series se "
+            "JOIN analysis_values v ON v.series_id = se.id JOIN profile_bucket k ON k.t = v.t "
+            "WHERE se.run_id=? AND se.metric_id=? AND se.element_id IN (" + marks + ") AND v.value IS NOT NULL "
+            "GROUP BY se.element_id, k.b",
             (run_id, LOADING, *ranked),
         ):
-            result.setdefault(r["element_id"], []).append((r["t"], r["value"]))
+            result.setdefault(element_id, [None] * len(times))[bucket] = peak
         return result
 
-    out, ref = samples(runs["OUTAGE"]), samples(runs["REF"])
-    stamps = [t for t, _ in out[ranked[0]]] if ranked[0] in out else []
-    size = max(1, -(-len(stamps) // max(points, 1)))
-    bucket_of = {t: i // size for i, t in enumerate(stamps)}
-    times = [stamps[i] for i in range(0, len(stamps), size)]
-
-    def reduce(pairs):
-        buckets = [None] * len(times)
-        for t, v in pairs:
-            b = bucket_of.get(t)
-            if b is not None and v is not None and (buckets[b] is None or v > buckets[b]):
-                buckets[b] = v
-        return buckets
+    try:
+        out, ref = reduced(runs["OUTAGE"]), reduced(runs["REF"])
+    finally:
+        db.execute("DROP TABLE IF EXISTS temp.profile_bucket")
+        db.commit()
+    empty = [None] * len(times)
 
     series = [
         {
@@ -477,8 +488,8 @@ def scenario_profile(store, scenario_id, top=5, points=240, grid=None):
             "name": elements[i]["name"],
             "type": elements[i]["type"],
             "max": peaks[i],
-            "out": reduce(out.get(i, [])),
-            "ref": reduce(ref.get(i, [])),
+            "out": out.get(i, empty),
+            "ref": ref.get(i, empty),
         }
         for i in ranked
     ]

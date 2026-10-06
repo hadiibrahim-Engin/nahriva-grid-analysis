@@ -77,3 +77,19 @@ def test_unfiltered_series_returns_the_entire_stored_simulation(api):
         == 200
     )
     assert client.get("/api/simulation/auth/login").status_code == 404
+
+
+def test_calendar_of_an_epoch_second_matches_the_datetime_it_stands_for():
+    from datetime import datetime, timezone
+
+    calendar = data._Calendar()
+    for epoch in (0, 86399, 86400, 1767225600, 1769817600 + 3 * 86400 + 7, 1780000000, 1798675200, 1735689599):
+        moment = datetime.fromtimestamp(epoch, timezone.utc)
+        assert calendar.day(epoch) == (moment.weekday(), moment.month, moment.date().isoformat())
+        assert epoch // 3600 % 24 == moment.hour
+
+
+def test_the_native_step_is_the_smallest_positive_gap_in_seconds():
+    assert data.native_step([0, 900, 1800, 2700]) == 900.0
+    assert data.native_step([0, 900, 2700, 3600]) == 900.0  # a gap does not change it
+    assert data.native_step([5]) == 0 and data.native_step([]) == 0

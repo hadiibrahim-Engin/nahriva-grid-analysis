@@ -510,14 +510,11 @@ export default function DashboardPage() {
       seriesToFetch.forEach((series) => delete next[series.key]);
       return next;
     });
-    // Debounce so dragging the date picker or rapidly clicking range presets
-    // only fires one request once the user settles.
+    // Started at once: there is no date picker any more, so nothing has to settle first, and the server is on this PC.
     const timer = setTimeout(() => {
       // The overview is always raw (native resolution). No silent aggregation.
-      // Cap concurrency so a wide multi-series fetch doesn't slam Oracle with
-      // N heavy reads at once. 2 in flight keeps the pool happy and lets
-      // results render progressively.
-      const CONCURRENCY = 2;
+      // Four reads at a time: the database is a local file, and the results render progressively.
+      const CONCURRENCY = 4;
       const queue = [...seriesToFetch];
       const runNext = async (): Promise<void> => {
         const s = queue.shift();
@@ -581,7 +578,7 @@ export default function DashboardPage() {
           return next;
         });
       });
-    }, 300);
+    }, 0);
     return () => {
       clearTimeout(timer);
       controller.abort();

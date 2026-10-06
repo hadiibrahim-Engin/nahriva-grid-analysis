@@ -74,11 +74,11 @@ Explanations are off by default; open them per card with **i** or for everything
 
 ## Adding charts
 
-**Add chart** offers the charts that make sense for the two exported signals, loading (L) and
-voltage (U):
+**Add chart** offers the charts that make sense for the exported signals: loading (L), voltage (U), and where the
+result file records them active power (P), reactive power (Q) and current (I):
 
 - **Scenario evaluation** (no selected signals needed): highest loading, overload duration, change of
-  loading, LODF and change, **voltage per busbar** and **voltage change (ΔU)**.
+  loading, **LODF per line of one outage** (zoomable), LODF and change (zoomable), **voltage per busbar** and **voltage change (ΔU)**.
 - **Time series, distribution, limits:** time series overlay, aggregated trend, rolling mean, anomaly
   score, histogram, boxplot, duration curve, threshold exceedance, multi-level threshold lines,
   voltage compliance.
@@ -175,6 +175,10 @@ warning with PowerFactory's reason, the scenarios still run and the dashboard sh
 ## Large databases
 
 The server reads only what is asked for, and the frontend asks only for what becomes visible.
+
+Series and analyses (`/timeseries/...`, `/analytics/...`) are handled as epoch seconds and numbers, not as one datetime and
+dictionary per value, and are sent without a second encoding pass: a year at 15 minutes (35 040 values) takes about
+0.1 s per series, the duration curve, box plot and overload analysis 0.02-0.03 s.
 
 1. `GET /across-scenarios/index` returns scenarios and outages **without reading samples**.
 2. The frontend then fetches `GET /across-scenarios/{id}/cells` scenario by scenario (3 at a time). The
