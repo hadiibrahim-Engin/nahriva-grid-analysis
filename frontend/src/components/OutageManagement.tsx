@@ -2,22 +2,33 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import { SectionCard } from './across/shared';
 import { progressView, type PfProgress } from '../util/progress';
+import { analysisParams, useAnalysis } from '../hooks/useAnalysis';
 import { isSynthetic, provenancePeriod, resultContexts, runProblems, type ResultProvenance, type ResultScenario } from '../util/resultProvenance';
 interface Job { id: string; status: string; name?: string | null; message?: string }
 interface Overview { catalog: ResultProvenance | null; scenarios: ResultScenario[]; database_path: string; jobs?: Job[]; progress?: PfProgress | null; }
 export default function OutageManagement({ onResultsChanged }: { onResultsChanged: () => void }) {
+  const { analysis } = useAnalysis();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState('');
   const callback = useRef(onResultsChanged);
   // null until the first answer: that one is the starting point, not a change worth refreshing everything for.
   const scenarioIds = useRef<string | null>(null);
+  // Tag of the overview shown. The server answers an unchanged overview with 304, which the browser hands on as the
+  // cached answer with the same tag: then nothing is set and nothing re-renders.
+  const shownTag = useRef<string | null>(null);
   useEffect(() => { callback.current = onResultsChanged; }, [onResultsChanged]);
   useEffect(() => {
     let active = true;
+    // Another analysis is a new starting point, not a change of results.
+    scenarioIds.current = null;
+    shownTag.current = null;
     async function refresh() {
       try {
-        const { data } = await api.get<Overview>('/outage-management');
+        const { data, headers } = await api.get<Overview>('/outage-management', { params: analysisParams(analysis) });
         if (!active) return;
+        const tag = typeof headers.etag === 'string' ? headers.etag : null;
+        if (tag !== null && tag === shownTag.current) { setError(''); return; }
+        shownTag.current = tag;
         setOverview(data); setError('');
         const ids = data.scenarios.map(s => s.id).join(',');
         const changed = scenarioIds.current !== null && ids !== scenarioIds.current;
@@ -28,7 +39,7 @@ export default function OutageManagement({ onResultsChanged }: { onResultsChange
     void refresh();
     const timer = window.setInterval(() => { void refresh(); }, 3000);
     return () => { active = false; window.clearInterval(timer); };
-  }, []);
+  }, [analysis]);
   const catalog = overview?.catalog;
   const contexts = resultContexts(overview?.scenarios ?? [], catalog ?? null);
   const first = contexts[0]?.provenance;

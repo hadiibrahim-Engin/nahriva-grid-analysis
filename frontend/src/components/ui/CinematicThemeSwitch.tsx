@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { motion, useReducedMotion } from 'framer-motion';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Moon, Sun } from 'lucide-react';
 import type { ThemeMode } from '../../util/theme';
 
@@ -26,7 +25,8 @@ export default function CinematicThemeSwitch({
   className = '',
   size = 'compact',
 }: CinematicThemeSwitchProps) {
-  const shouldReduceMotion = useReducedMotion();
+  // CSS animations (index.css, .theme-switch*) instead of an animation library; the media query there stops them too.
+  const shouldReduceMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const timeoutRef = useRef<number | null>(null);
   const [mounted, setMounted] = useState(false);
   const [systemIsDark, setSystemIsDark] = useState(false);
@@ -81,10 +81,10 @@ export default function CinematicThemeSwitch({
 
   return (
     <div className={`inline-block ${className}`}>
-      <motion.button
+      <button
         type="button"
         onClick={handleToggle}
-        className={`relative flex items-center overflow-hidden rounded-full transition-colors duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--grid-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--grid-bg)] ${dims.track}`}
+        className={`theme-switch relative flex items-center overflow-hidden rounded-full transition-colors duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--grid-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--grid-bg)] ${dims.track}`}
         style={{
           background: 'linear-gradient(135deg, var(--grid-header) 0%, var(--grid-control) 100%)',
           boxShadow: isDark
@@ -95,7 +95,6 @@ export default function CinematicThemeSwitch({
         aria-label={isDark ? 'Switch to the light theme' : 'Switch to the dark theme'}
         aria-checked={isDark}
         role="switch"
-        whileTap={shouldReduceMotion ? undefined : { scale: 0.98 }}
       >
         <div
           aria-hidden
@@ -118,9 +117,10 @@ export default function CinematicThemeSwitch({
           }}
         />
 
-        <motion.div
-          className={`relative z-10 flex items-center justify-center overflow-hidden rounded-full ${dims.thumb}`}
+        <div
+          className={`theme-switch__thumb relative z-10 flex items-center justify-center overflow-hidden rounded-full ${dims.thumb}`}
           style={{
+            transform: `translateX(${isDark ? dims.travel : 0}px)`,
             background: isDark
               ? 'linear-gradient(145deg, #4675bb 0%, #244c89 100%)'
               : 'linear-gradient(145deg, var(--grid-surface) 0%, var(--grid-control-hover) 100%)',
@@ -129,8 +129,6 @@ export default function CinematicThemeSwitch({
               : '0 4px 10px rgba(15,23,42,0.18), inset 0 1px 2px rgba(255,255,255,1)',
             border: isDark ? '1px solid rgba(112,152,241,0.35)' : '1px solid rgba(255,255,255,0.95)',
           }}
-          animate={{ x: isDark ? dims.travel : 0 }}
-          transition={shouldReduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 310, damping: 21 }}
         >
           <div
             aria-hidden
@@ -142,19 +140,19 @@ export default function CinematicThemeSwitch({
           />
 
           {isAnimating && particles.map((particle) => (
-            <motion.div key={particle.id} className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <motion.div
-                className="absolute rounded-full"
+            <div key={particle.id} className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div
+                className="theme-switch__particle absolute rounded-full"
                 style={{
                   width: 10,
                   height: 10,
                   background: 'radial-gradient(circle, var(--grid-primary-soft) 0%, transparent 70%)',
-                }}
-                initial={{ scale: 0, opacity: 0 }}
-                animate={{ scale: isDark ? 5.5 : 7, opacity: [0, 1, 0] }}
-                transition={{ duration: particle.duration, delay: particle.delay, ease: 'easeOut' }}
+                  '--particle-scale': isDark ? 5.5 : 7,
+                  animationDuration: `${particle.duration}s`,
+                  animationDelay: `${particle.delay}s`,
+                } as CSSProperties}
               />
-            </motion.div>
+            </div>
           ))}
 
           {isDark ? (
@@ -162,8 +160,8 @@ export default function CinematicThemeSwitch({
           ) : (
             <Sun className={`${dims.icon} relative z-10 text-[var(--grid-warning-text)]`} />
           )}
-        </motion.div>
-      </motion.button>
+        </div>
+      </button>
     </div>
   );
 }

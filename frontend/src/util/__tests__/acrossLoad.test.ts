@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { committedPrefix, mergeCells, type AcrossIndex, type CellsPayload } from '../acrossLoad.ts';
+import { committedPrefix, mergeCells, scenarioGroups, type AcrossIndex, type CellsPayload } from '../acrossLoad.ts';
 import type { AcrossCell } from '../acrossScenarios.ts';
 
 const scenario = (id: string, lodf = false) => ({ id, name: id, outages: [], outaged_element_ids: [], has_lodf: lodf });
@@ -37,4 +37,13 @@ test('a failed scenario is skipped without blocking the following ones', () => {
   const prefix = committedPrefix(index, { a: part('a', 80, 60), b: null, c: part('c', 70, 65) });
   assert.deepEqual(Object.keys(prefix), ['a', 'c']);
   assert.equal(mergeCells(index, prefix).scenarios.length, 2);
+});
+
+test('scenarios load in growing groups, in index order and each once', () => {
+  const ids = Array.from({ length: 70 }, (_, i) => `s${i}`);
+  const groups = scenarioGroups(ids);
+  assert.deepEqual(groups.map((g) => g.length), [3, 6, 12, 24, 24, 1]);
+  assert.deepEqual(groups.flat(), ids);
+  assert.deepEqual(scenarioGroups([]), []);
+  assert.deepEqual(scenarioGroups(['a', 'b']), [['a', 'b']]);
 });

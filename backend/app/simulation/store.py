@@ -9,6 +9,8 @@ from pathlib import Path
 
 from app.analysis import schema
 from app.analysis.series import insert_values
+from app.simulation import values
+from app.simulation.gridlens_store import TABLES as GRIDLENS_TABLES
 
 
 def now():
@@ -39,10 +41,11 @@ PF_TABLES = """
         status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT,
         finished_at TEXT, message TEXT NOT NULL DEFAULT ''
     );
+    -- analysis_id: the gl_assessments row the scenario belongs to; NULL for scenarios saved without one.
     CREATE TABLE IF NOT EXISTS pf_scenarios (
         id TEXT PRIMARY KEY REFERENCES pf_jobs(id), name TEXT NOT NULL,
         project TEXT NOT NULL, study_case TEXT NOT NULL,
-        outages TEXT NOT NULL, created_at TEXT NOT NULL
+        outages TEXT NOT NULL, created_at TEXT NOT NULL, analysis_id TEXT
     );
     CREATE TABLE IF NOT EXISTS pf_scenario_runs (
         scenario_id TEXT NOT NULL REFERENCES pf_scenarios(id),
@@ -58,6 +61,27 @@ PF_TABLES = """
         lower REAL, upper REAL, PRIMARY KEY(run_id,element_id,metric_id),
         FOREIGN KEY(run_id,element_id) REFERENCES analysis_elements(run_id,id)
     );
+    -- Per QDS run and time: highest branch loading and how many branches exceed their limit, lowest and highest
+    -- node voltage and how many nodes leave their band (limits of pf_element_limits). Written by the bridge
+    -- while it imports the run, so the time-point view never scans every series.
+    CREATE TABLE IF NOT EXISTS pf_run_times (
+        run_id TEXT NOT NULL REFERENCES analysis_runs(id), t INTEGER NOT NULL,
+        loading_max REAL, loading_over INTEGER NOT NULL, voltage_min REAL, voltage_max REAL,
+        voltage_outside INTEGER NOT NULL, PRIMARY KEY(run_id, t)
+    ) WITHOUT ROWID;
+    -- Per QDS run, area and time: summed active power of the loads, generators and external grids of the area
+    -- (NULL: the area has no such element recorded) and how many of its series had no valid value at that time.
+    CREATE TABLE IF NOT EXISTS pf_area_times (
+        run_id TEXT NOT NULL REFERENCES analysis_runs(id), area TEXT NOT NULL, t INTEGER NOT NULL,
+        load REAL, generation REAL, external REAL, missing INTEGER NOT NULL,
+        PRIMARY KEY(run_id, area, t)
+    ) WITHOUT ROWID;
+    -- Per QDS run, pair of areas (from_area < to_area) and time: summed active power of the branches between them,
+    -- positive from from_area to to_area.
+    CREATE TABLE IF NOT EXISTS pf_area_flows (
+        run_id TEXT NOT NULL REFERENCES analysis_runs(id), from_area TEXT NOT NULL, to_area TEXT NOT NULL,
+        t INTEGER NOT NULL, p REAL NOT NULL, PRIMARY KEY(run_id, from_area, to_area, t)
+    ) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS pf_lodf (
         outage_key TEXT NOT NULL, element_id TEXT NOT NULL,
         lodf REAL NOT NULL, p_pre REAL, p_post REAL, computed_at TEXT NOT NULL,
@@ -98,7 +122,7 @@ GRID_SQL = (
 VIEWS = """
     DROP VIEW IF EXISTS v_scenarios;
     CREATE VIEW v_scenarios AS
-    SELECT s.id AS scenario_id, s.name AS scenario, s.project, s.study_case, s.created_at,
+    SELECT s.id AS scenario_id, s.name AS scenario, s.analysis_id, s.project, s.study_case, s.created_at,
            s.outages AS outage_ids,
            (SELECT r.run_id FROM pf_scenario_runs r WHERE r.scenario_id = s.id AND r.kind = 'REF') AS ref_run_id,
            (SELECT r.run_id FROM pf_scenario_runs r WHERE r.scenario_id = s.id AND r.kind = 'OUTAGE') AS outage_run_id
@@ -180,7 +204,47 @@ VIEWS = """
 
 # PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
 # database is brought up to date once when it is next opened.
-LAYOUT_VERSION = 7
+LAYOUT_VERSION = 14
+
+# Columns added to tables of earlier layouts: (table, column, declaration). New files get them from the CREATE.
+ADDED_COLUMNS = (
+    ("pf_scenarios", "analysis_id", "TEXT"),
+    ("gl_assessments", "status", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("gl_assessments", "source_system", "TEXT NOT NULL DEFAULT 'PowerFactory'"),
+    ("gl_assessments", "calculation_types", "TEXT NOT NULL DEFAULT '[]'"),
+    ("gl_assessments", "project_path", "TEXT NOT NULL DEFAULT ''"),
+    ("gl_assessments", "study_case_path", "TEXT NOT NULL DEFAULT ''"),
+    ("gl_assessments", "created_by", "TEXT NOT NULL DEFAULT ''"),
+    ("gl_assessments", "period_start", "INTEGER"),
+    ("gl_assessments", "period_end", "INTEGER"),
+    ("gl_assessments", "result_schema_version", "INTEGER NOT NULL DEFAULT 1"),
+)
+# What an earlier layout can tell about its imports: the analysis of each scenario and the facts of each analysis,
+# taken from the provenance every imported scenario carries. Runs once, when a file is brought to this layout.
+BACKFILL = """
+    UPDATE pf_scenarios SET analysis_id = (
+        SELECT json_extract(p.payload, '$.assessment_id') FROM pf_scenario_provenance p WHERE p.scenario_id = pf_scenarios.id
+    ) WHERE analysis_id IS NULL;
+    UPDATE gl_assessments SET
+        calculation_types = (SELECT json_group_array(kind) FROM (SELECT DISTINCT kind FROM gl_results r
+                             WHERE r.assessment_id = gl_assessments.id ORDER BY kind)),
+        project_path = COALESCE((SELECT json_extract(p.payload, '$.project_path') FROM pf_scenarios s
+                                 JOIN pf_scenario_provenance p ON p.scenario_id = s.id
+                                 WHERE s.analysis_id = gl_assessments.id LIMIT 1), project_path),
+        study_case_path = COALESCE((SELECT json_extract(p.payload, '$.study_case_path') FROM pf_scenarios s
+                                    JOIN pf_scenario_provenance p ON p.scenario_id = s.id
+                                    WHERE s.analysis_id = gl_assessments.id LIMIT 1), study_case_path),
+        period_start = (SELECT json_extract(p.payload, '$.run_period[0]') FROM pf_scenarios s
+                        JOIN pf_scenario_provenance p ON p.scenario_id = s.id WHERE s.analysis_id = gl_assessments.id LIMIT 1),
+        period_end = (SELECT json_extract(p.payload, '$.run_period[1]') FROM pf_scenarios s
+                      JOIN pf_scenario_provenance p ON p.scenario_id = s.id WHERE s.analysis_id = gl_assessments.id LIMIT 1),
+        status = CASE WHEN EXISTS (SELECT 1 FROM gl_cases c WHERE c.assessment_id = gl_assessments.id
+                                   AND c.status = 'IMPORT FAILED') THEN 'failed' ELSE 'complete' END
+    WHERE status = 'unknown';
+    CREATE INDEX IF NOT EXISTS pf_scenarios_analysis ON pf_scenarios(analysis_id, created_at);
+    -- Elements by name within a run: the equipment list in name order and the switched-off equipment of a scenario.
+    CREATE INDEX IF NOT EXISTS analysis_elements_name ON analysis_elements(run_id, name);
+"""
 
 
 class ScenarioStore:
@@ -204,10 +268,14 @@ class ScenarioStore:
             self._set_up()
 
     def _set_up(self):
-        """Create what is missing; runs once per database file, not on every request."""
+        """Create what is missing and bring an earlier layout up to date; runs once per database file."""
         self.db.execute("PRAGMA journal_mode=WAL")
         schema.apply(self.db)
-        self.db.executescript(PF_TABLES + VIEWS)
+        self.db.executescript(PF_TABLES + values.TABLE + GRIDLENS_TABLES)
+        for table, column, declaration in ADDED_COLUMNS:
+            if column not in {row[1] for row in self.db.execute("PRAGMA table_info(" + table + ")")}:
+                self.db.execute("ALTER TABLE {} ADD COLUMN {} {}".format(table, column, declaration))
+        self.db.executescript(BACKFILL + VIEWS)
         schema.mark_set_up(self.db, LAYOUT_VERSION)
 
     def close(self):
@@ -359,10 +427,17 @@ class ScenarioStore:
     def discard_unlinked_runs(self):
         """Delete every run that no scenario links to; returns how many (inside the caller's transaction or its own)."""
         ids = [r[0] for r in self.db.execute(
-            "SELECT id FROM analysis_runs WHERE id NOT IN (SELECT run_id FROM pf_scenario_runs)")]
+            "SELECT id FROM analysis_runs WHERE id NOT IN (SELECT run_id FROM pf_scenario_runs) "
+            "AND id NOT IN (SELECT analysis_run_id FROM gl_results WHERE analysis_run_id IS NOT NULL)")]
         for run_id in ids:
             self.db.execute("DELETE FROM analysis_values WHERE series_id IN (SELECT id FROM analysis_series WHERE run_id=?)", (run_id,))
-            for table in ("analysis_series", "pf_element_limits", "analysis_metrics", "analysis_elements", "pf_run_notes"):
+            stored = self.db.execute("SELECT path FROM pf_run_values WHERE run_id=?", (run_id,)).fetchone()
+            if stored:
+                # No scenario links to the run any more; its file goes with it (also if this transaction rolls back,
+                # the run stays unlinked and is discarded next time).
+                values.remove(self.path, stored[0])
+            for table in ("analysis_series", "pf_element_limits", "analysis_metrics", "analysis_elements", "pf_run_notes",
+                          "pf_run_times", "pf_area_times", "pf_area_flows", "pf_run_values"):
                 self.db.execute("DELETE FROM " + table + " WHERE run_id=?", (run_id,))
             self.db.execute("DELETE FROM analysis_runs WHERE id=?", (run_id,))
         return len(ids)
@@ -376,7 +451,7 @@ class ScenarioStore:
         """
         with self.db:
             self.db.execute(
-                "INSERT INTO pf_scenarios VALUES(?,?,?,?,?,?)",
+                "INSERT INTO pf_scenarios(id,name,project,study_case,outages,created_at,analysis_id) VALUES(?,?,?,?,?,?,?)",
                 (
                     job["id"],
                     job["payload"]["name"],
@@ -384,6 +459,7 @@ class ScenarioStore:
                     catalog["study_case"],
                     json.dumps(job["payload"]["outage_ids"]),
                     now(),
+                    catalog.get("assessment_id"),
                 ),
             )
             self.db.execute(

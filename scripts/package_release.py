@@ -32,7 +32,6 @@ INCLUDE = [
     "stop-dashboard.cmd",
     "docs",
     "README.md",
-    "BIG_PICTURE.md",
     "outage-assessment.config.example.json",
 ]
 SKIP_PARTS = {"__pycache__", ".pytest_cache", ".DS_Store"}
@@ -76,7 +75,7 @@ def wheelhouse(root=ROOT, out_dir=None):
     target.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [sys.executable, "-m", "pip", "download", "--dest", str(target), "--platform", "win_amd64",
-         "--python-version", "3.12", "--only-binary=:all:", str(root / "backend")],
+         "--python-version", "3.12", "--only-binary=:all:", f"{root / 'backend'}[archive]"],  # incl. pyarrow for the archive
         check=True,
     )
     return target

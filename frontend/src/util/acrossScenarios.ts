@@ -12,6 +12,7 @@ import {
   excessOf,
   type BandId,
 } from '../config/loadingBands.ts';
+import type { Listing } from './acrossLoad.ts';
 
 export interface AcrossCell {
   outaged: boolean;
@@ -30,6 +31,8 @@ export interface AcrossLine {
   type: string;
   /** PowerFactory grid (ElmNet), '' when the element has none; absent from older servers. */
   grid?: string | null;
+  /** Nominal voltage in kV from the analysis' master data; null when not stored. */
+  nominal_kv?: number | null;
   base: number | null;
   cells: Record<string, AcrossCell>;
 }
@@ -49,6 +52,8 @@ export interface AcrossBus {
   class_name: string | null;
   type: string;
   grid?: string | null;
+  /** Nominal voltage in kV from the analysis' master data; null when not stored. */
+  nominal_kv?: number | null;
   /** Unit of the stored voltage results, e.g. 'p.u.' or 'kV'. */
   unit?: string | null;
   /** [lower, upper] as stored with the results; null when none were stored. */
@@ -72,6 +77,16 @@ export interface AcrossScenario {
   has_lodf: boolean;
   /** Why this scenario has no LODF: the load flow has no solution without its equipment, or it cuts off branches. */
   lodf_note?: string | null;
+  /** Worst calculation state of its REF and OUTAGE run: completed, incomplete, not_converged or failed. */
+  status?: string;
+}
+
+export type StatusFilter = 'all' | 'complete' | 'problems';
+
+/** The scenarios a calculation-status filter keeps (a scenario of an older server without a status counts as complete). */
+export function byStatus<T extends { status?: string }>(scenarios: readonly T[], filter: StatusFilter): T[] {
+  if (filter === 'all') return [...scenarios];
+  return scenarios.filter((s) => ((s.status ?? 'completed') === 'completed') === (filter === 'complete'));
 }
 
 export interface AcrossData {
@@ -85,6 +100,8 @@ export interface AcrossData {
   /** [start, end] of the simulation period in epoch seconds, when known. */
   period?: [number, number] | null;
   limits: number[];
+  /** A large analysis: only the relevant elements are listed (null: every element). */
+  listing?: Listing | null;
 }
 
 export type PatternId =
@@ -434,6 +451,12 @@ export const SUMMARY_IDS = {
   voltage: 'across-voltage',
   table: 'across-table',
   details: 'across-details',
+  timepoint: 'across-timepoint',
+  asset: 'across-asset',
+  /** Load, generation and transit per area (needs active power recorded in PowerFactory). */
+  areas: 'across-areas',
+  /** n-1 overloads as a Gantt chart; outside the summary itself, shown when the database has n-1 sweeps. */
+  n1: 'across-n1-gantt',
 } as const;
 
 export interface SummarySection {
@@ -454,6 +477,9 @@ export function summarySections(
     { id: SUMMARY_IDS.overview, label: 'Assessment', count: a.scenarios.length },
     { id: SUMMARY_IDS.profile, label: 'Profile' },
     { id: SUMMARY_IDS.details, label: 'Scenario details' },
+    { id: SUMMARY_IDS.timepoint, label: 'Time point' },
+    { id: SUMMARY_IDS.asset, label: 'Asset' },
+    { id: SUMMARY_IDS.areas, label: 'Areas' },
     ...(busCount > 0 ? [{ id: SUMMARY_IDS.voltage, label: 'Voltage', count: busCount }] : []),
     { id: SUMMARY_IDS.heatmap, label: 'Matrix', count: a.lines.length },
     { id: SUMMARY_IDS.charts, label: 'Comparison', count: 4 },

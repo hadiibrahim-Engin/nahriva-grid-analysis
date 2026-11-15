@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import * as echarts from 'echarts/core';
 import { LineChart } from 'echarts/charts';
 import { GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent } from 'echarts/components';
@@ -25,7 +25,7 @@ interface Profile {
  * Loading over the simulation period of the most critical in-service equipment of one
  * scenario: when is it critical, for how long, and how does it differ from the reference run.
  */
-export default function ScenarioProfile({ scenarioId, label, refreshKey }: { scenarioId: string; label: string; refreshKey: number }) {
+export default memo(function ScenarioProfile({ scenarioId, label, refreshKey }: { scenarioId: string; label: string; refreshKey: number }) {
   const theme = useChartTheme();
   const colors = useMemo(() => readAcrossColors(theme.isLight), [theme.isLight]);
   const { grid } = useGridFilter();
@@ -119,4 +119,4 @@ export default function ScenarioProfile({ scenarioId, label, refreshKey }: { sce
       {legendOption && <ReactECharts echarts={echarts} option={legendOption} notMerge style={{ height: 330 }} />}
     </SectionCard>
   );
-}
+});

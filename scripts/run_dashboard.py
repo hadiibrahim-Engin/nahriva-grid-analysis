@@ -14,8 +14,14 @@ def main():
     args = parser.parse_args()
 
     from app.analysis.bootstrap import close_repositories, select_database
+    from app.analysis.schema import OutdatedDatabaseError
 
-    database = Path(select_database(str(args.db.expanduser().resolve())))
+    path = args.db.expanduser().resolve()
+    try:
+        database = Path(select_database(str(path)))
+    except (ValueError, OutdatedDatabaseError) as exc:
+        # A wrong or unusable file is the user's input, not a fault of the program: one line, no traceback.
+        parser.error(f"{exc} ({path})")
     close_repositories()
     dashboard = launch_dashboard(database, port=args.port, open_browser=not args.no_browser)
     print("Outage Assessment", flush=True)

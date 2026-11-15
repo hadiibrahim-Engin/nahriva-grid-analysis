@@ -1,7 +1,12 @@
 # Outage Assessment
 
-Dashboard for assessing planned outages calculated in PowerFactory. A single PowerFactory script
-calculates the outage scenarios and stores REF and OUTAGE results in a SQLite file; the dashboard
+The PowerFactory script runs the Outage Assessment of GridLensAssessment (`main.py` 8.1): its case manager
+selects cases and settings, its native QDS/n-1/(n-1)' pipeline calculates and keeps `ElmRes` results. Instead
+of a PDF report the raw results are imported into a local database and the dashboard opens as soon as the first
+case is stored. Workflow, result contract and widget API: [docs/GRIDLENS.md](docs/GRIDLENS.md).
+
+Dashboard for exploring planned outages calculated in PowerFactory. The PowerFactory script
+opens GridLens, calculates the chosen scenarios and stores complete native results in a SQLite file; the dashboard
 reads that file and shows, per scenario, whether the outage is permissible, conditionally
 permissible or not permissible, with the reasons.
 
@@ -26,12 +31,23 @@ One script sets everything up (`setup.cmd`), one script runs in PowerFactory (`p
    C:\OutageAssessment\powerfactory\start_assessment.py
    ```
 
-   Activate the project and study case and execute it. The script checks folder and free space,
-   calculates the scenarios one after another and saves each one. **When the calculation is finished it
-   starts the dashboard and opens it in your browser** (default `http://127.0.0.1:8765`).
+   Activate the project and study case and execute it. Define the cases and assessments in the case manager.
+   The script calculates the selected runs and reads the kept native result objects. **The browser opens as soon
+   as the first case is stored** (default `http://127.0.0.1:8765`); the other cases follow by themselves.
 
 Build a release package for other PCs with `.\setup.ps1 -Package`
 (`release\outage-assessment-<version>.zip`). More options: `Get-Help .\setup.ps1 -Detailed`.
+
+## Try it on this computer
+
+```bash
+scripts/try_example.sh
+```
+
+Builds the IEEE 39-bus transmission system as a synthetic run through the real import path (with its network map
+in the Figma export format) and opens the dashboard; `--fresh` builds it again. Map: [docs/MAP.md](docs/MAP.md).
+For a test on a Windows PC before the rollout, `backend/.venv/bin/python scripts/package_example.py` builds
+`release/ieee39-example.zip` (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), "Test before the rollout").
 
 ## Quick start (macOS, development)
 
@@ -65,19 +81,10 @@ Definitions, criteria, LODF, API and customisation: [docs/ASSESSMENT.md](docs/AS
 
 ## Scenarios
 
-`SCENARIOS = None` in `powerfactory/start_assessment.py` calculates every eligible Planned Outage in
-the active QDS period, each under its own name. Alternatively define named combinations:
-
-```python
-SCENARIOS = [
-    {"name": "Outage North", "outages": ["Maintenance Line North"]},
-    {"name": "North with transformer", "outages": ["Maintenance Line North", "Maintenance Transformer North"]},
-]
-```
-
-Use full PowerFactory object paths when names are ambiguous. Period, step size, profiles and result
-variables come from the active `ComStatsim`. The script restores the native state (verified) and
-creates no `IntScenario` objects. Details: [docs/POWERFACTORY.md](docs/POWERFACTORY.md).
+Define cases, fixed background outages, network scope and n-1 options in the **case manager** that opens when
+the script runs. Its Results choice loads a kept run without recalculation. Period, step size, profiles and
+result variables come from the active `ComStatsim`; the script restores every PowerFactory setting it changes
+(verified) and creates no `IntScenario` objects. Details: [docs/GRIDLENS.md](docs/GRIDLENS.md).
 
 ## Settings
 
@@ -98,8 +105,24 @@ backend/.venv/bin/python scripts/smoke_production.py
 (`setup.ps1 -Package`), sets it up on a clean folder and publishes it as the artifact `outage-assessment-release`.
 
 Backend tests use a synthetic results database (`backend/tests/qds_fixture.py`) and a native API
-replacement for PowerFactory. A real PowerFactory 2026 run on Windows is still required; the mapping
-of ElmRes timestamps to outage windows is part of that acceptance.
+replacement for PowerFactory. To try the dashboard with a large amount of data without PowerFactory,
+`backend/tests/large_dataset.py` runs the real path (main.py runtime, restoration, case-by-case import, n-1
+summaries) against synthetic PowerFactory objects: by default 330 branches and 330 busbars over a year, REF and 6
+planning cases, n-1 and (n-1)' with 100 contingencies (about 28 million QDS values, 95 million n-1 cells, 1 GB,
+one minute). It is development only and not part of the release ZIP.
 
-More: [Big picture with diagrams](BIG_PICTURE.md) · [Deployment](docs/DEPLOYMENT.md) ·
-[PowerFactory details](docs/POWERFACTORY.md) · [Troubleshooting](backend/DEBUGGING.md).
+```bash
+cd backend
+.venv/bin/python -m tests.large_dataset          # options: --branches --cases --contingencies --window --spacing --db
+# 100,000 branches without n-1 over a few days (2 GB, about 2.5 min):
+.venv/bin/python -m tests.large_dataset --branches 100000 --cases 2 --contingencies 0 --window 24 --spacing 48 --db data/big.sqlite3
+.venv/bin/python ../scripts/run_dashboard.py --db data/synthetic-large.sqlite3
+```
+
+A real PowerFactory 2026 run on Windows is still required; the mapping of ElmRes timestamps to outage windows
+is part of that acceptance.
+
+More: [PowerFactory workflow and data](docs/GRIDLENS.md) · [Database](docs/DATABASE.md) ·
+[Deployment](docs/DEPLOYMENT.md) · [Storage and Parquet archive](docs/STORAGE.md) ·
+[Areas: load, generation, transit](docs/AREAS.md) ·
+[Performance review and restore benchmarks](docs/PERFORMANCE.md) · [Troubleshooting](backend/DEBUGGING.md).

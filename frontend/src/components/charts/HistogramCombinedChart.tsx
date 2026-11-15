@@ -33,6 +33,7 @@ import {
   yAxisNameStyle,
 } from './format';
 import { useChartTheme } from '../../hooks/useChartTheme';
+import { isFiniteValue } from '../../util/values';
 
 echarts.use([BarChart, GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, CanvasRenderer]);
 
@@ -53,7 +54,7 @@ export default function HistogramCombinedChart({
   const option = useMemo(() => {
     // A single shared bin range across every signal so bars align per bin.
     const allValues = seriesList.flatMap(({ data }) =>
-      data.data.map((p) => p.value).filter((v) => Number.isFinite(v)),
+      data.data.map((p) => p.value).filter(isFiniteValue),
     );
     if (allValues.length === 0) return null;
 
@@ -72,7 +73,7 @@ export default function HistogramCombinedChart({
     const barSeries = seriesList.map(({ label, data }, i) => {
       const counts = Array.from({ length: binCount }, () => 0);
       for (const point of data.data) {
-        if (!Number.isFinite(point.value)) continue;
+        if (!isFiniteValue(point.value)) continue;
         const index = Math.min(binCount - 1, Math.max(0, Math.floor((point.value - min) / step)));
         counts[index] += 1;
       }

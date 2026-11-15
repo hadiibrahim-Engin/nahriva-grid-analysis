@@ -39,9 +39,11 @@ def test_original_dashboard_contract_reads_the_simulation_database(api):
     assert [p["value"] for p in first["data"]] == [80, 100]
     assert first["meta"]["source"] == "simulation" and first["next_cursor"]
     second = client.get(url + "&cursor=" + quote(first["next_cursor"], safe="")).json()
-    assert [p["value"] for p in second["data"]] == [120]
+    # The last time has no valid value: it stays in the series as a gap with its state, never as 0.
+    assert [p["value"] for p in second["data"]] == [120, None]
+    assert second["data"][1]["state"] == "invalid_or_missing" and second["meta"]["missing_points"] == 1
     mean = client.get(
-        f"/api/simulation/timeseries/aggregate/{identifier}/L?start=2026-09-21T00:00:00&end=2026-09-21T03:00:00&bucket=86400"
+        f"/api/simulation/timeseries/aggregate/{identifier}/L?start=2026-09-21T00:00:00&end=2026-09-21T03:00:00&bucket=86400&aggregation_method=AVG"
     ).json()
     assert (
         mean["data"][0]["value"] == 100 and mean["meta"]["aggregation_method"] == "AVG"
@@ -69,13 +71,12 @@ def test_unfiltered_series_returns_the_entire_stored_simulation(api):
     ]
     response = client.get(f"/api/simulation/timeseries/raw/{identifier}/L")
     assert response.status_code == 200
-    assert [p["value"] for p in response.json()["data"]] == [80, 100, 120]
-    assert (
-        client.get(
-            f"/api/simulation/timeseries/aggregate/{identifier}/L?bucket=86400"
-        ).status_code
-        == 200
-    )
+    assert [p["value"] for p in response.json()["data"]] == [80, 100, 120, None]
+    daily = client.get(f"/api/simulation/timeseries/aggregate/{identifier}/L?bucket=86400")
+    assert daily.status_code == 200 and daily.json()["meta"]["aggregation_method"] == "MINMAX"
+    # MINMAX keeps the stored samples with the lowest and the highest value, at their own times.
+    assert [p["value"] for p in daily.json()["data"]] == [80, 120]
+    assert daily.json()["data"][0]["timestamp"] == response.json()["data"][0]["timestamp"]
     assert client.get("/api/simulation/auth/login").status_code == 404
 
 

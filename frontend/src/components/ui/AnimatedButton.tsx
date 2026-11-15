@@ -1,6 +1,6 @@
 /**
- * AnimatedButton – a Framer Motion–powered button wrapper that adds:
- *  • spring-based press (scale-down on tap/click)
+ * AnimatedButton – a button wrapper that adds (CSS transitions in index.css, .animated-button):
+ *  • springy press (scale-down on tap/click)
  *  • smooth hover glow / lift
  *  • ripple burst on pointer-down
  *  • disabled state handled gracefully (no motion when disabled)
@@ -9,8 +9,7 @@
  *   <AnimatedButton variant="primary" onClick={…}>Add</AnimatedButton>
  *   <AnimatedButton variant="ghost" size="sm" icon={<PdfIcon />}>PDF</AnimatedButton>
  */
-import { useRef, useState } from 'react';
-import { motion, useSpring, useTransform, type HTMLMotionProps } from 'framer-motion';
+import { useRef, useState, type ButtonHTMLAttributes, type CSSProperties } from 'react';
 
 // -- types --------------------------------------------------------------------
 
@@ -25,7 +24,7 @@ export type ButtonVariant =
 
 export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg';
 
-interface AnimatedButtonProps extends Omit<HTMLMotionProps<'button'>, 'children'> {
+interface AnimatedButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
   children: React.ReactNode;
   variant?: ButtonVariant;
   size?: ButtonSize;
@@ -92,13 +91,9 @@ export default function AnimatedButton({
   const rippleCounter = useRef(0);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  // spring for subtle vertical lift on hover
-  const y = useSpring(0, { stiffness: 380, damping: 28, mass: 0.6 });
-  const boxShadow = useTransform(y, [-2, 0], [VARIANT_GLOW[variant], 'none']);
-
   function handlePointerDown(e: React.PointerEvent<HTMLButtonElement>) {
     if (disabled || loading) return;
-    onPointerDown?.(e as never);
+    onPointerDown?.(e);
     if (!buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
     const id = ++rippleCounter.current;
@@ -109,24 +104,17 @@ export default function AnimatedButton({
   const isInert = disabled || loading;
 
   return (
-    <motion.button
+    <button
       ref={buttonRef}
       type="button"
       disabled={isInert}
       onPointerDown={handlePointerDown}
-      onClick={isInert ? undefined : onClick as never}
-      // hover / press spring
-      onHoverStart={() => !isInert && y.set(-2)}
-      onHoverEnd={() => y.set(0)}
-      // scale spring on press
-      whileTap={isInert ? {} : { scale: 0.94 }}
-      animate={isInert ? { scale: 1 } : undefined}
-      transition={{ type: 'spring', stiffness: 420, damping: 22 }}
-      style={{ y, boxShadow }}
+      onClick={isInert ? undefined : onClick}
+      // hover lift + glow and press scale come from .animated-button in index.css
+      style={{ '--btn-glow': VARIANT_GLOW[variant] } as CSSProperties}
       className={[
-        'relative inline-flex items-center justify-center font-semibold',
+        'animated-button relative inline-flex items-center justify-center font-semibold',
         'overflow-hidden select-none cursor-pointer',
-        'transition-colors duration-150',
         'disabled:cursor-not-allowed disabled:opacity-40',
         'dashboard-glass-button',
         `dashboard-glass-button--${variant}`,
@@ -134,7 +122,7 @@ export default function AnimatedButton({
         SIZE_CLASS[size],
         className,
       ].join(' ')}
-      {...(rest as object)}
+      {...rest}
     >
       {/* ripple layer */}
       {ripples.map((r) => (
@@ -171,6 +159,6 @@ export default function AnimatedButton({
       {iconRight && !loading && (
         <span aria-hidden className="shrink-0 leading-none">{iconRight}</span>
       )}
-    </motion.button>
+    </button>
   );
 }

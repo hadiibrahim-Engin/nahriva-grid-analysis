@@ -42,12 +42,12 @@ export interface ChartTheme {
 
 /** Per-mode palettes. Same hues — different saturations for contrast. */
 const PALETTE_DARK = [
-  '#78a6ef', '#58bfc6', '#b99ed6', '#85bd99',
-  '#f5ad70', '#e692a8', '#d9c17d', '#9aaabc',
+  '#6fa4ef', '#64b7c2', '#9b8dd0', '#66bb94',
+  '#e0aa54', '#d57c9b', '#8aa1b2', '#c08b68',
 ];
 const PALETTE_LIGHT = [
-  '#c65722', '#277d91', '#426ed0', '#398265',
-  '#9464ac', '#9a6d46', '#c36d80', '#677382',
+  '#2e6db6', '#287f8d', '#6b58a7', '#2f8062',
+  '#a96c18', '#a84f72', '#526f81', '#8d6045',
 ];
 
 function cssVar(name: string, fallback: string): string {
@@ -74,14 +74,14 @@ function buildTheme(): ChartTheme {
     mutedText: cssVar('--grid-muted', isLight ? '#64748b' : '#9aa7b8'),
     tooltipBg: cssVar('--grid-surface-strong', isLight ? '#eef2f7' : '#18212d'),
     tooltipBorder: cssVar('--grid-border', isLight ? '#d7dfea' : '#334155'),
-    primary: cssVar('--grid-primary', isLight ? '#bc4317' : '#78a6ef'),
-    info: cssVar('--grid-info', isLight ? '#277d91' : '#58bfc6'),
-    success: cssVar('--grid-success', isLight ? '#347551' : '#85bd99'),
-    warning: cssVar('--grid-warning', isLight ? '#bd8d32' : '#d8ae55'),
-    danger: cssVar('--grid-danger', isLight ? '#b44545' : '#f08c88'),
+    primary: cssVar('--grid-primary', isLight ? '#2e6db6' : '#6fa4ef'),
+    info: cssVar('--grid-info', isLight ? '#287f8d' : '#64b7c2'),
+    success: cssVar('--grid-success', isLight ? '#2f8062' : '#66bb94'),
+    warning: cssVar('--grid-warning', isLight ? '#a96c18' : '#e0aa54'),
+    danger: cssVar('--grid-danger', isLight ? '#b94747' : '#ea7774'),
     // Translucent variant for glows / area fills. Keep alpha low so it
     // doesn't dominate against either background.
-    primarySoft: cssVar('--grid-primary-soft', isLight ? 'rgba(188, 67, 23, 0.1)' : 'rgba(120, 166, 239, 0.12)'),
+    primarySoft: cssVar('--grid-primary-soft', isLight ? 'rgba(46, 109, 182, 0.1)' : 'rgba(111, 164, 239, 0.13)'),
     isLight,
   };
 }

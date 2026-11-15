@@ -42,14 +42,45 @@ flowchart LR
    PowerFactory script starts the dashboard itself, and
    `backend\.venv\Scripts\python.exe scripts\serve.py` starts it by hand.
 4. **In PowerFactory** create an external ComPython script that points to
-   `C:\OutageAssessment\powerfactory\start_assessment.py`. Set `SCENARIOS` at the top if needed
-   (default: one scenario per Planned Outage in the QDS period).
+   `C:\OutageAssessment\powerfactory\start_assessment.py`. Cases are defined in the case manager that
+   opens when it runs.
+
+## Test before the rollout
+
+Before installing on further PCs, test the release package on one Windows PC with the IEEE 39-bus example. It
+needs no PowerFactory and leaves the installation untouched.
+
+1. On the development machine: `backend/.venv/bin/python scripts/package_example.py` builds
+   `release/ieee39-example.zip` (about 40 s; the example is built fresh through the real import path: two analyses,
+   base case and 6 % more load, 6 planned outages each, with the network map in the Figma export format).
+2. On the Windows PC: set up the release package as usual (`setup.cmd`), unpack the example ZIP into the installed
+   folder (`ieee39-example` next to `setup.cmd`) and double-click `ieee39-example\start-example.cmd`. It opens the
+   example on `http://127.0.0.1:8770` (this PC only, no firewall rule; the installation keeps 8765). Closing the
+   window stops it.
+3. Work through the checklist in `ieee39-example\README.txt`:
+
+| Check | Expected |
+|---|---|
+| Dashboard opens | Analysis field: two analyses with 6 cases each, status complete |
+| Assessment, Matrix | in both analyses 5 of 6 maintenances overload neighbouring branches (Trf 12 - 13 does not) |
+| Network at a time, scenario "Maintenance Line 02 - 03" | critical time inside the outage window |
+| Network map button | map appears: Line 02 - 03 grey dashed, Line 26 - 27 red (about 137 %); hover shows the value; click opens Asset; wheel zooms, drag moves; hidden again after a second click, also after reloading |
+| n-1 Gantt | branches with loading before and after the contingency and the triggering outage |
+| Compare | both analyses ticked: every check ok, 6 scenario pairs, 44 of 46 branches higher in B |
+| Areas | Area East, North and West; North imports, East exports; flow graph with arrows from East and West into North |
+| Time range, calculation status | filters change the views |
+| Archive (optional, pyarrow) | `scripts\export_parquet.py --db ieee39-example\ieee39.sqlite3 --out ieee39-example\archive` ends with "Archive written and verified" |
+| Close the window | the example stops; the installation's dashboard is untouched |
+
+Then delete the folder `ieee39-example`. What this test does not cover: a real PowerFactory run on that PC
+(start `powerfactory\start_assessment.py` from PowerFactory once, see below).
 
 ## Daily use
 
-- **Calculate:** activate project and study case, run the script. It checks folder and free space, creates the
-  database, **starts the dashboard right away** (or reuses a running one) and opens `http://127.0.0.1:8765`, then
-  calculates the scenarios one after another and saves each one at once.
+- **Calculate:** activate project and study case, run the script. It checks folder and free space, opens the
+  database, **starts the dashboard server right away** (or reuses a running one) and opens the case manager.
+  After the calculation it stores the cases one after another and opens `http://127.0.0.1:8765` as soon as the
+  first one is stored.
 - **View while it calculates:** the dashboard reads while the script writes (SQLite WAL). A banner at the top of
   the Outage Management page names the current step and scenario with a progress bar; every finished scenario
   appears within a few seconds, without reloading. When the script fails or is stopped, the banner says so and the
@@ -85,8 +116,9 @@ subnet. The server then runs read-only (see "Security"). Never forward the port 
 | Check status | `Invoke-RestMethod http://127.0.0.1:8765/api/health/ready` |
 | Restart the server | `Stop-ScheduledTask OutageAssessmentDashboard; Start-ScheduledTask OutageAssessmentDashboard` |
 | Logs | next to the database: `<name>.server.log` (autostart) and `<name>.dashboard.log` (started by the script), rotated at 5 MB |
-| Backup | copying the database while the server runs is not safe (WAL). Better `sqlite3 results.sqlite3 ".backup backup.sqlite3"` or stop the server briefly |
+| Backup | copying the database while the server runs is not safe (WAL). Better `sqlite3 results.sqlite3 ".backup backup.sqlite3"` or stop the server briefly; **also copy the folder `results.values`** (the raw values, read-only files) as `backup.values` |
 | Read the results elsewhere | read-only views for Excel, Power BI and Python: [DATABASE.md](DATABASE.md) |
+| Archive an analysis | once: `backend\.venv\Scripts\python.exe -m pip install ".\backend[archive]"` (pyarrow; offline from the wheelhouse). Then `backend\.venv\Scripts\python.exe scripts\export_parquet.py --out D:\archive` writes the newest complete analysis as read-only Parquet files with a checksummed manifest; `--verify D:\archive\<id>` checks one later. Reads the database only, safe while the server runs. Details: [STORAGE.md](STORAGE.md) |
 | Update | unpack the new release package over the folder (configuration and database stay), run `setup.ps1` again, restart the task. If the new version reports "written by an earlier version", delete the database with `stop-dashboard.cmd -DeleteDatabase` and calculate again (see [DATABASE.md](DATABASE.md)) |
 | Stop the dashboard, release the database | double-click `stop-dashboard.cmd`: stops the autostart task, a Windows service of the same name and every server process of this folder, then checks that the database is free. `-DisableAutostart` keeps the task from starting again at logon; `-DeleteDatabase` deletes the database afterwards (asks first); `-DryRun` only shows what it would stop |
 | Remove | `deploy\windows\uninstall.ps1` (removes the task; the database stays) |
@@ -115,7 +147,5 @@ subnet. The server then runs read-only (see "Security"). Never forward the port 
 
 The flows are verified with tests and real server processes on macOS. On the PowerFactory PC please
 confirm once: the Windows installer (only checked syntactically), that the server started by the
-script survives the PowerFactory process (otherwise use autostart), and the LODF: the script creates the Contingency Analysis
-`Outage Assessment` with one contingency per scenario (and the command *Sensitivities / Distribution Factors* if the
-Study Case has none) through `CreateObject` / `ComOutage.SetObjs`; this is checked only against a fake, never against a
-real PowerFactory (see `docs/ASSESSMENT.md`).
+script survives the PowerFactory process (otherwise use autostart), and the case manager, calculation and
+import of main.py's workflow, checked only against PowerFactory stand-ins (see `docs/GRIDLENS.md`).

@@ -1,15 +1,15 @@
-# Origin of the PowerFactory functions
+# Active GridLens runtime (Outage Assessment 8.1.0)
 
-`gridlens_engine.py` is an unchanged copy of `gridlens-powerfactory/powerfactory/gridlens_report.py`
-from the local working state, including the changes already present there. Base commit:
-`cae2064b0b8b60efaa96e07c617a89585b179d81`.
-SHA-256 of both files when taken over:
-`23797cd121b5b80ba01be23e16d52a93b608e314422f7bd5cd1e7a1379c3cb25`.
+`gridlens_runtime.py` is `GridLensAssessment/outage-assessment/main.py` (publisher 8.1.0, the tkinter case
+manager), source SHA-256 `4563868826ecd447e557eb75d92bcc5980e3dec4b1600ebfb8c600d4314bfc5a`. The case manager,
+case planning, QDS/n-1/(n-1)' calculation and restoration are main.py's own. The only change:
+`execute_outage_assessment(app, result_consumer=None)` hands the restored native runs to `result_consumer`
+after verified restoration and before report evaluation (no report tables, no IntReport, no PDF). The
+starter always supplies this hook. To update: copy main.py again and re-apply these three small edits
+(signature, dashboard-mode context note, hand-off after "Original PowerFactory state restored and verified").
 
-`analysis_worker.py` uses its discovery, ComStatsim, ElmRes and restoration functions. The original
-report publisher is not started. For database storage `MAX_PLOT_POINTS` is set to `MAX_RESULT_ROWS` at
-runtime so that nothing is thinned to 200 report points. `GRID_NAME_FILTER` is taken over by the worker
-and is empty by default.
+`gridlens_dashboard.py` reads the native results into the local dashboard database without report
+classification or publication. The normal entry point is `start_assessment.py`. See `docs/GRIDLENS.md`.
 
 The dashboard components come from `DashB/Api-main/frontend`, commit
 `6134be87e2dd3629510cbbf10d054cec68dc3a53`. Changes concern the connection to simulation data, the
@@ -17,11 +17,3 @@ outage management and the related labels. The original source projects are not c
 
 Testing with an API replacement does not replace a native PowerFactory acceptance. In particular,
 outage windows and ElmRes timestamps must be checked in a real PowerFactory 2026 project on Windows.
-
-`start_assessment.py` adds the native batch entry point, the configurable results file and the start of
-the local dashboard.
-
-Changes to `gridlens_engine.py` after it was taken over: in `collect_series` a non-finite (NaN) voltage is treated
-like 0, as "de-energised node, no value". An outage that cuts a node off from the grid makes PowerFactory write NaN
-there, which stopped the extraction of the OUTAGE run ("Invalid result value in ElmRes cell ... m:u"). Non-finite
-loading values still stop the run.

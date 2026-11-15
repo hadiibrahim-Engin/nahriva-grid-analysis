@@ -72,11 +72,12 @@ export interface Facility {
   project?: string | null;
 }
 
-export async function getFacilities(opts?: CacheOptions): Promise<Facility[]> {
+/** The runs of one analysis (default: the newest), for the scenario dropdown of the filters. */
+export async function getFacilities(opts?: CacheOptions, analysis: string | null = null): Promise<Facility[]> {
   return withCache(
-    'facilities',
+    analysis === null ? 'facilities' : `facilities:${analysis}`,
     async () => {
-      const res = await api.get<Facility[]>('/facilities');
+      const res = await api.get<Facility[]>('/facilities', { params: analysis === null ? {} : { analysis } });
       if (!Array.isArray(res.data)) {
         throw new Error('The server returned an unexpected scenario list (check the proxy / base URL).');
       }
@@ -94,17 +95,23 @@ export interface GridComponent {
   class_name?: string | null;
   /** PowerFactory grid (ElmNet) of the element, '' when it has none. */
   grid?: string | null;
+  /** Nominal voltage in kV from the analysis' master data; null when it was not stored. */
+  nominal_kv?: number | null;
 }
 
-export async function getComponentsByFacility(facilityId: string, opts?: CacheOptions): Promise<GridComponent[]> {
-  return withCache(
-    `components2|${facilityId}`, // 2: with the grid of each element
-    async () => {
-      const res = await api.get(`/facilities/${facilityId}/components`);
-      return res.data;
-    },
-    { ttlMs: 30 * 60_000, persist: true, ...opts },
-  );
+/** One page of the elements of a run, filtered on the server; `total` counts every match. */
+export async function searchComponents(
+  facilityId: string,
+  filter: { q?: string; grid?: string | null; kv?: number | null; limit: number },
+  signal?: AbortSignal,
+): Promise<{ items: GridComponent[]; total: number }> {
+  const params: Record<string, string | number> = { limit: filter.limit };
+  if (filter.q) params.q = filter.q;
+  if (filter.grid !== undefined && filter.grid !== null) params.grid = filter.grid;
+  if (filter.kv !== undefined && filter.kv !== null) params.kv = filter.kv;
+  const res = await api.get<GridComponent[]>(`/facilities/${facilityId}/components`, { params, signal });
+  const total = Number(res.headers['x-total-count']);
+  return { items: res.data, total: Number.isFinite(total) ? total : res.data.length };
 }
 
 export interface MeasurementTypeInfo {
@@ -129,7 +136,10 @@ export async function getMeasurementTypes(componentId: string, opts?: CacheOptio
 // --- Timeseries ---
 export interface TimeseriesPoint {
   timestamp: string;
-  value: number;
+  /** null: no valid value from PowerFactory at this time (a gap, never 0); `state` says why. */
+  value: number | null;
+  /** Only on points without a value, e.g. 'invalid_or_missing' (GET /api/simulation/states). */
+  state?: string;
 }
 
 // Self-describing provenance returned by the backend on every measurement
@@ -192,7 +202,8 @@ function flattenMeta(d: TimeseriesData): TimeseriesData {
   return d;
 }
 
-export type AggregationFn = 'AVG' | 'MIN' | 'MAX' | 'SUM';
+/** MINMAX (the default) keeps the stored samples with the lowest and highest value of every bucket: no peak is lost. */
+export type AggregationFn = 'MINMAX' | 'AVG' | 'MIN' | 'MAX' | 'SUM';
 
 /**
  * Raw, native-resolution measurements. Never aggregates or downsamples.
@@ -303,7 +314,7 @@ export async function getAggregatedTimeseries(
   start: string | undefined,
   end: string | undefined,
   bucketSeconds: number,
-  method: AggregationFn = 'AVG',
+  method: AggregationFn = 'MINMAX',
   signal?: AbortSignal,
 ): Promise<TimeseriesData> {
   const params: Record<string, string | number | undefined> = {
@@ -345,7 +356,7 @@ export async function getTimeseries(
 ): Promise<TimeseriesData> {
   if (downsampleMinutes && downsampleMinutes > 0) {
     return getAggregatedTimeseries(
-      componentId, measurementType, start, end, downsampleMinutes * 60, agg ?? 'AVG', signal,
+      componentId, measurementType, start, end, downsampleMinutes * 60, agg ?? 'MINMAX', signal,
     );
   }
   return getRawTimeseries(componentId, measurementType, start, end, { limit: maxPoints, signal });

@@ -5,6 +5,8 @@ The PowerFactory script stores every element with its full name, e.g.
 so the grid is known for every database, also for ones written before the dashboard had a grid filter.
 """
 
+from app.core.cache import TTLCache
+
 NO_GRID = ""
 
 
@@ -16,8 +18,19 @@ def grid_name(path):
     return NO_GRID
 
 
-def grids(db):
-    """Every grid with the number of distinct elements in it, in name order; elements without a grid last."""
+_GRIDS_CACHE = TTLCache(max_entries=16, ttl_seconds=3600)
+
+
+def grids(db, path=None):
+    """Every grid with the number of distinct elements in it, in name order; elements without a grid last.
+
+    Cached per file and number of runs: the grids change only when a run is added (100,000 elements take a second).
+    """
+    runs = db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0]
+    return _GRIDS_CACHE.get_or_compute((path, runs), lambda: _grids(db))
+
+
+def _grids(db):
     counts = {}
     for row in db.execute("SELECT DISTINCT id, path FROM analysis_elements"):
         name = grid_name(row["path"])

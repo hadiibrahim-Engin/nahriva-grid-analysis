@@ -11,10 +11,11 @@
  * only charts that make sense for these two signals are registered.
  */
 
-export type ChartCategory = 'scenarioEvaluation' | 'timeseries' | 'distribution' | 'limits' | 'correlation';
+export type ChartCategory = 'scenarioEvaluation' | 'contingency' | 'timeseries' | 'distribution' | 'limits' | 'correlation';
 
 export const CATEGORY_LABELS: Record<ChartCategory, string> = {
   scenarioEvaluation: 'Scenario evaluation',
+  contingency: 'n-1 contingencies',
   timeseries: 'Time series',
   distribution: 'Distribution',
   limits: 'Limits',
@@ -22,7 +23,7 @@ export const CATEGORY_LABELS: Record<ChartCategory, string> = {
 };
 
 /** Fixed display order of categories in the picker. */
-export const CATEGORY_ORDER: ChartCategory[] = ['scenarioEvaluation', 'timeseries', 'distribution', 'limits', 'correlation'];
+export const CATEGORY_ORDER: ChartCategory[] = ['scenarioEvaluation', 'contingency', 'timeseries', 'distribution', 'limits', 'correlation'];
 
 /** How many source signals the template consumes. */
 export type SignalArity = 'none' | 'one' | 'two' | 'three' | 'multi';
@@ -44,6 +45,9 @@ export type ChartKind =
   | 'acrossLodf'
   | 'acrossVoltage'
   | 'acrossVoltageDelta'
+  // n-1 contingency analysis of a scenario (reads the recorded n-1 cells):
+  | 'n1BeforeAfter'
+  | 'n1Flow'
   // Charts of saved signals:
   | 'overlay'
   | 'aggTrend'
@@ -185,6 +189,27 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
     arity: 'none',
     scenarioLevel: true,
     needsScenarioOptions: true,
+  },
+  // -- n-1 contingencies: which outage overloads which branch -------------------
+  {
+    id: 'n1-before-after',
+    kind: 'n1BeforeAfter',
+    name: 'n-1: before → after per branch',
+    question: 'Which contingency overloads which branch, and from what loading to what?',
+    category: 'contingency',
+    measurements: [],
+    arity: 'none',
+    scenarioLevel: true,
+  },
+  {
+    id: 'n1-flow',
+    kind: 'n1Flow',
+    name: 'n-1: contingency → overloaded branches (Sankey)',
+    question: 'Which contingencies overload which branches, and for how long?',
+    category: 'contingency',
+    measurements: [],
+    arity: 'none',
+    scenarioLevel: true,
   },
   // -- Signal charts: one or more saved signals --------------------------------
   {

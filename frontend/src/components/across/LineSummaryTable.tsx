@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react';
 import { ANALYSIS, LOADING_LIMITS, bandOf, bandVar, type BandId } from '../../config/loadingBands';
 import {
   PATTERN_LABELS,
@@ -16,7 +16,9 @@ import {
 } from '../../util/acrossScenarios';
 import { causeCounts, equipmentTitle } from '../../util/outageAssessment';
 import EquipmentName from './EquipmentName';
-import { DataBar, DivergingBar, ScenarioTag, SectionCard } from './shared';
+import { DataBar, DivergingBar, ScenarioTag, SectionCard, SpacerRow } from './shared';
+import { useVirtualRows } from '../../hooks/useVirtualRows';
+import { downloadText, toCsv } from '../../util/csv';
 
 type SortKey =
   | 'name' | 'base' | 'min' | 'max' | 'delta' | 'spread' | 'n100' | 'n110' | 'n120'
@@ -89,12 +91,14 @@ function CauseNotes({ counts }: { counts: { caused: number; preexisting: number 
   );
 }
 
-export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHours }: Props) {
+export default memo(function LineSummaryTable({ lines, scenarios, hasLodf, periodHours }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'status', dir: 'desc' });
   const [query, setQuery] = useState('');
   const [onlyRelevant, setOnlyRelevant] = useState(false);
   const [details, setDetails] = useState(false);
   const [limit, setLimit] = useState(PAGE);
+  // The field follows every key at once; the rows follow in the background, so typing never waits for the table.
+  const deferredQuery = useDeferredValue(query);
 
   const stats = useMemo(() => new Map(scenarios.map((s) => [s.scenario.id, s])), [scenarios]);
   const scenarioIds = useMemo(() => scenarios.map((s) => s.scenario.id), [scenarios]);
@@ -109,7 +113,7 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
   }), [lines]);
 
   const rows = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase('en');
+    const needle = deferredQuery.trim().toLocaleLowerCase('en');
     const filtered = lines.filter((s) =>
       (!needle || s.line.name.toLocaleLowerCase('en').includes(needle)) &&
       (!onlyRelevant || s.n100 > 0 || s.pattern !== null));
@@ -122,13 +126,26 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
       if (y === null) return -1;
       return (typeof x === 'string' && typeof y === 'string' ? x.localeCompare(y, 'en') : (x as number) - (y as number)) * sign;
     });
-  }, [lines, query, onlyRelevant, sort, codeOf]);
+  }, [lines, deferredQuery, onlyRelevant, sort, codeOf]);
 
   const columns = COLUMNS.filter((c) => details || !c.detail);
+  // "Show more" can list hundreds of rows; only those around the visible part are rendered.
+  const listed = useMemo(() => rows.slice(0, limit), [rows, limit]);
+  const rowKeys = useMemo(() => listed.map((s) => s.line.id), [listed]);
+  const { bodyRef, start, end, padTop, padBottom } = useVirtualRows(rowKeys, 48);
   const tag = (id: string | null) => {
     const s = id ? stats.get(id) : undefined;
     return s ? <ScenarioTag code={s.code} scenario={s.scenario} /> : null;
   };
+  // Every filtered row in the shown order, not only the rendered ones; numbers as stored, codes as shown.
+  const exportCsv = () => downloadText('detail-table.csv', toCsv(
+    ['Equipment', 'Class', 'Grid', 'Nominal kV', 'Base %', 'Min %', 'Max %', 'Scenario at max', 'Max delta pp',
+     'Delta between scenarios pp', 'Scenarios > 100 %', 'Scenarios > 110 %', 'Scenarios > 120 %', 'Overload rate',
+     'Sum excess pp', 'Max excess pp', 'Mean excess pp', 'Max |LODF|'],
+    rows.map((s) => [s.line.name, s.line.class_name, s.line.grid ?? '', s.line.nominal_kv ?? null, s.base, s.min, s.max,
+      codeOf(s.maxScenarioId), s.maxDelta, s.spread, s.n100, s.n110, s.n120, s.overloadShare, s.sumExcess, s.maxExcess,
+      s.meanExcess, s.maxAbsLodf]),
+  ));
   const toggle = (key: SortKey) =>
     setSort((cur) => cur.key === key ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' });
 
@@ -144,10 +161,11 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
         <input type="search" className="ab-control" style={{ width: '9.5rem' }} placeholder="Filter equipment" aria-label="Filter equipment" value={query} onChange={(e) => { setQuery(e.target.value); setLimit(PAGE); }} />
         <label className="ab-toggle"><input type="checkbox" className="accent-[var(--grid-primary)]" checked={onlyRelevant} onChange={(e) => { setOnlyRelevant(e.target.checked); setLimit(PAGE); }} />conspicuous only</label>
         <label className="ab-toggle"><input type="checkbox" className="accent-[var(--grid-primary)]" checked={details} onChange={(e) => setDetails(e.target.checked)} />Excess details</label>
+        <button type="button" className="ab-chip" onClick={exportCsv} title="Download every row of the current filter and sort order as CSV">CSV</button>
       </>}
     >
       <div className="ab-scroll ab-table-wide">
-        <table className="ab-table ab-line-summary">
+        <table className="ab-table ab-line-summary" aria-rowcount={listed.length + 1}>
           <thead>
             <tr>
               {columns.map((c, i) => (
@@ -166,11 +184,12 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
               ))}
             </tr>
           </thead>
-          <tbody>
-            {rows.slice(0, limit).map((s) => {
+          <tbody ref={bodyRef}>
+            <SpacerRow height={padTop} columns={columns.length} />
+            {listed.slice(start, end).map((s, k) => {
               const maxBand = s.max === null ? null : bandOf(s.max).id;
               return (
-                <tr key={s.line.id}>
+                <tr key={s.line.id} data-row={s.line.id} aria-rowindex={start + k + 2}>
                   <td className="ab-sticky"><div className="ab-linename" title={equipmentTitle(s.line.type, s.line.name)}>
                     <EquipmentName type={s.line.type} name={s.line.name} />
                   </div></td>
@@ -224,6 +243,7 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
                 </tr>
               );
             })}
+            <SpacerRow height={padBottom} columns={columns.length} />
           </tbody>
         </table>
       </div>
@@ -235,4 +255,4 @@ export default function LineSummaryTable({ lines, scenarios, hasLodf, periodHour
       </div>
     </SectionCard>
   );
-}
+});

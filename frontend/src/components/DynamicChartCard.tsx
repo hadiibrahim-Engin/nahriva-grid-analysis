@@ -63,6 +63,7 @@ const BoxPlotCombinedChart = lazy(() => import('./charts/BoxPlotCombinedChart'))
 const ExceedanceChart = lazy(() => import('./charts/ExceedanceChart'));
 
 const AGG_LABELS: Record<AggregationFn, string> = {
+  MINMAX: 'Min/Max (keeps peaks)',
   AVG: 'Mean',
   MIN: 'Minimum',
   MAX: 'Maximum',
@@ -178,7 +179,7 @@ function LiveConfigControls({
           <label className="flex items-center gap-0.5 text-[9px] text-[var(--grid-muted)]">
             Aggregation
             <select
-              value={config.aggregation ?? 'AVG'}
+              value={config.aggregation ?? 'MINMAX'}
               onChange={(e) => patch({ aggregation: e.target.value as AggregationFn })}
               className="grid-form-input grid-form-input--compact h-5 min-w-20"
             >
@@ -543,7 +544,7 @@ export default function DynamicChartCard({
         case 'aggTrend':
           return getTimeseries(
             src.componentId, src.measurementType, startIso, endIso,
-            config.resolutionMinutes || 60, undefined, undefined, config.aggregation ?? 'AVG',
+            config.resolutionMinutes || 60, undefined, undefined, config.aggregation ?? 'MINMAX',
           );
         case 'durationCurve':
           return getDurationCurve(src.componentId, src.measurementType, startIso, endIso);

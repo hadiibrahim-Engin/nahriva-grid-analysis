@@ -1,53 +1,39 @@
 # Outage assessment and evaluation across all scenarios
 
-Everything here works **read-only** on the SQLite file. Calculation and storage of the results are
-unchanged; the only addition is the LODF table `pf_lodf`.
+## Views added in phase 3
 
-## How the PowerFactory script calculates
+- **Network at a time** (follows the chosen scenario): per time the worst value of the scenario against REF and
+  the number of elements beyond their limit, the most critical times, and for one time every element with REF,
+  scenario value and change (CSV) plus the restore package of that time.
+- **Asset**: one element across every scenario of the analysis, its n-1 extremes per case and its course against
+  REF (CSV).
+- **Restore package**: a JSON hand-over for PowerFactory (analysis, run, case, planned and background outages with
+  paths and windows, settings, native result objects, optional time). Its `limitations` list what is not recorded;
+  rebuilding is PowerFactory's job.
+- Header: **Voltage level** filter (nominal kV of the master data), **Copy link** (pins analysis, grid and level as
+  `?analysis=…&grid=…&kv=…`). Every chart offers a PNG download; the detail table, the time point and the asset view
+  a CSV download.
 
-`powerfactory/start_assessment.py` runs five steps and reports each one in the PowerFactory output window:
+## Limits, large analyses, bookmarks (phase 3b)
 
-1. **Check:** project, Study Case, ComStatsim, the planned outages and the scenarios (one per planned
-   outage, or the combinations in `SCENARIOS`) with their windows and equipment. Invalid names stop the
-   script before anything is calculated.
-2. **Reference (REF):** one QDS with **every** planned outage disabled (`outserv=1`, option *Planned
-   Outages* off). REF is the same for every scenario, so it is calculated once, stored once and linked to
-   every scenario. It is **saved to the database right after its calculation**, not only with the first
-   scenario: its time series can be looked at (`v_samples`, `scenario` is NULL until a scenario links it)
-   while the scenarios run, and also when a later step fails. A REF of an earlier, aborted assessment that no
-   scenario links to is replaced.
+- **Limits** (header): the thresholds of this evaluation (loading bands, voltage band and margin, thermal reserve,
+  aggravation) can be changed for this browser; saving reloads the dashboard so every band, legend and verdict uses
+  them. Defaults stay in `frontend/src/config/`. The n-1 Gantt and the counts of the time-point view use the limits set
+  for the run in PowerFactory instead.
+- **Large analyses** (more than 5,000 elements per scenario): only the relevant elements are listed, with a note
+  saying how many of how many; verdicts and key figures are complete.
+- **Equipment field**: up to 2,000 elements it is loaded whole; a larger run is searched on the server as you type.
+- **Bookmarks** (header): named views (analysis pinned, grid, voltage level, scenario), each a link; the list can be
+  saved to a file and read back. The address bar always holds the current view.
+- **Time course**: longer than 2,000 times it comes as the worst value per interval, at the real time of the worst
+  value; the critical times are always ranked at full resolution.
 
-   **When a calculation does not converge:** if ComStatsim ends with an error code (typically a load flow
-   that does not converge), the time points calculated up to there are still read and saved, with the state
-   *not converged* and the reason (error code, how far it got). A scenario in that state is saved and the
-   assessment goes on with the next one; the dashboard shows it as a warning, and the summary table repeats
-   it. A REF that did not converge is saved too, but stops the assessment: nothing can be compared with it.
-   A calculation that ends normally but leaves time points without any value is saved as *incomplete*
-   with the number and the first of those times. State and reason: view `v_runs` (`status`, `note`).
-3. **Period check:** the outage windows are compared with the time axis REF actually covers. ComStatsim
-   can declare a longer period than it simulates (e.g. *Time period* = one month around the Study Case
-   time); then the script warns. A scenario whose window lies outside is skipped with a warning instead
-   of being saved without values. Set the ComStatsim *Time period* so that it covers the planned outages.
-4. **LODF** from PowerFactory's *Sensitivities / Distribution Factors* for the equipment of the scenarios (see below).
-5. **Scenarios:** per scenario a complete QDS over the whole period with only its planned outages
-   enabled and the option *Planned Outages* on. PowerFactory takes the equipment out of service inside
-   the outage window and keeps it in service before and after. After saving, one line reports the
-   highest loading in the window against REF, the number of elements above 100 % and the largest rise.
+## Where the results come from
 
-**Reading the output.** The output window is structured in three levels, nothing is left out:
-
-- `====` sections: the start banner, one per step (`STEP 1/5 …`), then `SUMMARY`, and `DASHBOARD` or `ERROR` at
-  the end. Step 1 lists every planned outage with equipment, window and flags, step 3 says per scenario whether
-  its windows lie in the calculated period, step 4 gives the LODF status per scenario.
-- `----` subsections: one per scenario (`Scenario 3/20 · NE_L1`).
-- `.. Case OUTAGE · NE_L1 ....` lines: one QDS run. Below it are the enabled planned outages with their windows
-  and equipment, the disabled ones by name, the ComStatsim option and period; PowerFactory's own messages and the
-  `[GridLens]` progress lines follow, then the result of the scenario in one line.
-
-The `SUMMARY` table repeats, per scenario, the time, the LODF status and the result in the outage window.
-
-Every PowerFactory setting the script changes is restored after each step; a restoration failure stops
-the script. Stopping it with *Break* keeps the scenarios saved so far.
+The PowerFactory script runs main.py's case manager and calculation and imports the kept native results
+case by case; see [GRIDLENS.md](GRIDLENS.md). Everything below works **read-only** on that database, on the
+scenarios of **one analysis** (the *Analysis* field in the header; default: the newest import). Each scenario is
+evaluated with the outage windows and equipment of its own import.
 
 ## Reading order
 
@@ -128,49 +114,9 @@ Results in kV are judged against the limits stored with them; without limits no 
 
 ## LODF
 
-The complete description with flow charts and code is in [LODF.md](LODF.md); this is the summary.
-
-The LODF comes from **PowerFactory's own tool "Sensitivities / Distribution Factors"** (`ComVstab`, LODF on),
-which `powerfactory/lodf.py` executes **once before the first scenario simulation**. For every contingency of
-the Contingency Analysis the tool gives, per line, the change of its flow related to the flow the outaged
-equipment carried before (AC, as the Study Case calculates it). The values are signed fractions at the bus1 side
-of the line (PowerFactory: 73.6 % → 0.736); the dashboard shows |LODF|. They are stored in `pf_lodf`, separate
-from the result runs, together with the equipment they belong to.
-
-**What the script sets up itself (nothing has to be prepared in the Study Case):**
-
-1. The command *Sensitivities / Distribution Factors*: the Study Case's own, or a new one when it has none.
-2. Its **own Contingency Analysis** named `Outage Assessment`, created in the Study Case (emptied and refilled
-   when it exists from an earlier run). It holds **one contingency (`ComOutage`) per scenario**, named like the
-   scenario and filled with the equipment of its planned outages (`ComOutage.SetObjs`); a combined outage is one
-   contingency with all its equipment. The Contingency Analysis of the user is **not touched**: the command is
-   pointed at ours for the run (`ComVstab.pComSimoutage`) and back at its original one afterwards.
-3. For the run it switches on `isContSens` ("Consider contingencies"; without it PowerFactory stops with
-   "Please enable at least one sensitivity factor"), switches LODF on (`calcLodf`) and sets `lodflim` (the
-   recording limit) to 0, because values below it are not written to PowerFactory's result file. All three are put
-   back afterwards.
-
-What the run created stays in the Study Case so that it can be opened and inspected; the output lists it. Set
-`CLEAN_UP = True` in `powerfactory/lodf.py` to delete it after the LODF is read.
-
-**How the result is read:** the result file `…_LODF` inside `ComVstab.pResult` has one row per contingency
-that converged. Its column `b:outid` is turned into the contingency by `ElmRes.GetObj`, and `ComOutage.GetObject(i)`
-names the equipment it switches off. A scenario gets the row whose contingency has exactly its equipment, so
-combined outages work when the Contingency Analysis has such a contingency. Scenarios with the same outages share
-one calculation.
-
-**What PowerFactory provides, and what it does not:**
-
-- **Lines only.** The result has columns for lines (`ElmLne`). Transformers and couplers as *monitored*
-  equipment have no LODF; they show "not calculated" in the matrix. (`factors4trf` does not add them.)
-- **Not defined** (the dashboard shows "no LODF" with the reason, the other outages are not affected):
-  - the contingency has no solution: typically a generator step-up transformer, the generator is cut off
-    and PowerFactory's contingency analysis fails to converge for it (it has no row in the result file),
-  - the outage switches no line, transformer or coupler (e.g. a busbar); no contingency is created for it.
-
-The reasons are stored in `pf_lodf_undefined` and listed in the view `v_lodf_undefined`. If PowerFactory's
-tool cannot be set up or fails (for example a read-only project, or an error code of the calculation) there is a
-warning with PowerFactory's reason, the scenarios still run and the dashboard shows "not calculated".
+The dashboard shows line outage distribution factors (|LODF|, notable from 0.3) when the table `pf_lodf` holds
+them, and the reason per scenario from `pf_lodf_undefined`. The current PowerFactory workflow calculates no LODF,
+so both tables stay empty and the LODF parts of the dashboard show "not calculated".
 
 ## Large databases
 
@@ -181,9 +127,10 @@ dictionary per value, and are sent without a second encoding pass: a year at 15 
 0.1 s per series, the duration curve, box plot and overload analysis 0.02-0.03 s.
 
 1. `GET /across-scenarios/index` returns scenarios and outages **without reading samples**.
-2. The frontend then fetches `GET /across-scenarios/{id}/cells` scenario by scenario (3 at a time). The
-   scenarios appear in a fixed order, the codes S01, S02 … stay stable, and the first verdicts are
-   there before the end. A progress bar shows the state.
+2. The frontend then fetches `GET /across-scenarios/cells?ids=…` in growing groups (3, 6, 12, then 24 scenarios,
+   two groups at a time): the first verdicts appear quickly, and the summary is evaluated once per group instead
+   of once per scenario. The scenarios appear in a fixed order, the codes S01, S02 … stay stable, and the first
+   verdicts are there before the end. A progress bar shows the state.
 3. Per scenario two grouped SQL passes over the loading series (REF and OUTAGE) plus a few for voltage
    are enough. The result is cached in the server; saved scenarios never change, so a refresh only
    loads new scenarios.
@@ -191,7 +138,11 @@ dictionary per value, and are sent without a second encoding pass: a year at 15 
    when they come close to the viewport or the navigation jumps to them. Only then are their code and
    data loaded. `GET .../{id}/profile` reduces a time series to at most 300 points (maximum per
    bucket, peaks are kept).
-5. Matrix and table first show the most conspicuous equipment and page on.
+5. Matrix and table first show the most conspicuous equipment and page on. Above 60 rows (all equipment of a large
+   grid, many busbars, a long detail table) only the rows around the visible part are rendered; the browser's page
+   search then finds only those rows, the table filters find all of them.
+6. Profiles are cached in the server as well; choosing a scenario again reads nothing. The status of the PowerFactory
+   script (`/outage-management`, asked every 3 s) carries an ETag: unchanged, the server answers with an empty 304.
 
 Not measured: behaviour with millions of rows per run on the real PC. The split is prepared for it;
 please check timings there.
@@ -200,12 +151,21 @@ please check timings there.
 
 | Path | Content |
 |---|---|
-| `GET /api/simulation/across-scenarios/index` | scenarios, outages, period |
+| `GET /api/simulation/analyses` | every analysis (import) of the file, newest first, and the default one |
+| `GET /api/simulation/states` | the versioned catalogue of result states |
+| `GET /api/simulation/voltage-levels?analysis=` | nominal voltages of the analysis with their element count |
+| `GET /api/simulation/scenarios/{id}/times?points=2000` | per time (or per interval, when longer) the extremes and violation counts of REF and the scenario; the most critical times |
+| `GET /api/simulation/facilities/{run}/components?q=&grid=&kv=&limit=` | elements of a run, filtered and limited; `X-Total-Count` gives all matches |
+| `GET /api/simulation/scenarios/{id}/snapshot?t=&metric=&limit=&offset=&grid=&kv=` | every element at one time against REF, most critical first, in pages |
+| `GET /api/simulation/scenarios/{id}/restore-package?t=` | the facts PowerFactory needs to rebuild the scenario, with their limitations |
+| `GET /api/simulation/assets/{element}?analysis=` | one element across the scenarios: master data, key figures, n-1 per case |
+| `GET /api/simulation/across-scenarios/index?analysis=` | scenarios of one analysis (default: the newest), outages, period |
+| `GET /api/simulation/across-scenarios/cells?ids=a&ids=b&over=…&warning=&band_lower=&band_upper=&margin=` | reduced values of up to 50 scenarios in one answer (`null` for an unknown one); a large scenario lists its relevant elements (`listing`) |
 | `GET /api/simulation/across-scenarios/{id}/cells` | reduced values of one scenario (cached) |
 | `GET /api/simulation/across-scenarios/{id}/profile?grid=` | loading profile of the most critical equipment (of one grid) |
 | `GET /api/simulation/grids` | grids of the stored elements with their element count |
 | `GET /api/simulation/across-scenarios` | everything together (index plus all scenarios) |
-| `GET /api/simulation/outage-management` | catalog, jobs and saved scenarios |
+| `GET /api/simulation/outage-management` | catalog, jobs, saved scenarios and the script's progress (ETag, 304 when unchanged) |
 | `GET /api/simulation/facilities`, `.../components`, `.../timeseries/...`, `.../analytics/...` | series and analyses for the signal charts |
 
 The API has no write endpoints except switching the database (`POST /api/simulation/database`, only

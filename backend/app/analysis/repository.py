@@ -29,6 +29,12 @@ class AnalysisRepository:
         with self._lock:
             return [dict(r) for r in self.db.execute(query, params).fetchall()]
 
+    def run_values(self, run_id, query, params=()):
+        """Rows of a query over the values of one run, wherever they are stored (app/simulation/values.py)."""
+        from app.simulation import values
+        with self._lock:
+            return values.query(self.db, run_id, query, params)
+
     def tuples(self, query, params=()):
         """Rows as plain tuples: for the large reads of a series, where a dict per row costs more than the query."""
         with self._lock:
@@ -76,10 +82,9 @@ class AnalysisRepository:
         return self._all("SELECT * FROM analysis_runs ORDER BY id")
 
     def sample_count(self, run_id):
-        return self._all(
-            "SELECT COUNT(*) n FROM analysis_series se JOIN analysis_values v ON v.series_id=se.id WHERE se.run_id=?",
-            (run_id,),
-        )[0]["n"]
+        return self.run_values(
+            run_id, "SELECT COUNT(*) n FROM analysis_series se JOIN analysis_values v ON v.series_id=se.id WHERE se.run_id=?",
+            (run_id,))[0]["n"]
 
     def run(self, run_id):
         rows = self._all("SELECT * FROM analysis_runs WHERE id=?", (run_id,))

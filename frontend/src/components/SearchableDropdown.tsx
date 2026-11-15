@@ -36,6 +36,10 @@ interface Props<T> {
   emptyHint?: string;
   allowReset?: boolean;
   className?: string;
+  /** Server search: told every change of the search text; the caller then passes the matching `items`. */
+  onQueryChange?: (query: string) => void;
+  /** Server search: the number of all matches, of which `items` is the first page. */
+  totalCount?: number;
 }
 
 export default function SearchableDropdown<T>({
@@ -54,6 +58,8 @@ export default function SearchableDropdown<T>({
   emptyHint = 'No matches',
   allowReset = true,
   className = '',
+  onQueryChange,
+  totalCount,
 }: Props<T>) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -74,7 +80,10 @@ export default function SearchableDropdown<T>({
     [allOptions, query],
   );
   const visible = useMemo(() => filtered.slice(0, maxVisible), [filtered, maxVisible]);
-  const overflow = filtered.length - visible.length;
+  const overflow = Math.max(totalCount ?? filtered.length, filtered.length) - visible.length;
+  const reportQuery = useRef(onQueryChange);
+  useEffect(() => { reportQuery.current = onQueryChange; }, [onQueryChange]);
+  useEffect(() => { reportQuery.current?.(query); }, [query]);
 
   const selectedLabel = useMemo(() => {
     if (!value) return null;

@@ -7,6 +7,7 @@
  * generated card produces identical numbers.
  */
 import type { CorrelationMethod, CorrelationScatterData, TimeseriesData } from '../api/client';
+import { isFiniteValue } from './values.ts';
 
 /** A source signal the user has already added to the dashboard. */
 export interface DashboardSeries {
@@ -250,13 +251,13 @@ export function buildCorrelation(
 ): CorrelationScatterData {
   const yByTimestamp = new Map<string, number>();
   yData.data.forEach((point) => {
-    if (Number.isFinite(point.value)) yByTimestamp.set(point.timestamp, point.value);
+    if (isFiniteValue(point.value)) yByTimestamp.set(point.timestamp, point.value);
   });
 
   const points = xData.data
     .map((point) => {
       const y = yByTimestamp.get(point.timestamp);
-      if (!Number.isFinite(point.value) || y == null || !Number.isFinite(y)) return null;
+      if (!isFiniteValue(point.value) || y == null || !Number.isFinite(y)) return null;
       return { x: point.value, y };
     })
     .filter((point): point is { x: number; y: number } => point !== null);
@@ -307,18 +308,18 @@ export function buildCorrelation3(
 ): CorrelationScatterData3 {
   const yByTimestamp = new Map<string, number>();
   yData.data.forEach((point) => {
-    if (Number.isFinite(point.value)) yByTimestamp.set(point.timestamp, point.value);
+    if (isFiniteValue(point.value)) yByTimestamp.set(point.timestamp, point.value);
   });
   const zByTimestamp = new Map<string, number>();
   zData.data.forEach((point) => {
-    if (Number.isFinite(point.value)) zByTimestamp.set(point.timestamp, point.value);
+    if (isFiniteValue(point.value)) zByTimestamp.set(point.timestamp, point.value);
   });
 
   const points = xData.data
     .map((point) => {
       const y = yByTimestamp.get(point.timestamp);
       const z = zByTimestamp.get(point.timestamp);
-      if (!Number.isFinite(point.value) || y == null || !Number.isFinite(y) || z == null || !Number.isFinite(z)) {
+      if (!isFiniteValue(point.value) || y == null || !Number.isFinite(y) || z == null || !Number.isFinite(z)) {
         return null;
       }
       return { x: point.value, y, z };
@@ -368,7 +369,8 @@ export function buildRollingMean(
     let sum = 0;
     let count = 0;
     for (let j = lo; j < hi; j++) {
-      if (Number.isFinite(vals[j].value)) { sum += vals[j].value; count += 1; }
+      const value = vals[j].value;
+      if (isFiniteValue(value)) { sum += value; count += 1; }
     }
     return { timestamp: point.timestamp, value: count ? r3(sum / count) : point.value };
   });
@@ -390,10 +392,10 @@ export function buildAnomalyScore(
   const vals = data.data;
   const out = vals.map((point, i) => {
     const lo = Math.max(0, i - w + 1);
-    const slice = vals.slice(lo, i + 1).map((p) => p.value).filter((v) => Number.isFinite(v));
-    if (slice.length < 2 || !Number.isFinite(point.value)) {
-      return { timestamp: point.timestamp, value: 0 };
-    }
+    const slice = vals.slice(lo, i + 1).map((p) => p.value).filter(isFiniteValue);
+    // Without its own value (or too little history) the score is undefined: a gap, never 0.
+    if (!isFiniteValue(point.value)) return { timestamp: point.timestamp, value: null };
+    if (slice.length < 2) return { timestamp: point.timestamp, value: 0 };
     const mean = slice.reduce((s, v) => s + v, 0) / slice.length;
     const variance = slice.reduce((s, v) => s + (v - mean) ** 2, 0) / slice.length;
     const std = Math.sqrt(variance);
@@ -420,7 +422,7 @@ export function buildVoltageBand(
   // No explicit nominal → derive it from the data (median of finite samples),
   // so the band is meaningful by default regardless of the unit (kV, p.u., …).
   if (!(nominal > 0)) {
-    const finite = data.data.map((p) => p.value).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+    const finite = data.data.map((p) => p.value).filter(isFiniteValue).sort((a, b) => a - b);
     if (finite.length === 0) return [data];
     nominal = finite[Math.floor(finite.length / 2)];
   }

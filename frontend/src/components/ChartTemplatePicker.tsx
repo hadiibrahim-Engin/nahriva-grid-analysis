@@ -37,6 +37,7 @@ import {
 } from '../util/dynamicCharts';
 
 const AGG_LABELS: Record<AggregationFn, string> = {
+  MINMAX: 'Min/Max (keeps peaks)',
   AVG: 'Mean',
   MIN: 'Minimum',
   MAX: 'Maximum',
@@ -86,7 +87,7 @@ export default function ChartTemplatePicker({
   const [thresholdLevelColors, setThresholdLevelColors] = useState<string[]>([]);
   const [voltageMinPct, setVoltageMinPct] = useState(90);
   const [voltageMaxPct, setVoltageMaxPct] = useState(110);
-  const [aggregation, setAggregation] = useState<AggregationFn>('AVG');
+  const [aggregation, setAggregation] = useState<AggregationFn>('MINMAX');
   const [resolutionMinutes, setResolutionMinutes] = useState(60);
   const [scenarioConfig, setScenarioConfigState] = useState<ScenarioConfigPatch>({ topN: 12, equipment: 'all', elementMode: 'auto', elementIds: [], scenarioIds: [] });
   const setScenarioConfig = (patch: Partial<ScenarioConfigPatch>) => setScenarioConfigState((current) => ({ ...current, ...patch }));
@@ -151,7 +152,7 @@ export default function ChartTemplatePicker({
     setThresholdLevelColors([]);
     setVoltageMinPct(selected.voltageMinPercentDefault ?? 90);
     setVoltageMaxPct(selected.voltageMaxPercentDefault ?? 110);
-    setAggregation('AVG');
+    setAggregation('MINMAX');
     setResolutionMinutes(defaultResolution);
     setScenarioConfigState({ topN: 12, equipment: 'all', elementMode: 'auto', elementIds: [], scenarioIds: [] });
     setPrimaryKey(sourceOptionsRef.current[0]?.key ?? null);

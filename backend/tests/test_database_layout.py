@@ -137,7 +137,7 @@ def test_the_dashboard_reads_while_powerfactory_is_writing_and_sees_a_scenario_o
     script = sqlite3.connect(path, isolation_level=None)  # the PowerFactory script
     script.execute("BEGIN IMMEDIATE")  # the write lock is held until the scenario is complete
     script.execute("INSERT INTO pf_jobs(id,kind,payload,status,created_at) VALUES('j','run','{}','completed','x')")
-    script.execute("INSERT INTO pf_scenarios VALUES('j','New outage','P','SC',?, 'x')", (json.dumps(["o"]),))
+    script.execute("INSERT INTO pf_scenarios(id,name,project,study_case,outages,created_at) VALUES('j','New outage','P','SC',?, 'x')", (json.dumps(["o"]),))
     script.execute("INSERT INTO pf_progress VALUES(1,'running','STEP 5/5 · Scenarios','Scenario 9/9 · New outage',9,9,'t0','t1')")
     with TestClient(app) as client:
         started = time.perf_counter()

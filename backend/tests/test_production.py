@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.simulation import settings
 from app.simulation.store import ScenarioStore
-from tests.test_powerfactory_worker import App
+from tests.gridlens_fixture import App
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -22,8 +22,8 @@ import appconfig  # noqa: E402
 import dashboard_launcher as launcher  # noqa: E402
 
 spec = importlib.util.spec_from_file_location("start_assessment", ROOT / "powerfactory/start_assessment.py")
-assessment = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(assessment)
+starter = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(starter)
 
 HAS_INSTALL = launcher.dashboard_python().is_file() and (ROOT / "frontend/dist/index.html").is_file()
 
@@ -46,6 +46,15 @@ def wait_ready(port, timeout=20):
 
 
 # -- configuration -----------------------------------------------------------------------------
+
+def test_powerfactory_uses_the_venv_packages_only_for_the_same_python_version(tmp_path):
+    venv = tmp_path / "backend" / ".venv"
+    (venv / "Lib" / "site-packages").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = C:\\Python312\nversion = 3.12.7\n")
+    assert starter.venv_packages(tmp_path, (3, 12, 1)) == venv / "Lib" / "site-packages"
+    assert starter.venv_packages(tmp_path, (3, 11, 9)) is None  # a compiled pyarrow would not load
+    assert starter.venv_packages(tmp_path / "missing", (3, 12, 1)) is None
+
 
 def test_configuration_precedence_environment_file_defaults(tmp_path, monkeypatch):
     for name in ("OA_DATABASE", "OA_HOST", "OA_PORT"):
@@ -109,6 +118,20 @@ def test_responses_carry_protective_headers(production_client):
     assert headers["x-frame-options"] == "DENY" and headers["referrer-policy"] == "no-referrer"
 
 
+def test_built_files_are_kept_by_the_browser_and_the_page_is_always_asked_for_again(production_client, tmp_path, monkeypatch):
+    from app import main
+
+    (tmp_path / "dist/assets").mkdir(parents=True)
+    (tmp_path / "dist/index.html").write_text("<html></html>", encoding="utf-8")
+    (tmp_path / "dist/assets/app-abc123.js").write_text("console.log(1)", encoding="utf-8")
+    (tmp_path / "dist/favicon.svg").write_text("<svg/>", encoding="utf-8")
+    monkeypatch.setattr(main, "DIST", tmp_path / "dist")
+    client, _ = production_client
+    assert "immutable" in client.get("/assets/app-abc123.js").headers["cache-control"]  # named by content hash
+    assert client.get("/").headers["cache-control"] == "no-cache"  # links the current build
+    assert "cache-control" not in client.get("/favicon.svg").headers  # not hashed: revalidated as before
+
+
 def test_overview_names_the_job_so_the_dashboard_can_show_what_is_calculated(tmp_path, monkeypatch):
     from app.simulation.store import ScenarioStore
 
@@ -116,6 +139,20 @@ def test_overview_names_the_job_so_the_dashboard_can_show_what_is_calculated(tmp
     store.enqueue("run", {"name": "Maintenance North", "outage_ids": ["a"]})
     assert store.overview()["jobs"][0]["name"] == "Maintenance North"
     store.close()
+
+
+def test_the_polled_overview_answers_unchanged_with_an_empty_304(production_client):
+    client, path = production_client
+    first = client.get("/api/simulation/outage-management")
+    tag = first.headers["etag"]
+    assert first.status_code == 200 and first.headers["cache-control"] == "no-cache"
+    again = client.get("/api/simulation/outage-management", headers={"If-None-Match": tag})
+    assert again.status_code == 304 and again.content == b"" and again.headers["etag"] == tag
+    store = ScenarioStore(str(path))
+    store.set_progress("running", "STEP 1/5", restart=True)  # the script reports progress: the answer changes
+    store.close()
+    changed = client.get("/api/simulation/outage-management", headers={"If-None-Match": tag})
+    assert changed.status_code == 200 and changed.headers["etag"] != tag and changed.json()["progress"]["state"] == "running"
 
 
 # -- server and launcher as real processes -----------------------------------------------------------
@@ -170,106 +207,99 @@ def test_launcher_starts_once_then_reuses_and_falls_back_when_the_port_is_taken(
 
 # -- the PowerFactory script ---------------------------------------------------------------------------
 
-def test_script_starts_the_dashboard_before_the_calculation_and_the_database_exists_from_the_start(tmp_path, monkeypatch):
-    database = tmp_path / "results" / "outages.sqlite3"
-    monkeypatch.setenv("OA_DATABASE", str(database))
-    monkeypatch.setenv("OA_HOST", "0.0.0.0")
-    monkeypatch.setenv("OA_PORT", "8765")
+@pytest.fixture
+def run_starter(tmp_path, monkeypatch):
+    """start_assessment.main() with a synthetic PowerFactory, the calculation and the dashboard replaced."""
+    monkeypatch.setattr(starter, "prepare_imports", lambda: None)
+    monkeypatch.setenv("OA_DATABASE", str(tmp_path / "results.sqlite3"))
     app = App()
-    events = []
-    printed = []
-    app.PrintPlain = printed.append
-    original = app.calculate
-
-    def calculate():
-        events.append("calculate")
-        return original()
-
-    app.qds.Execute = calculate
     monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-
-    def fake_launch(db, **kwargs):
-        events.append(("dashboard", kwargs["host"], kwargs["port"], kwargs["production"], kwargs["reuse"], kwargs["open_browser"]))
-        assert Path(db).is_file()  # the dashboard needs the file, and it is there before the first calculation
-        return {"url": "http://127.0.0.1:8765", "lan_urls": ["http://pf-pc:8765"], "reused": False, "notes": [], "pid": 1, "process": None}
-
-    monkeypatch.setattr(assessment, "launch_dashboard", fake_launch)
-    assessment.main()
-    # started once, with the browser, before any calculation; the end only says where it is
-    assert events[0] == ("dashboard", "0.0.0.0", 8765, True, True, True)
-    assert events.count("calculate") == 3  # one REF, then OUTAGE of two scenarios
-    assert sum(1 for e in events if e != "calculate") == 1  # no second start, no second browser window
-    assert any("pf-pc:8765" in line for line in printed)  # the address for other PCs is printed
-    assert any("Running: http://127.0.0.1:8765" in line for line in printed)
-    assert database.is_file()
-
-
-def test_the_dashboard_is_told_where_the_run_is(tmp_path, monkeypatch):
-    """The banner 'PowerFactory is working ...' needs a note per step and scenario, also while no scenario is saved."""
-    database = tmp_path / "progress.sqlite3"
-    monkeypatch.setenv("OA_DATABASE", str(database))
-    app = App()
-    seen = []
-    original = app.calculate
-
-    def calculate():
-        store = ScenarioStore(str(database))  # what the dashboard does at this moment
-        seen.append(store.progress())
-        store.close()
-        return original()
-
-    app.qds.Execute = calculate
-    monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "SHOW_DASHBOARD", False)
-    assessment.main()
-    reference, first, second = seen
-    assert reference["state"] == "running" and reference["step"].startswith("STEP 2/5") and reference["current"] is None
-    assert first["step"] == "STEP 5/5 · Scenarios" and first["detail"] == "Scenario 1/2 · Chosen" and (first["current"], first["total"]) == (1, 2)
-    assert second["detail"] == "Scenario 2/2 · Other" and second["started_at"] == reference["started_at"]  # one run
-    store = ScenarioStore(str(database))
-    final = store.progress()
-    store.close()
-    assert final["state"] == "finished" and "2 scenarios saved" in final["detail"] and (final["current"], final["total"]) == (2, 2)
-
-
-def test_a_stopped_or_failed_run_is_visible_in_the_dashboard(tmp_path, monkeypatch):
-    database = tmp_path / "failed.sqlite3"
-    monkeypatch.setenv("OA_DATABASE", str(database))
-    app = App(fail=True)
-    monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "SHOW_DASHBOARD", False)
-    with pytest.raises(Exception, match="failed"):
-        assessment.main()
-    store = ScenarioStore(str(database))
-    progress = store.progress()
-    store.close()
-    assert progress["state"] == "failed" and "failed" in progress["detail"]
-
-
-def test_a_progress_note_can_never_stop_the_calculation(tmp_path, monkeypatch):
-    monkeypatch.setattr(ScenarioStore, "set_progress", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("database is locked")))
-    app = App()
-    assert assessment.run_assessment(app, tmp_path / "locked.sqlite3") == ["Chosen", "Other"]
-
-
-def test_a_failing_dashboard_does_not_waste_the_calculation(tmp_path, monkeypatch):
-    monkeypatch.setenv("OA_DATABASE", str(tmp_path / "r.sqlite3"))
-    app = App()
-    printed = []
-    app.PrintPlain = printed.append
-    monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "launch_dashboard", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Port blocked")))
-    assessment.main()
-    assert any("WARN" in line and "Port blocked" in line for line in printed)
-    assert len(app.calls) == 3
+    monkeypatch.setattr(launcher, "validate_installation", lambda *a: None)
+    monkeypatch.setattr(launcher, "start_dashboard", lambda *a, **k: {"port": 8765})
+    monkeypatch.setattr(launcher, "stop_started_dashboard", lambda *a: None)
+    return app
 
 
 def test_preflight_rejects_a_full_disk_and_an_unwritable_folder(tmp_path, monkeypatch):
-    monkeypatch.setattr(assessment.shutil, "disk_usage", lambda p: type("U", (), {"free": 1e9})())
+    monkeypatch.setattr(starter.shutil, "disk_usage", lambda p: type("U", (), {"free": 1e9})())
     with pytest.raises(RuntimeError, match="Not enough free space"):
-        assessment.preflight(tmp_path / "db.sqlite3")
-    monkeypatch.setattr(assessment.shutil, "disk_usage", lambda p: type("U", (), {"free": 50e9})())
-    assert assessment.preflight(tmp_path / "ok" / "db.sqlite3") == pytest.approx(50)
+        starter.preflight(tmp_path / "db.sqlite3")
+    monkeypatch.setattr(starter.shutil, "disk_usage", lambda p: type("U", (), {"free": 50e9})())
+    assert starter.preflight(tmp_path / "ok" / "db.sqlite3") == pytest.approx(50)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        with pytest.raises(RuntimeError, match="not writable"):
+            starter.preflight(locked / "db.sqlite3")
+    finally:
+        locked.chmod(0o700)
+
+
+def test_a_database_of_an_earlier_version_is_refused_before_the_case_manager_opens(run_starter, tmp_path, monkeypatch):
+    import sqlite3
+
+    from app.analysis.schema import OutdatedDatabaseError
+
+    db = sqlite3.connect(tmp_path / "results.sqlite3")
+    db.executescript("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY); INSERT INTO schema_migrations VALUES (1);")
+    db.close()
+    monkeypatch.setattr(starter, "run_assessment", lambda *a: pytest.fail("No calculation may start"))
+    with pytest.raises(OutdatedDatabaseError):
+        starter.main()
+
+
+def test_a_progress_note_can_never_stop_the_calculation(run_starter, monkeypatch):
+    monkeypatch.setattr(ScenarioStore, "set_progress", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    monkeypatch.setattr(launcher, "wait_for_dashboard", lambda *a, **k: {"url": "http://127.0.0.1:8765", "lan_urls": [], "notes": []})
+    monkeypatch.setattr(starter, "run_assessment", lambda app, db, saved: saved(1, 1, "QDS C1", 1) or {"cases": 1, "assessment_id": "a"})
+    assert starter.main()["url"] == "http://127.0.0.1:8765"
+    assert any("Progress could not be updated" in line for line in run_starter.messages)
+
+
+def test_a_failing_dashboard_does_not_waste_the_calculation(run_starter, monkeypatch):
+    monkeypatch.setattr(launcher, "wait_for_dashboard", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Port blocked")))
+    monkeypatch.setattr(starter, "run_assessment", lambda app, db, saved: saved(2, 2, "QDS C1", 1) or {"cases": 1, "assessment_id": "a"})
+    outcome = starter.main()
+    assert outcome["assessment_id"] == "a" and "url" not in outcome
+    assert any("Port blocked" in line for line in run_starter.messages)
+
+
+def test_the_addresses_for_other_pcs_are_printed(run_starter, monkeypatch):
+    monkeypatch.setattr(launcher, "wait_for_dashboard", lambda *a, **k: {
+        "url": "http://127.0.0.1:8765", "lan_urls": ["http://pf-pc:8765"], "notes": ["Port 8765 is in use; a free port is used instead."]})
+    monkeypatch.setattr(starter, "run_assessment", lambda app, db, saved: {"cases": 0, "assessment_id": "a"})
+    starter.main()
+    assert any("pf-pc:8765" in line for line in run_starter.messages)
+    assert any("free port" in line for line in run_starter.messages)
+
+
+def test_modules_of_an_earlier_run_are_not_reused(monkeypatch):
+    """PowerFactory keeps its Python between runs: modules of an earlier run (maybe of another copy) must not be used."""
+    from types import ModuleType
+
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    saved = dict(sys.modules)
+    try:
+        for name in ("gridlens_runtime", "gridlens_dashboard", "dashboard_launcher", "app", "app.simulation.store"):
+            sys.modules.setdefault(name, ModuleType(name))
+        starter.prepare_imports()
+        assert not {"gridlens_runtime", "gridlens_dashboard", "dashboard_launcher", "app", "app.simulation.store"} & set(sys.modules)
+        assert "json" in sys.modules
+    finally:
+        sys.modules.clear()
+        sys.modules.update(saved)  # the rest of the test session keeps its modules
+
+
+
+
+
+
+
+
+
+
+
 
 
 def test_release_package_contains_what_the_powerfactory_pc_needs_and_no_secrets(tmp_path):
@@ -310,42 +340,6 @@ def test_release_build_refuses_without_the_frontend_build(tmp_path):
         package_release.build(tmp_path, tmp_path / "out")
 
 
-def test_a_broken_dashboard_step_never_hides_the_assessment_error(tmp_path, monkeypatch):
-    import sqlite3
-
-    from tests.test_lodf import LockedDistribution, NativeApp
-
-    monkeypatch.setenv("OA_DATABASE", str(tmp_path / "r.sqlite3"))
-    app = NativeApp(distribution_class=LockedDistribution)  # lodflim is set to 0 for the LODF and cannot be put back
-
-    def deleted(_message):
-        raise RuntimeError("'powerfactory.Application' already deleted")
-
-    app.PrintPlain = deleted  # PowerFactory has already torn the application down
-    monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))
-    monkeypatch.setattr(assessment, "has_results", lambda database: (_ for _ in ()).throw(sqlite3.OperationalError("unrecognized token")))
-    (tmp_path / "r.sqlite3").touch()
-    with pytest.raises(RuntimeError, match="restoration failed"):
-        assessment.main()
 
 
-def test_preflight_refuses_a_database_of_an_earlier_version_before_any_calculation(tmp_path, monkeypatch):
-    import sqlite3
 
-    monkeypatch.setattr(assessment.shutil, "disk_usage", lambda p: type("U", (), {"free": 50e9})())
-    old = tmp_path / "old.sqlite3"
-    db = sqlite3.connect(old)
-    db.executescript("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY); INSERT INTO schema_migrations VALUES (1);")
-    db.close()
-    with pytest.raises(RuntimeError, match="earlier version"):
-        assessment.preflight(old)
-
-
-def test_modules_of_an_earlier_run_are_not_reused():
-    """PowerFactory keeps its Python between runs: an old pf_console (maybe of another copy) must not be used."""
-    from types import ModuleType
-
-    stale = {name: ModuleType(name) for name in ("pf_console", "analysis_worker", "app", "app.simulation.store")}
-    modules = {**stale, "json": ModuleType("json"), "powerfactory": ModuleType("powerfactory")}
-    assessment.forget_cached_modules(modules)
-    assert set(modules) == {"json", "powerfactory"}  # only this project's modules are dropped

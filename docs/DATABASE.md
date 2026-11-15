@@ -1,30 +1,192 @@
 # Results database
 
-All results live in **one SQLite file** (default `backend\data\outage-assessment.sqlite3`, configured in
-`outage-assessment.config.json`). The PowerFactory script is the only writer; the dashboard and any
-external tool only read. The file uses SQLite's WAL mode, so reading never blocks the script and the
-script never blocks a reader.
+The results live in **one SQLite file and the folder of the same name with `.values`** beside it (default
+`backend\data\outage-assessment.sqlite3` and `outage-assessment.values\`, configured in
+`outage-assessment.config.json`). SQLite holds analyses, scenarios, elements, limits and every summary written at
+import; the folder holds the raw QDS values, one immutable Parquet file per run (`pf_run_values` names it, decision
+E2, see [STORAGE.md](STORAGE.md)). Both belong together: copy, back up and delete them together. Runs imported
+before layout 14, and databases restored from an archive, keep their values in the table `analysis_values`; the
+dashboard reads both. The PowerFactory script is the only writer; the dashboard and any external tool only read.
+The SQLite file uses WAL mode, so reading never blocks the script and the script never blocks a reader.
 
-Schema version: **2** (table `schema_migrations`). The schema is defined in
-`backend/app/analysis/migrations/002_analysis.sql` (results) and `backend/app/simulation/store.py`
-(PowerFactory bridge and views).
+Layout version: **14** (`PRAGMA user_version`; results schema 2 in `schema_migrations`). The tables are defined in
+`backend/app/analysis/migrations/002_analysis.sql` (results), `backend/app/simulation/store.py` (PowerFactory bridge,
+summaries, views) and `backend/app/simulation/gridlens_store.py` (analyses, master data, native results). An older
+file is brought up to date once when it is opened.
 
 ## Overview
 
+Three groups of tables: the **analysis** of one PowerFactory run with its scenarios and QDS values (diagram 1), the
+**native results** of the run as PowerFactory kept them, above all the n-1 sweeps (diagram 2), and a few
+**operational** tables (diagram 3). Solid lines are foreign keys; dashed lines are links by the same identifier
+(the element id is the same hash in `analysis_elements`, `gl_elements` and `gl_columns`).
+
+### 1 · Analysis, scenarios, runs and values
+
 ```mermaid
 erDiagram
+    gl_assessments ||--o{ pf_scenarios : "analysis_id"
+    gl_assessments ||--o{ gl_elements : "master data"
+    gl_assessments ||--o{ gl_branch_ends : "areas at both ends"
     pf_scenarios ||--o{ pf_scenario_runs : "REF and OUTAGE"
+    pf_scenarios ||--o| pf_scenario_provenance : "catalog it was calculated with"
+    pf_scenarios ||--o{ pf_scenario_cells : "evaluation summary"
     pf_scenario_runs }o--|| analysis_runs : run
     analysis_runs ||--o{ analysis_elements : contains
     analysis_runs ||--o{ analysis_metrics : measures
     analysis_runs ||--o{ analysis_series : has
-    analysis_series ||--o{ analysis_values : "one value per time"
     analysis_elements ||--o{ analysis_series : of
     analysis_metrics ||--o{ analysis_series : of
-    analysis_runs ||--o{ pf_element_limits : "voltage band"
-    pf_scenarios }o--o{ pf_lodf : "by outage_key"
-    pf_jobs ||--|| pf_scenarios : "saved as"
+    analysis_series ||--o{ analysis_values : "one value per time"
+    analysis_elements ||--o{ pf_element_limits : "limits per metric"
+    analysis_runs ||--o| pf_run_notes : "why not completed"
+    analysis_runs ||--o{ pf_run_times : "per time: extremes, violations"
+    analysis_runs ||--o{ pf_area_times : "per area and time: load, generation"
+    analysis_runs ||--o{ pf_area_flows : "per area pair and time: flow"
+    analysis_runs ||--o| pf_run_values : "values in <db>.values/<run>.parquet"
+    gl_elements |o..o{ analysis_elements : "same element id"
+    gl_branch_ends |o..|| gl_elements : "branch"
+
+    gl_assessments {
+        text id PK
+        text native_run_id
+        text project
+        text study_case
+        text status "importing, complete, failed"
+        int period_start
+        int period_end
+    }
+    pf_scenarios {
+        text id PK "assessment id - case id"
+        text name
+        text outages "JSON outage ids"
+        text analysis_id FK
+    }
+    pf_scenario_runs {
+        text scenario_id PK
+        text run_id PK
+        text kind "REF or OUTAGE"
+    }
+    analysis_runs {
+        text id PK
+        text name
+        text status
+    }
+    analysis_elements {
+        text run_id PK
+        text id PK "SHA-256 of project and element path"
+        text name
+        text className "ElmLne, ElmTr2, ElmTerm, ElmLod ..."
+        text type "line, transformer, bus, load, generator, external"
+    }
+    analysis_series {
+        int id PK
+        text run_id
+        text metric_id "loading, voltage, active_power ..."
+        text element_id
+    }
+    analysis_values {
+        int series_id PK
+        int t PK "epoch seconds UTC"
+        real value "NULL: no valid value"
+    }
+    gl_elements {
+        text assessment_id PK
+        text element_id PK
+        text grid "area"
+        real nominal_kv
+        text mrid "NULL until verified"
+    }
+    gl_branch_ends {
+        text assessment_id PK
+        text element_id PK
+        text from_grid "bus1 or bushv"
+        text to_grid "bus2 or buslv"
+    }
+    pf_run_times {
+        text run_id PK
+        int t PK
+        real loading_max
+        int loading_over
+        real voltage_min
+        int voltage_outside
+    }
+    pf_area_times {
+        text run_id PK
+        text area PK
+        int t PK
+        real load
+        real generation
+        real external
+        int missing
+    }
+    pf_area_flows {
+        text run_id PK
+        text from_area PK
+        text to_area PK
+        int t PK
+        real p "positive from_area to to_area"
+    }
+    pf_run_values {
+        text run_id PK
+        text format "parquet"
+        text path "file in <db>.values"
+        int rows
+        text sha256
+    }
 ```
+
+`analysis_values` (series × time → value) keeps the values of runs without a `pf_run_values` row; a run file has the
+same three columns (`series_id`, `t`, `value`), in row groups of 1,000 series × one week.
+
+### 2 · Native results (QDS runs and n-1 sweeps as PowerFactory kept them)
+
+```mermaid
+erDiagram
+    gl_assessments ||--o{ gl_cases : "planning cases"
+    gl_assessments ||--o{ gl_results : "kept results"
+    gl_results ||--o{ gl_times : "study times"
+    gl_results ||--o{ gl_columns : "recorded columns"
+    gl_results ||--o{ gl_contingencies : "n-1 contingencies"
+    gl_columns ||--o{ gl_values : "cells"
+    gl_contingencies ||--o{ gl_pairs : "row exists at time"
+    gl_columns ||--o{ gl_time_columns : "column exists at time"
+    gl_results ||--o{ gl_n1_hourly : "per column and hour: worst and trigger"
+    gl_results ||--o{ gl_n1_columns : "per column: extremes"
+    gl_results |o..o| analysis_runs : "analysis_run_id (QDS)"
+
+    gl_results {
+        text id PK
+        text assessment_id FK
+        text case_id
+        text kind "QDS, n-1, (n-1)'"
+        text status
+        text analysis_run_id
+    }
+    gl_values {
+        text result_id PK
+        int t PK
+        text contingency_id PK
+        int column_id PK
+        real value
+        int code "PowerFactory cell code"
+        text state "value, not_recorded, missing_row ..."
+    }
+    gl_n1_hourly {
+        text result_id PK
+        int column_id PK
+        int t PK
+        real high
+        text high_contingency "the outage that triggered it"
+        int violations
+    }
+```
+
+### 3 · Operational tables (no links)
+
+`pf_jobs` (calculation requests; one per scenario id), `pf_progress` (what the script is doing right now),
+`pf_catalog` (last import's catalog, fallback only), `pf_lodf` / `pf_lodf_undefined` (by `outage_key`, no data
+source in the current workflow), `schema_migrations` (results schema version).
 
 A **scenario** is one named planned-outage case. It has two **runs**: `REF` (every planned outage
 disabled) and `OUTAGE` (its planned outages enabled). All scenarios of one calculation share the same
@@ -37,7 +199,7 @@ REF run: it is stored once and linked to each of them.
 | Table | One row per | Columns |
 |---|---|---|
 | `analysis_runs` | run | `id`, `name`, `project`, `study_case`, `source`, `status` |
-| `analysis_elements` | element of a run | `run_id`, `id`, `name`, `className` (ElmLne, ElmTr2, ElmTerm …), `type` (line, transformer, bus), `path` (full PowerFactory path) |
+| `analysis_elements` | element of a run | `run_id`, `id`, `name`, `className` (ElmLne, ElmTr2, ElmTerm, ElmLod …), `type` (line, transformer, bus, load, generator, external), `path` (full PowerFactory path) |
 | `analysis_metrics` | measured quantity of a run | `run_id`, `id` (loading, voltage …), `name`, `unit`, `lower`, `upper` |
 | `analysis_series` | time series: run × metric × element | `id` (integer), `run_id`, `metric_id`, `element_id` |
 | `analysis_values` | value of a series at one time | `series_id`, `t` (epoch seconds, UTC), `value` (`NULL` = no valid value, e.g. a de-energised busbar) |
@@ -46,26 +208,69 @@ REF run: it is stored once and linked to each of them.
 
 | Table | Content |
 |---|---|
-| `pf_catalog` | one row: project, Study Case, simulated period and every planned outage (JSON) as seen by the last run |
+| `pf_catalog` | one row: project, Study Case, simulated period and every planned outage (JSON) as seen by the **last** import. The dashboard uses the provenance of each scenario instead; this row is only a fallback for scenarios without one |
 | `pf_jobs` | calculation requests and their outcome (`completed`, `failed`, message) |
-| `pf_scenarios` | saved scenarios: `id`, `name`, project, Study Case, `outages` (JSON list of outage ids), `created_at` |
+| `pf_scenarios` | saved scenarios: `id`, `name`, project, Study Case, `outages` (JSON list of outage ids), `created_at`, `analysis_id` (the analysis it belongs to; NULL for scenarios saved without one) |
 | `pf_scenario_runs` | `scenario_id`, `run_id`, `kind` (`REF` / `OUTAGE`) |
-| `pf_scenario_provenance` | per scenario: PowerFactory version, project and Study Case paths, operational scenario, grids, QDS command (JSON) |
+| `pf_scenario_provenance` | per scenario the catalog it was calculated with (JSON): project and Study Case paths, period, run period, its planned outages with windows and equipment, settings, `assessment_id` |
 | `pf_element_limits` | voltage band per busbar and run: `lower`, `upper` |
 | `pf_run_notes` | only for a run that is not `completed`: `status` (`not_converged`: the calculation ended with an error code and the results stop there; `incomplete`: time points without any value) and the explanation `note` |
 | `pf_scenario_cells` | per scenario the dashboard's summary (reduced values per element, JSON), prepared by the script right after it saved the scenario, so the first view does not read every value again (measured: 23 ms instead of 780 ms per scenario with 455 series × 8,784 h). Used only while it matches the loading limits and the LODF it was made with; otherwise the dashboard reduces the values itself. Can be deleted at any time |
-| `pf_lodf` | `outage_key`, `element_id`, `lodf` (signed fraction at the bus1 side, from PowerFactory), `p_pre`, `p_post` (always NULL: PowerFactory's tool gives no flows), `computed_at` |
+| `pf_lodf` | `outage_key`, `element_id`, `lodf` (signed fraction at the bus1 side), `p_pre`, `p_post`, `computed_at`; the current PowerFactory workflow fills it no more (no LODF is calculated), the dashboard then shows "not calculated" |
 | `pf_progress` | one row: what the script is doing right now (`state` running / finished / failed / stopped, `step`, `detail`, `current` of `total` scenarios, `started_at`, `updated_at`); the dashboard shows it as a banner while the script calculates |
 | `pf_lodf_undefined` | `outage_key`, `reason`: outages whose LODF is not defined (no contingency, no solution, no equipment), see [ASSESSMENT.md](ASSESSMENT.md) |
+
+### Analyses (layout 10)
+
+Every import of a PowerFactory run is one **analysis** (`gl_assessments`). The dashboard shows the scenarios of one
+analysis at a time, by default the newest one that has a scenario (`GET /api/simulation/analyses`); scenarios of
+different imports are never evaluated together. Columns added in layout 10: `status` (`importing`, `complete`,
+`failed`; `unknown` only for imports before layout 10), `source_system`, `calculation_types` (JSON list such as
+`["QDS","n-1","(n-1)'"]`), `project_path`, `study_case_path`, `created_by`, `period_start`, `period_end` (epoch seconds
+of the period the runs covered) and `result_schema_version` (2; 1 for earlier imports).
+
+`gl_elements` holds the master data of every monitored element of an analysis: `element_id` (the internal key below),
+`name`, `class_name`, `path`, `grid`, `nominal_kv` and `mrid`. `mrid` stays NULL until a verified source supplies the
+CGMES mRID; nothing is guessed.
+
+A file of layout 9 is brought to layout 10 when it is opened: the new columns are added, every scenario gets the
+analysis named in its provenance, and each analysis gets its result kinds, paths, period and a status inferred from
+its cases (`failed` when a case is marked `IMPORT FAILED`). Master data is not invented for earlier imports.
+
+### Time summary (layout 11)
+
+`pf_run_times` holds per QDS run and time the highest branch loading (`loading_max`), how many branches exceed their
+limit (`loading_over`), the lowest and highest node voltage (`voltage_min`, `voltage_max`) and how many nodes leave
+their band (`voltage_outside`), with the limits of `pf_element_limits`. The bridge writes it while it imports the run
+(about 1 s per run of 660 series over a year); the time-point view reads it by key. For runs imported before layout 11
+the dashboard aggregates the same figures from the stored values once (a few seconds) and keeps them in memory.
+
+### Areas (layout 13)
+
+`pf_area_times` holds per QDS run, area (grid) and time the summed active power of loads, generators and external
+grids (NULL when the area has no such element recorded) and how many of its series had no valid value;
+`pf_area_flows` the summed active power of the branches between two areas, positive from `from_area` to `to_area`.
+`gl_branch_ends` records the grids at both ends of every branch, read from its terminals at import. The bridge writes
+all three while it imports a run, only for what PowerFactory recorded; see [AREAS.md](AREAS.md).
+
+Layout 12 adds the index `analysis_elements_name (run_id, name)` for the equipment list in name order and the
+switched-off equipment of a scenario (100,000 elements: from 970 ms to 1.5 ms for the scenario index).
+
+### States
+
+Every value the API cannot give as a number carries a state from one versioned catalogue
+(`backend/app/simulation/states.py`, `GET /api/simulation/states`): cell states such as `invalid_or_missing`
+(NULL in `analysis_values`), `not_recorded` (n-1, PowerFactory code 3), `missing_row`, `missing_column`, `invalid`,
+`read_error`; element state `outaged`; result, case and analysis states. A missing value is never 0.
 
 ### Identifiers
 
 | Identifier | Built from | Stable across |
 |---|---|---|
-| element `id` | SHA-256 of `<project path>|<element path>` | all runs and calculations of one project |
+| element `id` | SHA-256 of `<project path>|<element path>` | all runs and calculations of one project; renaming or moving the element in PowerFactory starts a new identity. The CGMES mRID (`gl_elements.mrid`) is kept beside it once a verified source supplies it |
 | outage id | SHA-256 of the planned outage's PowerFactory path | all calculations |
 | `outage_key` | the sorted outage ids of a scenario, comma-separated | scenarios with the same outages |
-| run `id` | `<job id>-OUTAGE`, `reference-<random>` for the shared REF | – |
+| run `id` | random per stored run (REF and every case); a scenario is `<assessment id>-<case id>` | – |
 
 The grid (ElmNet) of an element is the folder name before `.ElmNet` in its `path`
 (`…\D7 Grid.ElmNet\L1.ElmLne` → `D7 Grid`); the views below provide it as the column `grid`.
@@ -111,7 +316,9 @@ The file can be read while the dashboard runs. Open it **read-only**, never writ
 | `v_lodf` | LODF value | scenario, element, grid, `lodf`, `p_pre`, `p_post` |
 | `v_lodf_undefined` | scenario without LODF | scenario, reason |
 
-Filter `v_samples` at least by scenario and element (or metric); it holds every value of the file.
+Filter `v_samples` at least by scenario and element (or metric). It holds the values stored in SQLite only; the
+values of runs in `pf_run_values` are Parquet files any Parquet reader opens (DuckDB, pandas, Power BI, Excel via
+Power Query), with `series_id` joining `analysis_series`.
 
 ### Examples (SQL)
 
@@ -152,9 +359,10 @@ which usually has to be installed by IT; the Python route above writes a CSV for
 
 ## Backup
 
-Copying the file while the dashboard runs is not safe (WAL). Use
+Copying the SQLite file while the dashboard runs is not safe (WAL). Use
 `sqlite3 outage-assessment.sqlite3 ".backup backup.sqlite3"`, or stop the dashboard first
-(`stop-dashboard.cmd`) and copy the file.
+(`stop-dashboard.cmd`) and copy the file. **Copy the folder `outage-assessment.values` as well** (as
+`backup.values` beside the copy): its files are never changed once written, so a plain copy is consistent.
 
 ## Rebuilding
 

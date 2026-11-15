@@ -24,6 +24,7 @@ import {
   yAxisNameStyle,
 } from './format';
 import { useChartTheme } from '../../hooks/useChartTheme';
+import { isFiniteValue } from '../../util/values';
 
 echarts.use([BarChart, GridComponent, TooltipComponent, DataZoomComponent, CanvasRenderer]);
 
@@ -52,7 +53,7 @@ export default function TimeseriesHistogramChart({
   const option = useMemo(() => {
     const values = series.data
       .map((point) => point.value)
-      .filter((value) => Number.isFinite(value));
+      .filter(isFiniteValue);
 
     if (values.length === 0) return null;
 

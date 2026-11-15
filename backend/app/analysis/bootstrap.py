@@ -63,6 +63,10 @@ def select_database(value):
             db.execute(
                 "SELECT id, name, project, study_case, source, status FROM analysis_runs LIMIT 0"
             )
+        # Bring the file to the current layout now (new tables and columns), not on the first request that needs them.
+        from app.simulation.store import ScenarioStore
+
+        ScenarioStore(str(path)).close()
         with _lock:
             if str(path) not in _repositories:
                 _repositories[str(path)] = AnalysisRepository(str(path))

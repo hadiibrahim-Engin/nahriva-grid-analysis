@@ -23,12 +23,17 @@ export function inGrid(item: { grid?: string | null }, grid: GridSelection): boo
   return grid === null || (item.grid ?? '') === grid;
 }
 
-/** The data with only the branches and busbars of one grid; unchanged for "all grids". */
-export function restrictToGrid(data: AcrossData, grid: GridSelection): AcrossData {
-  if (grid === null) return data;
+export function atVoltage(item: { nominal_kv?: number | null }, kv: number | null): boolean {
+  return kv === null || item.nominal_kv === kv;
+}
+
+/** The data with only the branches and busbars of one grid and voltage level; unchanged for "all". */
+export function restrictToGrid(data: AcrossData, grid: GridSelection, kv: number | null = null): AcrossData {
+  if (grid === null && kv === null) return data;
+  const keep = (item: { grid?: string | null; nominal_kv?: number | null }) => inGrid(item, grid) && atVoltage(item, kv);
   return {
     ...data,
-    lines: data.lines.filter((line) => inGrid(line, grid)),
-    buses: data.buses?.filter((bus) => inGrid(bus, grid)),
+    lines: data.lines.filter(keep),
+    buses: data.buses?.filter(keep),
   };
 }

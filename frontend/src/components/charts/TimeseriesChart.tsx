@@ -27,6 +27,7 @@ import {
 } from './format';
 import { useChartTheme } from '../../hooks/useChartTheme';
 import { normalizeThresholdLevelEntries } from '../../util/dynamicCharts';
+import { isFiniteValue } from '../../util/values';
 
 echarts.use([
   LineChart,
@@ -224,7 +225,7 @@ export default function TimeseriesChart({
       const color = theme.palette[i % theme.palette.length];
       const lastValue = s.data.length > 0 ? s.data[s.data.length - 1].value : 0;
       const lastTimestamp = s.data.length > 0 ? s.data[s.data.length - 1].timestamp : null;
-      const isActive = Number.isFinite(lastValue) && Math.abs(lastValue) > 0;
+      const isActive = isFiniteValue(lastValue) && Math.abs(lastValue) > 0;
       return {
         name: `${s.component_name} - ${s.measurement_type} (${s.unit})`,
         type: 'line' as const,

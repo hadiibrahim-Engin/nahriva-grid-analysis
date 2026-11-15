@@ -1,11 +1,14 @@
 /**
- * Criteria of the outage assessment. Change values here only.
+ * Criteria of the outage assessment. The defaults are here; the Limits dialog can change them for this browser
+ * (config/overrides.ts).
  *
  * A scenario is judged on all evaluated equipment: branches by thermal loading
  * (lines, transformers) and busbars by voltage. The decisive question is whether a
  * violation is *caused* by the outage or was already there in the reference run.
  */
-export const ASSESSMENT = {
+import { readOverrides } from './overrides.ts';
+
+export const DEFAULT_ASSESSMENT = {
   /** Loading increase (pp) against REF from which an existing overload counts as aggravated. */
   aggravationPp: 2,
   /** Remaining thermal reserve (pp below 100 %) under which a branch counts as heavily utilised after the outage. */
@@ -20,6 +23,20 @@ export const ASSESSMENT = {
   /** Voltage change (p.u.) beyond the REF range from which an existing violation counts as aggravated. */
   voltageAggravationPu: 0.002,
 } as const;
+
+/** The criteria in force: the defaults with the changes of the Limits dialog (an inverted band is ignored). */
+export const ASSESSMENT = (() => {
+  const changed = readOverrides();
+  const lower = changed.voltageLower ?? DEFAULT_ASSESSMENT.voltageBandPu.lower;
+  const upper = changed.voltageUpper ?? DEFAULT_ASSESSMENT.voltageBandPu.upper;
+  return {
+    ...DEFAULT_ASSESSMENT,
+    aggravationPp: changed.aggravationPp ?? DEFAULT_ASSESSMENT.aggravationPp,
+    thermalReservePp: changed.thermalReservePp ?? DEFAULT_ASSESSMENT.thermalReservePp,
+    voltageBandPu: lower < upper ? { lower, upper } : DEFAULT_ASSESSMENT.voltageBandPu,
+    voltageMarginPu: changed.voltageMargin ?? DEFAULT_ASSESSMENT.voltageMarginPu,
+  };
+})();
 
 export type Verdict = 'permissible' | 'conditional' | 'not-permissible' | 'unknown';
 

@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
 from app.analysis.bootstrap import initialize_analysis, get_repository, close_repositories
 from app.simulation.routes import router as simulation_router
+from app.simulation.gridlens_routes import router as gridlens_router
 from app.simulation.store import ScenarioStore
 from app.simulation import settings
 from app.core.errors import DashboardError
@@ -27,7 +28,9 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Outage Assessment", lifespan=lifespan)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+# Level 6 instead of the default 9: a third of the CPU time for 4 % more bytes; the dashboard asks for every scenario
+# on each visit, usually on this PC.
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 if settings.CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -36,6 +39,7 @@ if settings.CORS_ORIGINS:
         allow_headers=["Content-Type"],
     )
 app.include_router(simulation_router)
+app.include_router(gridlens_router)
 
 
 @app.middleware("http")
@@ -84,6 +88,10 @@ def spa(path: str):
         raise HTTPException(404, "API route not found.")
     candidate = (DIST / path).resolve()
     if candidate.is_relative_to(DIST.resolve()) and candidate.is_file():
+        # Vite names every file under assets/ by its content hash: a new build gets new names, so the browser may
+        # keep them for good instead of asking again on every visit. index.html stays no-cache and links the new names.
+        if path.startswith("assets/"):
+            return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
         return FileResponse(candidate)
     if not path.rsplit("/", 1)[-1].count(".") and (DIST / "index.html").is_file():
         return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-cache"})

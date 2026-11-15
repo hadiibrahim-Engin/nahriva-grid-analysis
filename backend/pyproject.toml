@@ -11,6 +11,9 @@ dependencies = [
     "fastapi>=0.115.12,<1",
     "uvicorn[standard]>=0.30.6,<1",
     "pydantic>=2.11,<3",
+    # Raw values are stored per run in Parquet (written by the bridge) and read with DuckDB (decision E2).
+    "pyarrow>=18",
+    "duckdb>=1.1",
 ]
 
 [project.optional-dependencies]

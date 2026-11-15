@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useDeferredValue, useMemo, useState } from 'react';
 import { ANALYSIS, bandOf } from '../../config/loadingBands';
 import {
   fmtHours,
@@ -12,7 +12,8 @@ import {
 } from '../../util/acrossScenarios';
 import { CAUSE_LABEL, causeOf, equipmentTitle } from '../../util/outageAssessment';
 import EquipmentName from './EquipmentName';
-import { BandLegend, ScenarioTag, SectionCard } from './shared';
+import { BandLegend, ScenarioTag, SectionCard, SpacerRow } from './shared';
+import { useVirtualRows } from '../../hooks/useVirtualRows';
 
 interface Props {
   lines: LineStats[];
@@ -24,21 +25,78 @@ interface Props {
 type SortMode = 'priority' | 'max' | 'name';
 const ROW_OPTIONS = [10, 12, 15, 20, 40, 0] as const; // 0 = all
 
-export default function LineScenarioHeatmap({ lines, scenarios, selectedId, onSelect }: Props) {
+export default memo(function LineScenarioHeatmap({ lines, scenarios, selectedId, onSelect }: Props) {
   const [sort, setSort] = useState<SortMode>('priority');
   const [rowCount, setRowCount] = useState<number>(ANALYSIS.heatmapDefaultRows);
   const [query, setQuery] = useState('');
   const [onlyOverloaded, setOnlyOverloaded] = useState(false);
+  // The controls follow every key and click at once; the rows (up to all equipment × all scenarios) follow in the
+  // background, so typing or choosing "All equipment" never waits for the table.
+  const deferredQuery = useDeferredValue(query);
+  const deferredSort = useDeferredValue(sort);
+  const deferredRowCount = useDeferredValue(rowCount);
+  const deferredOnlyOverloaded = useDeferredValue(onlyOverloaded);
 
   const shown = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase('en');
-    let rows = lines.filter((s) => (!needle || s.line.name.toLocaleLowerCase('en').includes(needle)) && (!onlyOverloaded || s.n100 > 0));
+    const needle = deferredQuery.trim().toLocaleLowerCase('en');
+    let rows = lines.filter((s) => (!needle || s.line.name.toLocaleLowerCase('en').includes(needle)) && (!deferredOnlyOverloaded || s.n100 > 0));
     rows = [...rows].sort((a, b) =>
-      sort === 'name' ? a.line.name.localeCompare(b.line.name, 'en')
-      : sort === 'max' ? (b.max ?? -Infinity) - (a.max ?? -Infinity)
+      deferredSort === 'name' ? a.line.name.localeCompare(b.line.name, 'en')
+      : deferredSort === 'max' ? (b.max ?? -Infinity) - (a.max ?? -Infinity)
       : b.priority - a.priority);
-    return { total: rows.length, rows: rowCount === 0 ? rows : rows.slice(0, rowCount) };
-  }, [lines, sort, rowCount, query, onlyOverloaded]);
+    return { total: rows.length, rows: deferredRowCount === 0 ? rows : rows.slice(0, deferredRowCount) };
+  }, [lines, deferredSort, deferredRowCount, deferredQuery, deferredOnlyOverloaded]);
+
+  // With all equipment of a large grid only the rows around the visible part are rendered.
+  const rowKeys = useMemo(() => shown.rows.map((stats) => stats.line.id), [shown.rows]);
+  const { bodyRef, start, end, padTop, padBottom } = useVirtualRows(rowKeys, 39);
+  const columns = scenarios.length + 2;
+
+  // Up to all equipment × all scenarios cells with tooltips; none of them depends on the selected scenario, so
+  // choosing one only re-renders the header.
+  const body = useMemo(() => (
+    <tbody ref={bodyRef}>
+      <SpacerRow height={padTop} columns={columns} />
+      {shown.rows.slice(start, end).map((stats, k) => (
+        <tr key={stats.line.id} data-row={stats.line.id} aria-rowindex={start + k + 2}>
+          <td className="ab-heat__line" title={equipmentTitle(stats.line.type, stats.line.name)}>
+            <EquipmentName type={stats.line.type} name={stats.line.name} />
+          </td>
+          <td
+            className={`ab-heat__cell ab-heat__cell--base ${stats.base === null ? 'ab-heat__cell--none' : `ab-fill--${bandOf(stats.base).id} ab-ink--${bandOf(stats.base).id}`}`}
+            title={`Base (REF-Maximum): ${fmtPct(stats.base)}`}
+          >
+            {stats.base === null ? '–' : fmtNum(stats.base)}
+          </td>
+          {scenarios.map((s) => {
+            const cell = stats.line.cells[s.scenario.id];
+            if (!cell) return <td key={s.scenario.id} className="ab-heat__cell ab-heat__cell--none">–</td>;
+            if (cell.outaged) {
+              return <td key={s.scenario.id} className="ab-heat__cell ab-heat__cell--off" title={`${stats.line.name} is switched off in ${s.scenario.name}`}>OFF</td>;
+            }
+            if (cell.value === null) return <td key={s.scenario.id} className="ab-heat__cell ab-heat__cell--none">–</td>;
+            const band = bandOf(cell.value);
+            const cause = causeOf(cell);
+            const tip = [
+              `${stats.line.name} · ${s.code} ${s.scenario.name}`,
+              `Loading: ${fmtPct(cell.value)} (${band.label})`,
+              `REF in the same window: ${fmtPct(cell.window_base)}`,
+              `Δ Loading: ${fmtPp(cell.delta)}`,
+              `Time > 100 %: ${cell.hours_over ? fmtHours(cell.hours_over[0]) : '–'}`,
+              `LODF: ${fmtLodf(cell.lodf)}`,
+              cause ? CAUSE_LABEL[cause] : '',
+            ].filter(Boolean).join('\n');
+            return (
+              <td key={s.scenario.id} className={`ab-heat__cell ab-fill--${band.id} ab-ink--${band.id}${cause === 'preexisting' ? ' ab-cell--pre' : cause ? ' ab-cell--caused' : ''}`} title={tip}>
+                {fmtNum(cell.value)}
+              </td>
+            );
+          })}
+        </tr>
+      ))}
+      <SpacerRow height={padBottom} columns={columns} />
+    </tbody>
+  ), [shown.rows, scenarios, bodyRef, start, end, padTop, padBottom, columns]);
 
   return (
     <SectionCard
@@ -78,7 +136,7 @@ export default function LineScenarioHeatmap({ lines, scenarios, selectedId, onSe
         <p className="py-6 text-center text-sm text-[var(--grid-muted)]">No equipment matches the filter.</p>
       ) : (
         <div className="ab-scroll" style={{ padding: 4 }}>
-          <table className="ab-heat" style={{ minWidth: `calc(20rem + ${scenarios.length * 5.5}rem)` }}>
+          <table className="ab-heat" aria-rowcount={shown.rows.length + 1} style={{ minWidth: `calc(20rem + ${scenarios.length * 5.5}rem)` }}>
             <colgroup>
               <col style={{ width: '15rem' }} />
               <col style={{ width: '5.5rem' }} />
@@ -98,48 +156,10 @@ export default function LineScenarioHeatmap({ lines, scenarios, selectedId, onSe
                 ))}
               </tr>
             </thead>
-            <tbody>
-              {shown.rows.map((stats) => (
-                <tr key={stats.line.id}>
-                  <td className="ab-heat__line" title={equipmentTitle(stats.line.type, stats.line.name)}>
-                    <EquipmentName type={stats.line.type} name={stats.line.name} />
-                  </td>
-                  <td
-                    className={`ab-heat__cell ab-heat__cell--base ${stats.base === null ? 'ab-heat__cell--none' : `ab-fill--${bandOf(stats.base).id} ab-ink--${bandOf(stats.base).id}`}`}
-                    title={`Base (REF-Maximum): ${fmtPct(stats.base)}`}
-                  >
-                    {stats.base === null ? '–' : fmtNum(stats.base)}
-                  </td>
-                  {scenarios.map((s) => {
-                    const cell = stats.line.cells[s.scenario.id];
-                    if (!cell) return <td key={s.scenario.id} className="ab-heat__cell ab-heat__cell--none">–</td>;
-                    if (cell.outaged) {
-                      return <td key={s.scenario.id} className="ab-heat__cell ab-heat__cell--off" title={`${stats.line.name} is switched off in ${s.scenario.name}`}>OFF</td>;
-                    }
-                    if (cell.value === null) return <td key={s.scenario.id} className="ab-heat__cell ab-heat__cell--none">–</td>;
-                    const band = bandOf(cell.value);
-                    const cause = causeOf(cell);
-                    const tip = [
-                      `${stats.line.name} · ${s.code} ${s.scenario.name}`,
-                      `Loading: ${fmtPct(cell.value)} (${band.label})`,
-                      `REF in the same window: ${fmtPct(cell.window_base)}`,
-                      `Δ Loading: ${fmtPp(cell.delta)}`,
-                      `Time > 100 %: ${cell.hours_over ? fmtHours(cell.hours_over[0]) : '–'}`,
-                      `LODF: ${fmtLodf(cell.lodf)}`,
-                      cause ? CAUSE_LABEL[cause] : '',
-                    ].filter(Boolean).join('\n');
-                    return (
-                      <td key={s.scenario.id} className={`ab-heat__cell ab-fill--${band.id} ab-ink--${band.id}${cause === 'preexisting' ? ' ab-cell--pre' : cause ? ' ab-cell--caused' : ''}`} title={tip}>
-                        {fmtNum(cell.value)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
+            {body}
           </table>
         </div>
       )}
     </SectionCard>
   );
-}
+});

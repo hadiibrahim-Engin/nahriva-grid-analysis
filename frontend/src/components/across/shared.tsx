@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react';
+import { useSectionExpansion } from '../../hooks/useSectionExpansion';
 import { OPEN_SECTION_EVENT } from '../../util/acrossScenarios';
 import { LOADING_BANDS } from '../../config/loadingBands';
 import { useHelp } from './help';
@@ -17,17 +18,22 @@ export function SectionCard({ title, hint, actions, children, collapsible = true
   id?: string;
   className?: string;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const bulk = useSectionExpansion();
+  const [selection, setSelection] = useState({ revision: -1, open: defaultOpen });
+  // Also applies to cards mounted later (lazy sections and nested charts).
+  const open = selection.revision === bulk.revision ? selection.open : (bulk.open ?? defaultOpen);
   const bodyId = useId();
   const help = useHelp();
   const [hintOpen, setHintOpen] = useState(false);
   const showHint = help || hintOpen;
   useEffect(() => {
     if (!id) return;
-    const open = (event: Event) => { if ((event as CustomEvent<string>).detail === id) setOpen(true); };
+    const open = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === id) setSelection({ revision: bulk.revision, open: true });
+    };
     window.addEventListener(OPEN_SECTION_EVENT, open);
     return () => window.removeEventListener(OPEN_SECTION_EVENT, open);
-  }, [id]);
+  }, [id, bulk.revision]);
   const expanded = !collapsible || open;
   const heading = (
     <div className="min-w-0">
@@ -40,7 +46,7 @@ export function SectionCard({ title, hint, actions, children, collapsible = true
     <section id={id} className={`across-card ${className}${collapsible && !expanded ? ' across-card--collapsed' : ''}`}>
       <header className="across-card__head">
         {collapsible ? (
-          <button type="button" className="across-card__toggle" aria-label={`${title} ${expanded ? 'collapse' : 'expand'}`} aria-expanded={expanded} aria-controls={bodyId} onClick={() => setOpen((v) => !v)}>
+          <button type="button" className="across-card__toggle" aria-label={`${title} ${expanded ? 'collapse' : 'expand'}`} aria-expanded={expanded} aria-controls={bodyId} onClick={() => setSelection({ revision: bulk.revision, open: !open })}>
             <svg className="across-card__chevron" width="14" height="14" viewBox="0 0 16 16" aria-hidden><path d="M5 6l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
             {heading}
           </button>
@@ -71,6 +77,12 @@ export function BandLegend() {
       ))}
     </ul>
   );
+}
+
+/** Stands in for the rows of a long table that are not rendered (see hooks/useVirtualRows). */
+export function SpacerRow({ height, columns }: { height: number; columns: number }) {
+  if (height <= 0) return null;
+  return <tr aria-hidden="true"><td colSpan={columns} style={{ height, padding: 0, border: 0, background: 'none' }} /></tr>;
 }
 
 /** Short scenario code with the full name on hover. */

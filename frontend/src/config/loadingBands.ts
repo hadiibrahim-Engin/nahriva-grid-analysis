@@ -1,22 +1,41 @@
 /**
  * Central definition of the loading severity bands and the thresholds used by
- * the across-scenarios evaluation. Change values here only; every component and
+ * the across-scenarios evaluation. The defaults are here; the Limits dialog can
+ * change them for this browser (config/overrides.ts). Every component and
  * calculation reads from this file.
  */
+import { readOverrides } from './overrides.ts';
 
 export type BandId = 'ok' | 'high' | 'light' | 'clear' | 'severe';
 
-/** Upper limits in % loading. A value is classified by the first limit it does not exceed. */
-export const LOADING_LIMITS = {
+export interface LoadingLimits {
   /** below: uncritical */
-  warning: 80,
+  readonly warning: number;
   /** up to and including: warning range; above: overload */
-  overload: 100,
+  readonly overload: number;
   /** up to and including: light overload */
-  clear: 110,
+  readonly clear: number;
   /** up to and including: clear overload; above: strong overload */
-  severe: 120,
-} as const;
+  readonly severe: number;
+}
+
+export const DEFAULT_LOADING_LIMITS: LoadingLimits = { warning: 80, overload: 100, clear: 110, severe: 120 };
+
+/** The limits in force: the defaults with the user's changes, as long as they still rise from warning to severe. */
+function loadingLimits(): LoadingLimits {
+  const changed = readOverrides();
+  const chosen = {
+    warning: changed.warning ?? DEFAULT_LOADING_LIMITS.warning,
+    overload: changed.overload ?? DEFAULT_LOADING_LIMITS.overload,
+    clear: changed.clear ?? DEFAULT_LOADING_LIMITS.clear,
+    severe: changed.severe ?? DEFAULT_LOADING_LIMITS.severe,
+  };
+  return chosen.warning < chosen.overload && chosen.overload < chosen.clear && chosen.clear < chosen.severe
+    ? chosen : DEFAULT_LOADING_LIMITS;
+}
+
+/** Upper limits in % loading. A value is classified by the first limit it does not exceed. */
+export const LOADING_LIMITS: LoadingLimits = loadingLimits();
 
 export interface LoadingBand {
   id: BandId;

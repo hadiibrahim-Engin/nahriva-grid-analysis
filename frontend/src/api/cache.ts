@@ -18,6 +18,7 @@
 interface Entry<T> {
   expiresAt: number;
   value: T;
+  persisted?: string;
 }
 
 interface InFlight<T> {
@@ -37,6 +38,18 @@ export interface CacheOptions {
 const store = new Map<string, Entry<unknown>>();
 const inflight = new Map<string, InFlight<unknown>>();
 
+const MAX_ENTRIES = 64;
+const MAX_PERSISTED_CHARS = 2 * 1024 * 1024;
+const MAX_ENTRY_CHARS = 256 * 1024;
+let generation = 0;
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+function prune(): void {
+  const now = Date.now();
+  for (const [key, entry] of store) if (entry.expiresAt <= now) store.delete(key);
+  while (store.size > MAX_ENTRIES) store.delete(store.keys().next().value!);
+}
+
 const DEFAULT_TTL_MS = 5 * 60_000;
 
 // -- sessionStorage persistence ----------------------------------------
@@ -46,38 +59,43 @@ function loadFromStorage(): void {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return;
+    if (raw.length > MAX_PERSISTED_CHARS) { sessionStorage.removeItem(STORAGE_KEY); return; }
     const persisted = JSON.parse(raw) as Record<
       string,
       { expiresAt: number; value: unknown }
     >;
     const now = Date.now();
     for (const [key, entry] of Object.entries(persisted)) {
-      if (typeof entry.expiresAt === 'number' && entry.expiresAt > now) {
-        store.set(key, entry as Entry<unknown>);
+      if (entry && typeof entry.expiresAt === 'number' && entry.expiresAt > now) {
+        const persisted = JSON.stringify(entry);
+        if (persisted.length <= MAX_ENTRY_CHARS) store.set(key, { ...entry, persisted });
       }
     }
+    prune();
   } catch {
     // sessionStorage unavailable (private browsing, quota, non-serialisable)
   }
 }
 
 function saveToStorage(): void {
-  try {
-    const now = Date.now();
-    const obj: Record<string, { expiresAt: number; value: unknown }> = {};
-    for (const [key, entry] of store.entries()) {
-      if (entry.expiresAt > now) {
-        obj[key] = entry;
+  if (saveTimer !== undefined) return;
+  // Coalesce a burst of completed requests. Values are encoded once, only on explicit opt-in.
+  saveTimer = setTimeout(() => {
+    saveTimer = undefined;
+    prune();
+    try {
+      const entries: string[] = [];
+      let size = 2;
+      for (const [key, entry] of [...store].reverse()) {
+        if (!entry.persisted) continue;
+        const item = `${JSON.stringify(key)}:${entry.persisted}`;
+        if (size + item.length + 1 > MAX_PERSISTED_CHARS) continue;
+        size += item.length + 1;
+        entries.push(item);
       }
-    }
-    const serialised = JSON.stringify(obj);
-    // Skip if >4 MB to avoid QuotaExceededError; in-memory cache still works.
-    if (serialised.length < 4 * 1024 * 1024) {
-      sessionStorage.setItem(STORAGE_KEY, serialised);
-    }
-  } catch {
-    // Quota exceeded or sessionStorage disabled — gracefully degrade.
-  }
+      sessionStorage.setItem(STORAGE_KEY, `{${entries.join(',')}}`);
+    } catch { /* privacy mode or quota: the memory cache still works */ }
+  }, 100);
 }
 
 // Hydrate from sessionStorage once at module init (runs synchronously at import)
@@ -101,7 +119,11 @@ export async function withCache<T>(
 
   if (!opts.force) {
     const entry = store.get(key) as Entry<T> | undefined;
-    if (entry && entry.expiresAt > now) return entry.value;
+    if (entry && entry.expiresAt > now) {
+      store.delete(key);
+      store.set(key, entry);
+      return entry.value;
+    }
 
     const pending = inflight.get(key) as InFlight<T> | undefined;
     if (pending) return pending.promise;
@@ -111,17 +133,25 @@ export async function withCache<T>(
     if (pending) return pending.promise;
   }
 
-  const promise = fetcher()
+  const startedGeneration = generation;
+  const promise = Promise.resolve().then(fetcher)
     .then((value) => {
-      store.set(key, { expiresAt: Date.now() + ttl, value });
-      // Persist analytics entries (persist:true) or anything over 1 min TTL
-      if (opts.persist || ttl > 60_000) {
-        saveToStorage();
+      if (startedGeneration !== generation) return value;
+      const entry: Entry<T> = { expiresAt: Date.now() + ttl, value };
+      if (opts.persist) {
+        try {
+          const encoded = JSON.stringify(entry);
+          if (encoded.length <= MAX_ENTRY_CHARS) entry.persisted = encoded;
+        } catch { /* non-serialisable values remain in memory */ }
       }
+      store.delete(key);
+      store.set(key, entry);
+      prune();
+      if (opts.persist) saveToStorage();
       return value;
     })
     .finally(() => {
-      inflight.delete(key);
+      if (inflight.get(key)?.promise === promise) inflight.delete(key);
     });
 
   inflight.set(key, { promise } as InFlight<unknown>);
@@ -130,7 +160,11 @@ export async function withCache<T>(
 
 /** Drop all cached entries (in-memory + sessionStorage). Used when the user clicks ↻. */
 export function clearCache(): void {
+  generation++;
   store.clear();
+  inflight.clear();
+  if (saveTimer !== undefined) clearTimeout(saveTimer);
+  saveTimer = undefined;
   try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
 }
 

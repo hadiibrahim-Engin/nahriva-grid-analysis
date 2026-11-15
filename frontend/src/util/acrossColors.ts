@@ -8,16 +8,16 @@ export interface AcrossColors {
 }
 
 const FALLBACK_LIGHT: AcrossColors = {
-  bands: { ok: '#719481', high: '#bd8d32', light: '#d7793f', clear: '#c8665c', severe: '#ab3436' },
-  pos: '#c65722',
-  neg: '#277d91',
-  lodf: '#426ed0',
+  bands: { ok: '#2f8062', high: '#a96c18', light: '#c4642f', clear: '#bd554f', severe: '#a93b3b' },
+  pos: '#c4642f',
+  neg: '#287f8d',
+  lodf: '#376db8',
 };
 const FALLBACK_DARK: AcrossColors = {
-  bands: { ok: '#83a593', high: '#d8ae55', light: '#f29c65', clear: '#dd7d77', severe: '#bc474c' },
-  pos: '#f29c65',
-  neg: '#58bfc6',
-  lodf: '#7098f1',
+  bands: { ok: '#66bb94', high: '#e0aa54', light: '#e99155', clear: '#e47b70', severe: '#c94f55' },
+  pos: '#e99155',
+  neg: '#64b7c2',
+  lodf: '#6f9fe8',
 };
 
 /** Reads the per-theme band hues (--ab-*) so charts follow the light/dark definition in index.css. */

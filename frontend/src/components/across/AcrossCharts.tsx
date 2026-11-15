@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import * as echarts from 'echarts/core';
 import { BarChart, ScatterChart } from 'echarts/charts';
 import { DataZoomComponent, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from 'echarts/components';
@@ -24,6 +24,9 @@ echarts.use([BarChart, ScatterChart, DataZoomComponent, GridComponent, LegendCom
 
 const TOP = 12;
 const ROW = 28;
+/** Above this many points the LODF scatter uses ECharts' large mode (see LodfChart). */
+const LARGE_SCATTER_POINTS = 20000;
+
 /** Room for a zoom slider next to the plot area. */
 const ZOOM_SPACE = 22;
 
@@ -272,18 +275,49 @@ export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; s
     return result;
   }, [lines, scenarios]);
   const option = useMemo(() => {
-    const xMax = Math.max(0.5, ...points.map((p) => p.x)) * 1.1;
-    const ys = points.map((p) => p.y);
-    const yMax = Math.max(20, ...ys) * 1.15;
-    const yMin = Math.min(0, ...ys) * 1.15;
-    const labelled = new Set([...points.keys()].sort((a, b) => points[b].x * Math.abs(points[b].y) - points[a].x * Math.abs(points[a].y)).slice(0, 5));
+    // A loop, not Math.max(...values): a large grid has more points than a call may take arguments.
+    let xMax = 0.5, yMax = 20, yMin = 0;
+    for (const p of points) { xMax = Math.max(xMax, p.x); yMax = Math.max(yMax, p.y); yMin = Math.min(yMin, p.y); }
+    xMax *= 1.1; yMax *= 1.15; yMin *= 1.15;
+    // The five most striking points, kept in data order so overlapping labels stack as before.
+    const labelled = [...points.keys()].sort((a, b) => points[b].x * Math.abs(points[b].y) - points[a].x * Math.abs(points[a].y)).slice(0, 5).sort((a, b) => a - b);
+    const symbolSize = (p: { value: number }) => (p.value > LOADING_LIMITS.overload ? 13 : 8);
+    // Very many points: one series per loading band in ECharts' large mode, which draws a series as one path (one
+    // colour and size each; both follow the band). Below that, one series in data order, as drawn so far.
+    const groups = points.length > LARGE_SCATTER_POINTS
+      ? BAND_ORDER.map((band) => [...points.keys()].filter((i) => points[i].band === band)).filter((g) => g.length > 0)
+      : null;
+    const pointOf = (p: { seriesIndex: number; dataIndex: number }) => points[groups ? groups[p.seriesIndex][p.dataIndex] : p.dataIndex];
+    const marks = {
+      markArea: {
+        silent: true,
+        itemStyle: { color: withAlpha(colors.lodf, 0.09) },
+        label: { show: true, position: 'insideBottomRight', color: theme.mutedText, fontSize: 10, formatter: 'high LODF + large change' },
+        data: [[{ xAxis: ANALYSIS.lodfNotable, yAxis: ANALYSIS.deltaStrongPp / 2 }, { xAxis: xMax, yAxis: yMax }]],
+      },
+      markLine: { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: theme.mutedText, width: 1 }, data: [{ yAxis: 0 }] },
+    };
+    const border = { opacity: 0.9, borderColor: theme.isLight ? '#ffffff' : '#0b0f14', borderWidth: 1 };
+    const scatter = groups
+      ? groups.map((group, g) => ({
+          type: 'scatter', large: true, symbolSize: symbolSize(points[group[0]]),
+          itemStyle: { color: colors.bands[points[group[0]].band], ...border },
+          ...(g === 0 ? marks : {}),
+          data: group.map((i) => [points[i].x, points[i].y]),
+        }))
+      : [{
+          type: 'scatter', symbolSize: (_: unknown, p: { dataIndex: number }) => symbolSize(points[p.dataIndex]),
+          itemStyle: { color: (p: { dataIndex: number }) => colors.bands[points[p.dataIndex].band], ...border },
+          ...marks,
+          data: points.map((p) => [p.x, p.y]),
+        }];
     return {
       ...common(theme),
       tooltip: {
         ...common(theme).tooltip,
         trigger: 'item',
-        formatter: (p: { dataIndex: number }) => {
-          const d = points[p.dataIndex];
+        formatter: (p: { seriesIndex: number; dataIndex: number }) => {
+          const d = pointOf(p);
           return [
             `<strong>${escapeHtml(d.line)}</strong>`, escapeHtml(d.scenario),
             `|LODF|: <strong>${fmtLodf(d.x)}</strong>`, `Δ Loading: <strong>${fmtPp(d.y)}</strong>`, `Loading: ${fmtPct(d.value)}`,
@@ -300,20 +334,16 @@ export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; s
       ],
       xAxis: xValue(theme, '', { min: 0, max: xMax, name: '|LODF|', nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: theme.mutedText }, axisLabel: { color: theme.mutedText, fontSize: 10, formatter: (v: number) => fmtLodf(v) } }),
       yAxis: xValue(theme, '', { min: yMin, max: yMax, name: 'Δ Loading (pp)', nameTextStyle: { color: theme.mutedText, align: 'left' }, axisLabel: { color: theme.mutedText, fontSize: 10, formatter: (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}` } }),
-      series: [{
-        type: 'scatter', symbolSize: (_: unknown, p: { dataIndex: number }) => (points[p.dataIndex].value > LOADING_LIMITS.overload ? 13 : 8),
-        markArea: {
-          silent: true,
-          itemStyle: { color: withAlpha(colors.lodf, 0.09) },
-          label: { show: true, position: 'insideBottomRight', color: theme.mutedText, fontSize: 10, formatter: 'high LODF + large change' },
-          data: [[{ xAxis: ANALYSIS.lodfNotable, yAxis: ANALYSIS.deltaStrongPp / 2 }, { xAxis: xMax, yAxis: yMax }]],
-        },
-        markLine: { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: theme.mutedText, width: 1 }, data: [{ yAxis: 0 }] },
-        data: points.map((p, i) => ({
-          value: [p.x, p.y],
-          itemStyle: { color: colors.bands[p.band], opacity: 0.9, borderColor: theme.isLight ? '#ffffff' : '#0b0f14', borderWidth: 1 },
-          label: { show: labelled.has(i), position: 'top', color: theme.text, fontSize: 10, formatter: p.line },
-        })),
+      // One point per line and scenario: tens of thousands on a large grid. The points are plain [x, y] pairs with the
+      // colour from a callback; an option object per point would make ECharts build a model for every point, on every
+      // update (theme, filter). The few labels sit on an invisible copy of their points on top.
+      series: [...scatter, {
+        type: 'scatter', silent: true, tooltip: { show: false }, emphasis: { disabled: true },
+        symbolSize: (_: unknown, p: { dataIndex: number }) => symbolSize(points[labelled[p.dataIndex]]),
+        itemStyle: { opacity: 0 },
+        // The label keeps the opacity it had on its (0.9 opaque) point.
+        label: { show: true, position: 'top', color: theme.text, fontSize: 10, opacity: 0.9, formatter: (p: { dataIndex: number }) => points[labelled[p.dataIndex]].line },
+        data: labelled.map((i) => [points[i].x, points[i].y]),
       }],
     };
   }, [points, theme, colors]);
@@ -402,7 +432,7 @@ export function LodfBarsChart({ lines, scenarios, hasLodf }: { lines: LineStats[
   );
 }
 
-export default function AcrossCharts({ lines, scenarios, periodHours, hasLodf }: Props) {
+export default memo(function AcrossCharts({ lines, scenarios, periodHours, hasLodf }: Props) {
   return (
     <div className="ab-charts">
       <SectionCard title="Highest loading per equipment" hint="Base (REF) → maximum over all scenarios on the loading bands. The most conspicuous equipment. Zoom with the sliders or Ctrl + mouse wheel; drag to move.">
@@ -422,4 +452,4 @@ export default function AcrossCharts({ lines, scenarios, periodHours, hasLodf }:
       </SectionCard>
     </div>
   );
-}
+});

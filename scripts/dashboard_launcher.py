@@ -52,6 +52,10 @@ def lan_urls(port, host="0.0.0.0"):
     return urls
 
 
+def _local(port):
+    return f"http://127.0.0.1:{port}"
+
+
 def read_state(database):
     path = Path(database).with_suffix(".dashboard.json")
     try:
@@ -140,6 +144,81 @@ def _wait_until_serving(process, url, database, log_path):
         raise
 
 
+def start_dashboard(
+    database_path,
+    *,
+    port=0,
+    python=None,
+    root=ROOT,
+    host="127.0.0.1",
+    reuse=False,
+    production=False,
+):
+    """Start the dashboard server for one database, or find the one that already serves it, without waiting.
+
+    The server starts while the caller goes on working (the PowerFactory script calculates meanwhile);
+    wait_for_dashboard() then waits for it and opens the browser. With `reuse=True` a running server for
+    the same database is kept (it follows new results by itself) instead of starting a second one. A busy
+    fixed port for a different server falls back to a free one and says so in `notes`.
+    """
+    interpreter = validate_installation(root, python)
+    database = Path(database_path).expanduser().resolve()
+    if not database.is_file():
+        raise RuntimeError("Results database does not exist: " + str(database))
+    log_path = database.parent / (database.stem + ".dashboard.log")
+    handle = {"database": database, "host": host, "log": str(log_path), "notes": [], "process": None, "reused": True}
+    if reuse:
+        state = read_state(database)
+        if state and serves_database(state.get("url", ""), database):
+            return dict(handle, port=int(state["port"]), pid=state.get("pid"))
+        if port and serves_database(_local(port), database):
+            return dict(handle, port=port, pid=None)
+
+    chosen = _choose_port(host, port, handle["notes"])
+    env = {**os.environ, "ANALYSIS_MODE": "sqlite", "ANALYSIS_DB_PATH": str(database)}
+    if production:
+        env["APP_ENV"] = "production"
+    _rotate(log_path)
+    command = [str(interpreter), "-m", "uvicorn", "app.main:app", "--host", host, "--port", str(chosen)]
+    with log_path.open("a", encoding="utf-8") as log:
+        process = _spawn_server(command, root, env, log, handle["notes"])
+    return dict(handle, port=chosen, pid=process.pid, process=process, reused=False, waiting=True)
+
+
+def wait_for_dashboard(handle, open_browser=True):
+    """Wait until the server of `handle` serves its database, record it and open the browser."""
+    url = _local(handle["port"])
+    if handle.get("waiting"):
+        _wait_until_serving(handle["process"], url, handle["database"], Path(handle["log"]))
+        handle["waiting"] = False
+        state = {"pid": handle["pid"], "url": url, "port": handle["port"], "host": handle["host"],
+                 "database": str(handle["database"]), "log": handle["log"]}
+        (handle["database"].parent / (handle["database"].stem + ".dashboard.json")).write_text(
+            json.dumps(state, indent=2), encoding="utf-8")
+    if open_browser:
+        open_browser_nonblocking(url)
+    return {
+        "pid": handle["pid"],
+        "url": url,
+        "lan_urls": lan_urls(handle["port"], handle["host"]),
+        "log": handle["log"],
+        "process": handle["process"],
+        "reused": handle["reused"],
+        "notes": handle["notes"],
+    }
+
+
+def stop_started_dashboard(handle):
+    """Stop a server that start_dashboard() started and nobody was shown; a reused server keeps running."""
+    process = handle.get("process") if handle else None
+    if process is not None and handle.get("waiting") and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
 def launch_dashboard(
     database_path,
     *,
@@ -151,49 +230,7 @@ def launch_dashboard(
     reuse=False,
     production=False,
 ):
-    """Start the dashboard server for one database, or reuse the one that already serves it.
-
-    With `reuse=True` a running server for the same database is kept (it follows new results by
-    itself) instead of starting a second one. A busy fixed port for a different server falls back to a
-    free one and says so in `notes`.
-    """
-    interpreter = validate_installation(root, python)
-    database = Path(database_path).expanduser().resolve()
-    if not database.is_file():
-        raise RuntimeError("Results database does not exist: " + str(database))
-    notes = []
-    local = lambda number: f"http://127.0.0.1:{number}"  # noqa: E731
-    log_path = database.parent / (database.stem + ".dashboard.log")
-
-    def result(number, pid, process, reused):
-        if open_browser:
-            open_browser_nonblocking(local(number))
-        return {
-            "pid": pid,
-            "url": local(number),
-            "lan_urls": lan_urls(number, host),
-            "log": str(log_path),
-            "process": process,
-            "reused": reused,
-            "notes": notes,
-        }
-
-    if reuse:
-        state = read_state(database)
-        if state and serves_database(state.get("url", ""), database):
-            return result(int(state["port"]), state.get("pid"), None, True)
-        if port and serves_database(local(port), database):
-            return result(port, None, None, True)
-
-    chosen = _choose_port(host, port, notes)
-    env = {**os.environ, "ANALYSIS_MODE": "sqlite", "ANALYSIS_DB_PATH": str(database)}
-    if production:
-        env["APP_ENV"] = "production"
-    _rotate(log_path)
-    command = [str(interpreter), "-m", "uvicorn", "app.main:app", "--host", host, "--port", str(chosen)]
-    with log_path.open("a", encoding="utf-8") as log:
-        process = _spawn_server(command, root, env, log, notes)
-    _wait_until_serving(process, local(chosen), database, log_path)
-    state = {"pid": process.pid, "url": local(chosen), "port": chosen, "host": host, "database": str(database), "log": str(log_path)}
-    (database.parent / (database.stem + ".dashboard.json")).write_text(json.dumps(state, indent=2), encoding="utf-8")
-    return result(chosen, process.pid, process, False)
+    """Start the dashboard server for one database (or reuse it, see start_dashboard) and wait until it serves."""
+    handle = start_dashboard(database_path, port=port, python=python, root=root, host=host, reuse=reuse,
+                             production=production)
+    return wait_for_dashboard(handle, open_browser)

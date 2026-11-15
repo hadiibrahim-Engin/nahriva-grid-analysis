@@ -46,6 +46,23 @@ def test_unaffected_line_has_zero_delta(tmp_path):
     assert not cell["outaged"] and abs(cell["delta"]) < 1e-9
 
 
+def test_several_scenarios_come_in_one_answer_like_one_by_one(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.simulation import settings
+
+    path = create_dummy_database(tmp_path / "demo.sqlite3")
+    monkeypatch.setattr(settings, "ANALYSIS_MODE", "sqlite")
+    monkeypatch.setattr(settings, "ANALYSIS_DB_PATH", str(path))
+    with TestClient(app) as client:
+        ids = [s["id"] for s in client.get("/api/simulation/across-scenarios/index").json()["scenarios"]][:3]
+        batch = client.get("/api/simulation/across-scenarios/cells", params={"ids": [*ids, "missing"]}).json()["cells"]
+        single = [client.get(f"/api/simulation/across-scenarios/{i}/cells").json() for i in ids]
+        assert client.get("/api/simulation/across-scenarios/cells").status_code == 422  # at least one id
+    assert list(batch) == [*ids, "missing"] and batch["missing"] is None
+    assert [batch[i] for i in ids] == single
+
+
 def test_endpoint_returns_the_aggregation_read_only(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app
@@ -102,6 +119,23 @@ def test_profile_lists_the_most_critical_in_service_branches(tmp_path):
     assert max(v for v in profile["series"][0]["out"] if v is not None) > 100
     assert len(profile["windows"]) == 1
     assert scenario_profile(store, "missing") is None
+    store.close()
+
+
+def test_a_profile_is_read_once_and_an_unknown_scenario_is_never_remembered(tmp_path):
+    from app.simulation import across
+
+    store = ScenarioStore(str(create_dummy_database(tmp_path / "demo.sqlite3")))
+    scenario_id = across.scenario_index(store)["scenarios"][0]["id"]
+    first = across.scenario_profile(store, scenario_id, top=3, points=100)
+    statements = []
+    store.db.set_trace_callback(statements.append)
+    assert across.scenario_profile(store, scenario_id, top=3, points=100) is first
+    assert not any("analysis_values" in sql for sql in statements)  # choosing it again reads nothing
+    store.db.set_trace_callback(None)
+    assert across.scenario_profile(store, scenario_id, top=2, points=100) is not first  # other parameters: own entry
+    assert across.scenario_profile(store, "later") is None
+    assert not any(key[1] == "later" for key in across._PROFILE_CACHE._store)  # may still be saved later
     store.close()
 
 
@@ -231,7 +265,8 @@ def test_the_summary_prepared_by_the_script_is_read_instead_of_reducing_every_va
 
     store = ScenarioStore(str(create_dummy_database(tmp_path / "prepared.sqlite3")))
     ids = [row[0] for row in store.db.execute("SELECT id FROM pf_scenarios")]
-    computed = {i: json.loads(json.dumps(across._scenario_cells(store, i, across.DEFAULT_LIMITS))) for i in ids}
+    computed = {i: json.loads(json.dumps(across._with_nominal_kv(store.db, i, across._scenario_cells(store, i, across.DEFAULT_LIMITS))))
+                for i in ids}
     for i in ids:
         assert across.prepare_cells(store, i)
 

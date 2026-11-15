@@ -46,7 +46,7 @@ def test_switch_reads_new_results_and_keeps_existing_requests_alive(databases):
         "id"
     ]
     series = client.get(f"/api/simulation/timeseries/raw/{identifier}/L").json()
-    assert [point["value"] for point in series["data"]] == [130, 150, 170]
+    assert [point["value"] for point in series["data"]] == [130, 150, 170, None]
     assert old_repo.runs()[0]["name"] == "Scenario 0"
     assert (
         client.post(

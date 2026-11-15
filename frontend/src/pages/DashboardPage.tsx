@@ -1,10 +1,10 @@
 // @refresh reset  ← force full remount on hot reload so stale React state
 // (e.g. resolutions carrying a non-array HMR-preserved value) never leaks into
 // child components.
-import { Fragment, useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense, type PointerEvent } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import {
   getFacilities,
-  getComponentsByFacility,
+  searchComponents,
   getMeasurementTypes,
   getTimeseries,
   getResolutions,
@@ -24,8 +24,16 @@ const TimeseriesChart          = lazy(() => import('../components/charts/Timeser
 import ErrorBoundary from '../components/ErrorBoundary';
 import SearchableDropdown from '../components/SearchableDropdown';
 import GridPicker from '../components/GridPicker';
+import AnalysisPicker from '../components/AnalysisPicker';
+import ShareLink from '../components/ShareLink';
+import LimitsDialog from '../components/LimitsDialog';
+import Bookmarks from '../components/Bookmarks';
+import CompareDialog from '../components/CompareDialog';
+import VoltageLevelPicker from '../components/VoltageLevelPicker';
+import { SectionExpansionContext, type SectionExpansion } from '../hooks/useSectionExpansion';
+import { useAnalysis } from '../hooks/useAnalysis';
 import { useGridFilter } from '../hooks/useGridFilter';
-import { inGrid } from '../util/grids';
+import { inGrid, atVoltage } from '../util/grids';
 import DynamicChartCard from '../components/DynamicChartCard';
 import ChartTemplatePicker from '../components/ChartTemplatePicker';
 import { MTYPE_LABELS, type DashboardChartConfig, type DynamicChartConfig } from '../util/dynamicCharts';
@@ -43,9 +51,17 @@ import OutageManagement from '../components/OutageManagement';
 import { CHART_TEMPLATES } from '../components/charts/chartTemplates';
 import { SectionCard } from '../components/across/shared';
 import AcrossScenarios from '../components/across/AcrossScenarios';
-import { openSection, type SummarySection } from '../util/acrossScenarios';
+const N1Gantt = lazy(() => import('../components/across/N1Gantt'));
 import DatabasePicker from '../components/DatabasePicker';
 import GeneratingLoader from '../components/ui/GeneratingLoader';
+import WorkspaceRail from '../components/WorkspaceRail';
+import { isWorkspaceId, workspaceDefinition, type WorkspaceId } from '../util/workspaces';
+import { readParam, writeParam } from '../util/shareLink';
+
+// Up to this many elements the equipment list is loaded whole and searched in the browser; a larger run is searched
+// on the server, a page of SEARCH_PAGE matches at a time.
+const COMPLETE_LIST_LIMIT = 2000;
+const SEARCH_PAGE = 200;
 
 /** Suspense fallback while a lazy chart chunk loads. Delegates to the shared loader. */
 function ChartFallback({ height = 300 }: { height?: number }) {
@@ -74,12 +90,6 @@ interface SelectedSeries {
 }
 
 const APP_NAME = 'Outage Assessment';
-
-const NAV_SECTIONS = [
-  { id: 'map-selection', label: 'Summary', panel: null },
-  { id: 'timeseries-panel', label: 'Time series', panel: 'timeseries' },
-  { id: 'custom-charts-panel', label: 'Added charts', panel: null },
-] as const;
 
 const CHART_HINTS = {
   timeseries: 'Complete simulation series of the selected measurements.',
@@ -110,6 +120,21 @@ function RemovePanelButton({ onRemove, label }: { onRemove: () => void; label: s
 }
 
 export default function DashboardPage() {
+  const [sectionExpansion, setSectionExpansion] = useState<SectionExpansion>({ revision: 0 });
+  const setAllSectionsOpen = (open: boolean) => {
+    setSectionExpansion(previous => ({ revision: previous.revision + 1, open }));
+  };
+  const [workspace, setWorkspaceState] = useState<WorkspaceId>(() => {
+    const value = readParam('view');
+    return isWorkspaceId(value) ? value : 'assessment';
+  });
+  const tabScrollRef = useRef<HTMLDivElement>(null);
+  const setWorkspace = useCallback((next: WorkspaceId) => {
+    setWorkspaceState(next);
+    writeParam('view', next === 'assessment' ? null : next);
+    tabScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, []);
+  const workspaceMeta = workspaceDefinition(workspace);
   // Restore the locally persisted view once on mount, so a reload (or recovery after a dropped
   // connection) is lossless.
   const initialView = useMemo(() => loadLocalView(), []);
@@ -123,9 +148,18 @@ export default function DashboardPage() {
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [selectedFacilityId, setSelectedFacilityId] = useState<string | null>(initialView?.fac ?? null);
   const [components, setComponents] = useState<GridComponent[]>([]);
-  const { grid } = useGridFilter();
+  // null: `components` is the complete list of the run. A number: the run is too large for that and `components` is
+  // one page of server matches for the search text (componentQuery), of `componentTotal` in all.
+  const [componentTotal, setComponentTotal] = useState<number | null>(null);
+  const [componentQuery, setComponentQuery] = useState('');
+  // The chosen element, kept when a new search page no longer contains it.
+  const [pinnedComponent, setPinnedComponent] = useState<GridComponent | null>(null);
+  const { grid, kv } = useGridFilter();
   // The equipment dropdown offers only the equipment of the chosen grid.
-  const gridComponents = useMemo(() => components.filter((c) => inGrid(c, grid)), [components, grid]);
+  const gridComponents = useMemo(() => components.filter((c) => inGrid(c, grid) && atVoltage(c, kv)), [components, grid, kv]);
+  const listedComponents = useMemo(
+    () => (pinnedComponent && !gridComponents.some((c) => c.id === pinnedComponent.id) ? [pinnedComponent, ...gridComponents] : gridComponents),
+    [gridComponents, pinnedComponent]);
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(initialView?.cmp ?? null);
   const [measurementTypes, setMeasurementTypes] = useState<MeasurementTypeInfo[]>([]);
   const [selectedMtype, setSelectedMtype] = useState<string>(initialView?.mt ?? '');
@@ -238,66 +272,14 @@ export default function DashboardPage() {
   // re-fetching — optimistic display).
   const timeseriesScopeByKeyRef = useRef<Record<string, string>>({});
 
-  const [activeSectionId, setActiveSectionId] = useState<string>('map-selection');
-  // Sections of the summary currently on screen (reported by the summary itself).
-  const [summarySectionList, setSummarySectionList] = useState<SummarySection[]>([]);
-  // One navigation list: the sections of the summary, then the views the user added, then the custom charts.
-  const navItems = useMemo(() => {
-    const summary = summarySectionList.length > 0
-      ? summarySectionList.map((section) => ({ id: section.id, label: section.label, count: section.count, group: 'summary' as const }))
-      : [{ id: 'map-selection', label: 'Summary', count: undefined, group: 'summary' as const }];
-    const views = NAV_SECTIONS
-      .filter((section) => section.id !== 'map-selection' && (section.panel === null || activePanels.has(section.panel)))
-      .map((section) => ({ id: section.id, label: section.label, count: undefined, group: 'views' as const }));
-    return [...summary, ...views];
-  }, [summarySectionList, activePanels]);
-  // Refs used by the scroll listener that drives the CSS dim progression.
-  const tabScrollRef = useRef<HTMLDivElement>(null);
-  const navDockRef = useRef<HTMLElement>(null);
+  // null means the n-1 availability check has not completed yet.
+  const [hasN1, setHasN1] = useState<boolean | null>(null);
 
-
-  useEffect(() => {
-    const container = tabScrollRef.current;
-    if (!container) return;
-
-    let rafId = 0;
-    const updateActiveSection = () => {
-      rafId = 0;
-      const containerTop = container.getBoundingClientRect().top;
-      const focusScroll = container.scrollTop + container.clientHeight * 0.36;
-      // Reading order: summary first (with its sub-sections), then the optional views.
-      const ids = ['map-selection', ...navItems.map((item) => item.id).filter((id) => id !== 'map-selection')];
-      let nextId = navItems[0]?.id ?? 'map-selection';
-      ids.forEach((id) => {
-        const element = document.getElementById(id);
-        if (!element) return;
-        const sectionTop = element.getBoundingClientRect().top - containerTop + container.scrollTop;
-        if (sectionTop <= focusScroll) nextId = id;
-      });
-
-      setActiveSectionId((current) => (current === nextId ? current : nextId));
-    };
-
-    const onScroll = () => {
-      if (rafId !== 0) return;
-      rafId = requestAnimationFrame(updateActiveSection);
-    };
-
-    container.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
-    updateActiveSection();
-
-    return () => {
-      container.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onScroll);
-      if (rafId !== 0) cancelAnimationFrame(rafId);
-    };
-  }, [navItems]);
-
+  const { analysis } = useAnalysis();
   const lastFacilityRefreshRef = useRef(0);
   const refreshFacilities = useCallback(() => {
     setFacilitiesLoading(true);
-    return getFacilities()
+    return getFacilities(undefined, analysis)
       .then((data) => {
         setFacilities(data);
         setFacilitiesError(null);
@@ -310,7 +292,7 @@ export default function DashboardPage() {
         logError('Dashboard', 'Scenarios could not be loaded', msg);
       })
       .finally(() => setFacilitiesLoading(false));
-  }, []);
+  }, [analysis]);
 
   useEffect(() => { refreshFacilities(); }, [refreshFacilities]);
 
@@ -338,8 +320,9 @@ export default function DashboardPage() {
 
   // Auto-select first facility once facilities are loaded (helps UX and makes
   // it obvious data is present).
+  // A run of another analysis is not offered: fall back to the first run of the chosen one.
   useEffect(() => {
-    if (facilities.length > 0 && !selectedFacilityId) {
+    if (facilities.length > 0 && (!selectedFacilityId || !facilities.some((f) => f.id === selectedFacilityId))) {
       setSelectedFacilityId(facilities[0].id);
     }
   }, [facilities, selectedFacilityId]);
@@ -368,10 +351,11 @@ export default function DashboardPage() {
       setMeasurementTypesLoading(false);
       setSelectedMtype('');
     }
-    getComponentsByFacility(selectedFacilityId)
-      .then((data) => {
+    searchComponents(selectedFacilityId, { limit: COMPLETE_LIST_LIMIT })
+      .then(({ items: data, total }) => {
         if (!active) return;
         setComponents(data);
+        setComponentTotal(total > data.length ? total : null);
         if (restoreCmp) {
           if (data.some((c) => c.id === restoreCmp)) {
             setSelectedComponentId(restoreCmp);
@@ -427,15 +411,35 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [selectedComponentId]);
 
-  // Choosing another grid drops an equipment selection that is not part of it.
+  // A large run: every change of the search text, grid or voltage level asks the server for the matching page.
+  const serverSearch = componentTotal !== null;
   useEffect(() => {
-    if (componentsLoading || !selectedComponentId) return;
+    if (!serverSearch || !selectedFacilityId) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      searchComponents(selectedFacilityId, { q: componentQuery, grid, kv, limit: SEARCH_PAGE }, controller.signal)
+        .then(({ items, total }) => { setComponents(items); setComponentTotal(total); })
+        .catch(() => { /* aborted by a newer search, or kept the previous page */ });
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [serverSearch, componentQuery, grid, kv, selectedFacilityId]);
+
+  useEffect(() => {
+    const found = components.find((c) => c.id === selectedComponentId);
+    if (found) setPinnedComponent(found);
+    else if (!selectedComponentId) setPinnedComponent(null);
+  }, [components, selectedComponentId]);
+
+  // Choosing another grid drops an equipment selection that is not part of it (complete lists only: a search page
+  // of a large run need not contain the chosen element).
+  useEffect(() => {
+    if (componentsLoading || !selectedComponentId || componentTotal !== null) return;
     if (!gridComponents.some((c) => c.id === selectedComponentId)) setSelectedComponentId(null);
-  }, [gridComponents, selectedComponentId, componentsLoading]);
+  }, [gridComponents, selectedComponentId, componentsLoading, componentTotal]);
 
   const addSeries = useCallback(() => {
     if (!selectedComponentId || !selectedMtype || !selectedFacilityId) return;
-    const comp = components.find((c) => c.id === selectedComponentId);
+    const comp = components.find((c) => c.id === selectedComponentId) ?? pinnedComponent ?? undefined;
     const fac = facilities.find((f) => f.id === selectedFacilityId);
     if (!comp || !fac) return;
     const key = `${selectedComponentId}-${selectedMtype}`;
@@ -444,7 +448,7 @@ export default function DashboardPage() {
       ...prev,
       { key, facilityName: fac.name, facilityId: fac.id, componentId: selectedComponentId, componentName: comp.name, measurementType: selectedMtype },
     ]);
-  }, [selectedComponentId, selectedMtype, selectedFacilityId, components, facilities, selectedSeriesList]);
+  }, [selectedComponentId, selectedMtype, selectedFacilityId, components, pinnedComponent, facilities, selectedSeriesList]);
 
   const removeSeries = useCallback((key: string) => {
     setSelectedSeriesList((prev) => prev.filter((s) => s.key !== key));
@@ -459,6 +463,14 @@ export default function DashboardPage() {
     Object.keys(timeseriesScopeByKeyRef.current).forEach((key) => {
       if (!selectedKeys.has(key)) delete timeseriesScopeByKeyRef.current[key];
     });
+
+    // Raw time-series reads can be large. They are only useful in the chart
+    // workspace, so a restored view no longer starts them on the assessment.
+    if (workspace !== 'charts') {
+      setTimeseriesLoadingKeys(new Set());
+      setLoading(false);
+      return;
+    }
 
     if (selectedSeriesList.length === 0) {
       setTimeseriesDataMap({});
@@ -585,7 +597,7 @@ export default function DashboardPage() {
       setTimeseriesLoadingKeys(new Set());
       setLoading(false);
     };
-  }, [selectedSeriesList, startIso, endIso, refreshNonce]);
+  }, [selectedSeriesList, startIso, endIso, refreshNonce, workspace]);
 
   const seriesDataList = useMemo(
     () => selectedSeriesList.flatMap((s) => {
@@ -597,115 +609,41 @@ export default function DashboardPage() {
 
   const timeseriesRefreshing = loading || timeseriesLoadingKeys.size > 0;
 
-  const resetNavDock = useCallback(() => {
-    navDockRef.current?.querySelectorAll<HTMLElement>('.one-page-nav__item').forEach((item) => {
-      item.style.setProperty('--dock-scale', '1');
-      item.style.setProperty('--dock-lift', '0px');
-      item.style.setProperty('--dock-glow', '0');
-    });
-  }, []);
-
-  const handleNavDockPointerMove = useCallback((event: PointerEvent<HTMLElement>) => {
-    const nav = navDockRef.current;
-    if (!nav) return;
-    const items = Array.from(nav.querySelectorAll<HTMLElement>('.one-page-nav__item'));
-    const pointerX = event.clientX;
-    const radius = 132;
-
-    items.forEach((item) => {
-      const rect = item.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const influence = Math.max(0, 1 - Math.abs(pointerX - centerX) / radius);
-      const eased = influence * influence * (3 - 2 * influence);
-      item.style.setProperty('--dock-scale', (1 + eased * 0.34).toFixed(3));
-      item.style.setProperty('--dock-lift', `${Math.round(eased * -5)}px`);
-      item.style.setProperty('--dock-glow', eased.toFixed(3));
-    });
-  }, []);
-
-  // Native `<a href="#id">` anchor-jump (+ CSS scroll-behavior: smooth) is
-  // unreliable here: #map-selection (the "Summary" target) is `position:
-  // sticky`, so its bounding rect changes non-monotonically as it re-pins
-  // mid-scroll. That fools the browser's "has the target arrived" check and
-  // the animation can stop early — landing on whatever section happened to
-  // be in view at that moment instead of the map. Computing the target
-  // scrollTop ourselves and animating via Element.scrollTo() sidesteps it:
-  // that's a scroll to a fixed number, not "track this moving element".
-  const scrollToSection = useCallback((id: string) => {
-    const container = tabScrollRef.current;
-    if (!container) return;
-    if (id === 'map-selection' || id === summarySectionList[0]?.id) {
-      // Sticky map + rising chart overlay can make smooth scrolling settle in
-      // the chart zone. Jumping to the real top keeps "Summary" deterministic.
-      container.scrollTo({ top: 0, behavior: 'auto' });
-      setActiveSectionId(id);
-      return;
-    }
-    // A collapsed summary card opens first, so the target has its final height.
-    openSection(id);
-    const targetTop = () => {
-      const target = document.getElementById(id);
-      return target
-        ? target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 8
-        : null;
-    };
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const top = targetTop();
-      if (top !== null) container.scrollTo({ top, behavior: 'smooth' });
-      // Charts above the target may finish loading while the scroll runs and move it; correct once afterwards.
-      window.setTimeout(() => {
-        const settled = targetTop();
-        if (settled !== null && Math.abs(settled - container.scrollTop) > 12) container.scrollTo({ top: settled, behavior: 'smooth' });
-      }, 700);
-    }));
-  }, [summarySectionList]);
-
   return (
-    <>
+    <SectionExpansionContext.Provider value={sectionExpansion}>
     <div className="grid-theme-scope dashboard-shell h-screen flex flex-col bg-[var(--grid-bg)] text-[var(--grid-text)] overflow-hidden">
-      <header className="sticky top-0 z-[900] grid grid-cols-1 items-center gap-3 bg-[var(--grid-header)] border-b border-[var(--grid-border)] px-4 py-3 shrink-0 xl:grid-cols-[minmax(180px,auto)_minmax(0,1fr)_auto]">
-        <div className="flex min-w-0 items-center gap-2 xl:justify-self-start">
+      <header className="dashboard-topbar">
+        <div className="dashboard-topbar__brand">
           <DatabasePicker />
           <h1 className="truncate text-base font-bold tracking-tight text-[var(--grid-text)]">{APP_NAME}</h1>
         </div>
-
-        <nav
-          ref={navDockRef}
-          aria-label="Analysis sections"
-          className={`one-page-nav${navItems.length > 7 ? ' one-page-nav--dense' : ''}`}
-          onPointerMove={handleNavDockPointerMove}
-          onPointerLeave={resetNavDock}
-          onBlur={resetNavDock}
-        >
-          {navItems.map((item, index) => (
-            <Fragment key={item.id}>
-              {index > 0 && item.group !== navItems[index - 1].group && <span className="one-page-nav__sep" aria-hidden />}
-              <a
-                className="one-page-nav__item"
-                href={`#${item.id}`}
-                onClick={(e) => { e.preventDefault(); scrollToSection(item.id); }}
-                aria-current={activeSectionId === item.id ? 'page' : undefined}
-              >
-                {item.label}
-                {item.count !== undefined && <span className="one-page-nav__count">{item.count}</span>}
-              </a>
-            </Fragment>
-          ))}
-        </nav>
-
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-3 xl:justify-self-end">
+        <div className="dashboard-topbar__context" aria-live="polite">
+          <span>{workspaceMeta.label}</span>
+          <small>{workspaceMeta.description}</small>
+        </div>
+        <div className="dashboard-topbar__actions">
+          <div role="group" aria-label="Expand or collapse dashboard sections" className="flex items-center gap-1">
+            <button type="button" className="ab-chip" onClick={() => setAllSectionsOpen(false)} title="Collapse all cards">Collapse</button>
+            <button type="button" className="ab-chip" onClick={() => setAllSectionsOpen(true)} title="Expand all cards">Expand</button>
+          </div>
+          <Bookmarks />
+          <CompareDialog refreshKey={refreshNonce} />
+          <LimitsDialog />
+          <ShareLink />
           <CinematicThemeSwitch value={themeMode} onChange={setThemeMode} />
 
         </div>
       </header>
 
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <details open className="selection-dock shrink-0 border-b border-gray-700 bg-gray-800/30 p-3">
-            <summary className="dashboard-filter-toggle">Filters and series</summary>
+      <div className="dashboard-workbench">
+        <WorkspaceRail value={workspace} onChange={setWorkspace} />
+        <main className="workspace-main">
+          <section className="analysis-context-bar" aria-label="Analysis context">
             <div className="flex flex-wrap items-start gap-3">
+              <AnalysisPicker refreshKey={refreshNonce} />
               <GridPicker refreshKey={refreshNonce} />
+              <VoltageLevelPicker refreshKey={refreshNonce} />
               <div className="flex items-start gap-1">
                 <SearchableDropdown
                   label="Scenario"
@@ -736,12 +674,16 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
+              {workspace === 'charts' && (
+                <>
               <SearchableDropdown
                 label="Equipment"
-                items={gridComponents}
+                items={listedComponents}
+                onQueryChange={componentTotal === null ? undefined : setComponentQuery}
+                totalCount={componentTotal ?? undefined}
                 idOf={(c) => c.id}
-                labelOf={(c) => `${c.name}${c.class_name ? ` (${c.class_name})` : ''}`}
-                searchOf={(c) => [c.name, c.id, c.class_name ?? ''].join(' ')}
+                labelOf={(c) => `${c.name}${c.class_name ? ` (${c.class_name})` : ''}${c.nominal_kv ? ` · ${c.nominal_kv} kV` : ''}`}
+                searchOf={(c) => [c.name, c.id, c.class_name ?? '', c.nominal_kv ? `${c.nominal_kv} kV` : ''].join(' ')}
                 value={selectedComponentId}
                 onChange={setSelectedComponentId}
                 placeholder="- Equipment - (name, ID, kV level)"
@@ -777,10 +719,12 @@ export default function DashboardPage() {
                   Add
                 </AnimatedButton>
               </div>
+                </>
+              )}
 
             </div>
 
-            {selectedSeriesList.length > 0 && (
+            {workspace === 'charts' && selectedSeriesList.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-gray-700">
                 {selectedSeriesList.map((s) => (
                   <span
@@ -819,13 +763,40 @@ export default function DashboardPage() {
               </div>
             )}
 
-          </details>
+          </section>
 
           <div ref={tabScrollRef} className="flex-1 overflow-y-auto">
-            <section id="map-selection" className="p-4">
-              <OutageManagement onResultsChanged={() => { clearCache(); refreshFacilities(); setRefreshNonce((n) => n + 1); }} />
-              <AcrossScenarios refreshKey={refreshNonce} onSectionsChange={setSummarySectionList} />
+            <header className="workspace-heading">
+              <div>
+                <span className="workspace-heading__eyebrow">Active workspace</span>
+                <h2>{workspaceMeta.label}</h2>
+              </div>
+              <p>{workspaceMeta.description}</p>
+            </header>
+            <section className="workspace-content">
+              {workspace === 'assessment' && (
+                <OutageManagement onResultsChanged={() => { clearCache(); refreshFacilities(); setRefreshNonce((n) => n + 1); }} />
+              )}
+              {workspace !== 'n1' && workspace !== 'charts' && (
+                <AcrossScenarios refreshKey={refreshNonce} workspace={workspace} onWorkspaceChange={setWorkspace} />
+              )}
+              {workspace === 'n1' && (
+                <div className="across-scope mt-3">
+                  <ErrorBoundary label="n-1 overloads">
+                    <Suspense fallback={<GeneratingLoader minHeight={240} />}>
+                      <N1Gantt refreshKey={refreshNonce} onAvailable={setHasN1} />
+                    </Suspense>
+                  </ErrorBoundary>
+                  {hasN1 === false && (
+                    <div className="workspace-empty">
+                      <strong>No n-1 sweep in this analysis</strong>
+                      <span>Import or calculate an assessment with contingency results to use this workspace.</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
+              {workspace === 'charts' && (
               <div>
 
                 {/* -- Charts overlay: rises up over the sticky map ------- */}
@@ -959,9 +930,10 @@ export default function DashboardPage() {
                   </div>
                 </section>
               </div>
+              )}
 
           </div>
-        </div>
+        </main>
       </div>
     </div>
     <ChartTemplatePicker
@@ -973,6 +945,6 @@ export default function DashboardPage() {
       endIso={endIso}
       onGenerate={addDynamicChart}
     />
-    </>
+    </SectionExpansionContext.Provider>
   );
 }

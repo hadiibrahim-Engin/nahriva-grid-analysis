@@ -123,7 +123,10 @@ export interface Assessment {
   worst: { name: string; value: number; reserve: number } | null;
 }
 
-const pct = (v: number) => `${v.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+// Built once: toLocaleString with options builds a new formatter on every call.
+const ONE_DECIMAL = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const UP_TO_ONE_DECIMAL = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
+const pct = (v: number) => `${ONE_DECIMAL.format(v)} %`;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 export function assessScenario(
@@ -204,7 +207,7 @@ export function assessScenario(
   else if (preexisting + pushed + lowReserve + voltagePre + voltageNear > 0) verdict = 'conditional';
   else verdict = 'permissible';
   if (verdict === 'permissible' && worst) {
-    reasons.push(`Highest loading ${pct(worst.value)} (${worst.name}), reserve ${worst.reserve.toLocaleString('en-GB', { maximumFractionDigits: 1 })} pp`);
+    reasons.push(`Highest loading ${pct(worst.value)} (${worst.name}), reserve ${UP_TO_ONE_DECIMAL.format(worst.reserve)} pp`);
   }
   return {
     verdict, reasons, caused, aggravated, preexisting, pushedIntoWarning: pushed, lowReserve,

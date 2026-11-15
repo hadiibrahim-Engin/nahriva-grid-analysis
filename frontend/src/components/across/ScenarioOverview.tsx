@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { memo, useMemo, useState, type CSSProperties } from 'react';
 import { ANALYSIS, BAND_ORDER, LOADING_BANDS, bandOf, bandVar } from '../../config/loadingBands';
 import {
   compareScenarioCriticality,
@@ -25,16 +25,88 @@ interface Props {
   period: [number, number] | null | undefined;
 }
 
-const dayLabel = (epoch: number) =>
-  new Date(epoch * 1000).toLocaleDateString('en-GB', { timeZone: 'UTC', day: '2-digit', month: '2-digit' });
-const stamp = (epoch: number | null) =>
-  epoch === null ? '–' : new Date(epoch * 1000).toLocaleString('en-GB', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' }) + ' UTC';
+// Built once: toLocale*String with options builds a new formatter on every call.
+const DAY = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', day: '2-digit', month: '2-digit' });
+const STAMP = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' });
+const dayLabel = (epoch: number) => DAY.format(new Date(epoch * 1000));
+const stamp = (epoch: number | null) => (epoch === null ? '–' : STAMP.format(new Date(epoch * 1000)) + ' UTC');
+
+interface Axis { start: number; seconds: number; days: number; ticks: number[] }
+
+/**
+ * One scenario row. Memoised: choosing a scenario re-renders only the rows whose selection changes,
+ * not the timelines, stacks and key figures of all the others.
+ */
+const OverviewRow = memo(function OverviewRow({ s, assess, selected, onSelect, axis, periodHours }: {
+  s: ScenarioStats;
+  assess: Assessment | undefined;
+  selected: boolean;
+  onSelect: (id: string) => void;
+  axis: Axis;
+  periodHours: number;
+}) {
+  const pos = (epoch: number) => Math.min(Math.max(((epoch - axis.start) / axis.seconds) * 100, 0), 100);
+  const dayWidth = axis.seconds > 0 ? `${(86400 / axis.seconds) * 100}%` : '100%';
+  const band = s.maxValue === null ? 'ok' : bandOf(s.maxValue).id;
+  const equipment = [...new Set(s.scenario.outages.map((o) => o.equipment_name ?? o.name))];
+  return (
+    <tr aria-selected={selected}>
+      <td>
+        <button type="button" className="ab-scenario-select" aria-pressed={selected} onClick={() => onSelect(s.scenario.id)}>
+        <span className="ab-ov__title" title={s.scenario.name}><ScenarioTag code={s.code} scenario={s.scenario} /><span>{s.scenario.name}</span></span>
+        <span className="ab-ov__contents">
+          {equipment.length === 0 && <span className="ab-sub">no outage saved</span>}
+          {equipment.map((name) => <span key={name} className="ab-tag" title={`Switched off: ${name}`}>{name}</span>)}
+        </span>
+        </button>
+      </td>
+      <td><span className="ab-timeline" style={{ '--day': dayWidth, '--c': bandVar(band) } as CSSProperties} role="img"
+        aria-label={`Outage window ${s.scenario.outages.map((o) => `${o.equipment_name ?? o.name}: ${stamp(o.start)} to ${stamp(o.end)}`).join('; ')}`}>
+        {axis.seconds > 0 && s.scenario.outages.map((o) => o.start === null || o.end === null ? null : (
+          <span
+            key={o.id}
+            className="ab-timeline__win"
+            style={{ left: `${pos(o.start)}%`, width: `${Math.max(pos(o.end) - pos(o.start), 0)}%` }}
+            title={`${o.equipment_name ?? o.name}\n${stamp(o.start)} – ${stamp(o.end)}`}
+          />
+        ))}
+      </span></td>
+      <td><span
+        className="ab-stack"
+        role="img"
+        aria-label={LOADING_BANDS.map((b) => `${b.label}: ${s.counts[b.id]}`).join(', ')}
+      >
+        {BAND_ORDER.map((id) => {
+          const count = s.counts[id];
+          if (count === 0) return null;
+          const pct = (count / s.total) * 100;
+          const meta = LOADING_BANDS.find((b) => b.id === id)!;
+          return (
+            <span key={id} className={`ab-stack__seg ab-fill--${id} ab-ink--${id}`} style={{ width: `${pct}%` }}
+              title={`${meta.label} (${meta.range}): ${count} of ${s.total} equipment items`}>
+              {pct >= 8 ? count : ''}
+            </span>
+          );
+        })}
+      </span></td>
+      <td title={[
+        s.longestOverloadHours > 0 ? `Longest overload ${fmtHours(s.longestOverloadHours)} (${fmtShare(periodHours > 0 ? s.longestOverloadHours / periodHours : 0)} of the period)` : 'no overload',
+        `Max Δ ${fmtPp(s.maxDelta)} · |LODF| ${fmtLodf(s.maxAbsLodf)}`,
+        `affects ${s.affected} equipment items (≥ ${ANALYSIS.affectedDeltaPp} pp)`,
+      ].join('\n')}><span className="ab-ov__facts">
+        {assess && <span><VerdictBadge verdict={assess.verdict} /></span>}
+        {assess?.reasons.slice(0, 2).map((reason) => <span key={reason} className="ab-ov__reason">{reason}</span>)}
+        <span>Max <strong className={`ab-text--${band}`}>{fmtPct(s.maxValue)}</strong>{s.maxLine ? ` · ${s.maxLine.name}` : ''}</span>
+      </span></td>
+    </tr>
+  );
+});
 
 /**
  * One row per scenario: what is switched off, when (timeline over the simulation
  * period), how the lines distribute over the loading bands, and the key figures.
  */
-export default function ScenarioOverview({ scenarios, assessments, selectedId, onSelect, periodHours, period }: Props) {
+export default memo(function ScenarioOverview({ scenarios, assessments, selectedId, onSelect, periodHours, period }: Props) {
   const [order, setOrder] = useState<'critical' | 'original'>('critical');
   const rows = useMemo(
     () => (order === 'critical'
@@ -47,7 +119,7 @@ export default function ScenarioOverview({ scenarios, assessments, selectedId, o
     [scenarios, order, assessments],
   );
 
-  const axis = useMemo(() => {
+  const axis = useMemo<Axis>(() => {
     const windows = scenarios.flatMap((s) => s.scenario.outages)
       .filter((o): o is typeof o & { start: number; end: number } => o.start !== null && o.end !== null);
     const start = period?.[0] ?? (windows.length ? Math.min(...windows.map((o) => o.start)) : 0);
@@ -58,9 +130,6 @@ export default function ScenarioOverview({ scenarios, assessments, selectedId, o
     const ticks = Array.from({ length: Math.floor(days / every) + 1 }, (_, i) => i * every).filter((d) => d < days || d === 0);
     return { start, seconds, days, ticks };
   }, [scenarios, period, periodHours]);
-
-  const pos = (epoch: number) => Math.min(Math.max(((epoch - axis.start) / axis.seconds) * 100, 0), 100);
-  const dayWidth = axis.seconds > 0 ? `${(86400 / axis.seconds) * 100}%` : '100%';
 
   return (
     <SectionCard
@@ -91,64 +160,12 @@ export default function ScenarioOverview({ scenarios, assessments, selectedId, o
           <th scope="col">Equipment per loading</th>
           <th scope="col">Assessment and key figures</th>
         </tr></thead><tbody>
-        {rows.map((s) => {
-          const band = s.maxValue === null ? 'ok' : bandOf(s.maxValue).id;
-          const assess = assessments.get(s.scenario.id);
-          const equipment = [...new Set(s.scenario.outages.map((o) => o.equipment_name ?? o.name))];
-          return (
-            <tr key={s.scenario.id} aria-selected={selectedId === s.scenario.id}>
-              <td>
-                <button type="button" className="ab-scenario-select" aria-pressed={selectedId === s.scenario.id} onClick={() => onSelect(s.scenario.id)}>
-                <span className="ab-ov__title" title={s.scenario.name}><ScenarioTag code={s.code} scenario={s.scenario} /><span>{s.scenario.name}</span></span>
-                <span className="ab-ov__contents">
-                  {equipment.length === 0 && <span className="ab-sub">no outage saved</span>}
-                  {equipment.map((name) => <span key={name} className="ab-tag" title={`Switched off: ${name}`}>{name}</span>)}
-                </span>
-                </button>
-              </td>
-              <td><span className="ab-timeline" style={{ '--day': dayWidth, '--c': bandVar(band) } as CSSProperties} role="img"
-                aria-label={`Outage window ${s.scenario.outages.map((o) => `${o.equipment_name ?? o.name}: ${stamp(o.start)} to ${stamp(o.end)}`).join('; ')}`}>
-                {axis.seconds > 0 && s.scenario.outages.map((o) => o.start === null || o.end === null ? null : (
-                  <span
-                    key={o.id}
-                    className="ab-timeline__win"
-                    style={{ left: `${pos(o.start)}%`, width: `${Math.max(pos(o.end) - pos(o.start), 0)}%` }}
-                    title={`${o.equipment_name ?? o.name}\n${stamp(o.start)} – ${stamp(o.end)}`}
-                  />
-                ))}
-              </span></td>
-              <td><span
-                className="ab-stack"
-                role="img"
-                aria-label={LOADING_BANDS.map((b) => `${b.label}: ${s.counts[b.id]}`).join(', ')}
-              >
-                {BAND_ORDER.map((id) => {
-                  const count = s.counts[id];
-                  if (count === 0) return null;
-                  const pct = (count / s.total) * 100;
-                  const meta = LOADING_BANDS.find((b) => b.id === id)!;
-                  return (
-                    <span key={id} className={`ab-stack__seg ab-fill--${id} ab-ink--${id}`} style={{ width: `${pct}%` }}
-                      title={`${meta.label} (${meta.range}): ${count} of ${s.total} equipment items`}>
-                      {pct >= 8 ? count : ''}
-                    </span>
-                  );
-                })}
-              </span></td>
-              <td title={[
-                s.longestOverloadHours > 0 ? `Longest overload ${fmtHours(s.longestOverloadHours)} (${fmtShare(periodHours > 0 ? s.longestOverloadHours / periodHours : 0)} of the period)` : 'no overload',
-                `Max Δ ${fmtPp(s.maxDelta)} · |LODF| ${fmtLodf(s.maxAbsLodf)}`,
-                `affects ${s.affected} equipment items (≥ ${ANALYSIS.affectedDeltaPp} pp)`,
-              ].join('\n')}><span className="ab-ov__facts">
-                {assess && <span><VerdictBadge verdict={assess.verdict} /></span>}
-                {assess?.reasons.slice(0, 2).map((reason) => <span key={reason} className="ab-ov__reason">{reason}</span>)}
-                <span>Max <strong className={`ab-text--${band}`}>{fmtPct(s.maxValue)}</strong>{s.maxLine ? ` · ${s.maxLine.name}` : ''}</span>
-              </span></td>
-            </tr>
-          );
-        })}
+        {rows.map((s) => (
+          <OverviewRow key={s.scenario.id} s={s} assess={assessments.get(s.scenario.id)} selected={selectedId === s.scenario.id}
+            onSelect={onSelect} axis={axis} periodHours={periodHours} />
+        ))}
         </tbody></table>
       </div>
     </SectionCard>
   );
-}
+});

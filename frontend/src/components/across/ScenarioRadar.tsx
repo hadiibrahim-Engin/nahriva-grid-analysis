@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import * as echarts from 'echarts/core';
 import { RadarChart } from 'echarts/charts';
 import { AriaComponent, LegendComponent, RadarComponent, TooltipComponent } from 'echarts/components';
@@ -26,7 +26,7 @@ const metrics = [
   { name: 'Affected lines', label: 'Affected\nlines', read: (s: ScenarioStats) => s.affected, format: (v: number | null) => v === null ? '–' : String(v), minimum: 1 },
 ] as const;
 
-export default function ScenarioRadar({ scenarios, selectedId, onSelect }: Props) {
+export default memo(function ScenarioRadar({ scenarios, selectedId, onSelect }: Props) {
   const theme = useChartTheme();
   const [compare, setCompare] = useState(true);
   const option = useMemo(() => {
@@ -87,4 +87,4 @@ export default function ScenarioRadar({ scenarios, selectedId, onSelect }: Props
       <p className="across-card__hint mt-2">Missing key figures are drawn at the origin and shown as “–” in the tooltip. Exact values and outage windows are in the table below.</p>
     </SectionCard>
   );
-}
+});

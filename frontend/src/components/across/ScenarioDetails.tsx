@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 import { bandOf } from '../../config/loadingBands';
 import { SUMMARY_IDS, fmtLodf, fmtPct, fmtPp, type ScenarioStats } from '../../util/acrossScenarios';
 import { ScenarioTag, SectionCard } from './shared';
@@ -22,7 +22,7 @@ interface Props {
   onSelect: (id: string) => void;
 }
 
-export default function ScenarioDetails({ scenarios, selectedId, onSelect }: Props) {
+export default memo(function ScenarioDetails({ scenarios, selectedId, onSelect }: Props) {
   const current = scenarios.find((s) => s.scenario.id === selectedId) ?? scenarios[0];
   if (!current) return null;
   const { scenario } = current;
@@ -94,4 +94,4 @@ export default function ScenarioDetails({ scenarios, selectedId, onSelect }: Pro
       </div>
     </SectionCard>
   );
-}
+});

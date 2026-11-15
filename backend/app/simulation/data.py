@@ -6,11 +6,15 @@ import math
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from statistics import fmean, pstdev, median
+from app.simulation import states
 from app.core.errors import (
     InvalidRequestError,
     ResourceNotFoundError,
     RawRangeTooLargeError,
 )
+
+# Bucket reductions of /timeseries/aggregate; MINMAX (the default) keeps the extreme samples of every bucket.
+AGGREGATIONS = {"MINMAX": None, "AVG": fmean, "MIN": min, "MAX": max, "SUM": sum}
 
 METRIC_CODES = {
     "loading": "L",
@@ -104,7 +108,8 @@ def dataset(repo, identifier, code, start=None, end=None):
     if finish:
         conditions.append("v.t <= ?")
         params.append(finish.timestamp())
-    stored = repo.tuples(
+    stored = repo.run_values(
+        run_id,
         "SELECT v.t, v.value FROM analysis_series se JOIN analysis_values v ON v.series_id = se.id WHERE "
         + " AND ".join(conditions)
         + " ORDER BY v.t LIMIT 200001",
@@ -134,23 +139,36 @@ def timeseries(
     start,
     end,
     bucket=None,
-    method="AVG",
+    method="MINMAX",
     limit=50000,
     cursor=None,
 ):
+    """One series, raw or reduced to buckets of `bucket` seconds.
+
+    A time without a valid value stays in the answer with value None and state `invalid_or_missing` (a gap,
+    never 0); a bucket without any valid value likewise. MINMAX keeps, per bucket, the stored samples with the
+    lowest and the highest value at their own times, so peaks survive and no value is invented.
+    """
     base, stamps, values = dataset(repo, identifier, code, start, end)
     step = native_step(stamps)
-    points = [(t, v) for t, v in zip(stamps, values) if v is not None]
+    points = list(zip(stamps, values))
     if bucket is not None:
-        if bucket <= 0 or method not in ("AVG", "MIN", "MAX", "SUM"):
+        if bucket <= 0 or method not in AGGREGATIONS:
             raise InvalidRequestError(
                 "Invalid aggregation interval or method."
             )
         groups = defaultdict(list)
         for t, v in points:
-            groups[t // bucket * bucket].append(v)
-        aggregate = {"AVG": fmean, "MIN": min, "MAX": max, "SUM": sum}[method]
-        points = [(t, aggregate(group)) for t, group in sorted(groups.items())]
+            groups[t // bucket * bucket].append((t, v))
+        points = []
+        for begin, group in sorted(groups.items()):
+            present = [(t, v) for t, v in group if v is not None]
+            if not present:
+                points.append((begin, None))
+            elif method == "MINMAX":
+                points.extend(sorted({min(present, key=lambda p: p[1]), max(present, key=lambda p: p[1])}))
+            else:
+                points.append((begin, AGGREGATIONS[method]([v for _t, v in present])))
     next_cursor = None
     if bucket is None:
         if cursor:
@@ -159,9 +177,14 @@ def timeseries(
         if len(points) > limit:
             next_cursor = _iso(points[limit - 1][0])
             points = points[:limit]
+    missing = sum(1 for _t, v in points if v is None)
     return {
         **base,
-        "data": [{"timestamp": _iso(t), "value": v} for t, v in points],
+        "data": [
+            {"timestamp": _iso(t), "value": v} if v is not None
+            else {"timestamp": _iso(t), "value": None, "state": states.INVALID_OR_MISSING}
+            for t, v in points
+        ],
         "next_cursor": next_cursor,
         "meta": {
             "is_raw": bucket is None,
@@ -170,6 +193,8 @@ def timeseries(
             "bucket_seconds": bucket,
             "native_resolution_seconds": step,
             "point_count": len(points),
+            "missing_points": missing,
+            "states_version": states.STATES_VERSION,
             "source": "simulation",
             "start": start,
             "end": end,

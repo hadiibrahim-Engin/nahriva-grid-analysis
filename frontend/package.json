@@ -19,9 +19,7 @@
     "date-fns-tz": "^3.2.0",
     "echarts": "^6.1.0",
     "echarts-gl": "^2.1.0",
-    "framer-motion": "^12.40.0",
     "html2canvas": "^1.4.1",
-    "jspdf": "^4.2.1",
     "lucide-react": "^1.16.0",
     "next-themes": "^0.4.6",
     "react": "^19.2.4",
@@ -49,11 +47,10 @@
     "node": ">=22.13.0"
   },
   "overrides": {
-    "echarts-for-react": "2.0.11",
-    "follow-redirects": "^1.16.0",
+    "follow-redirects": "^1.16.2",
     "postcss": "^8.5.15",
-    "minimatch@10": {
-      "brace-expansion": "^5.0.6"
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.5"
     }
   }
 }

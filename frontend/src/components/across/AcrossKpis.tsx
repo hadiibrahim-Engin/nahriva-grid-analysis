@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { memo, type CSSProperties } from 'react';
 import { ANALYSIS, bandOf, type BandId } from '../../config/loadingBands';
 import { VERDICTS, type Verdict } from '../../config/assessment';
 import { verdictCounts, type Assessment } from '../../util/outageAssessment';
@@ -39,7 +39,7 @@ function Kpi({ label, value, unit, sub, tone, title }: {
   );
 }
 
-export default function AcrossKpis({ kpis, scenarios, assessments }: Props) {
+export default memo(function AcrossKpis({ kpis, scenarios, assessments }: Props) {
   const counts = verdictCounts(assessments.values());
   const byId = new Map<string, ScenarioStats>(scenarios.map((s) => [s.scenario.id, s]));
   const where = (id: string | null) => {
@@ -119,4 +119,4 @@ export default function AcrossKpis({ kpis, scenarios, assessments }: Props) {
       />
     </div>
   );
-}
+});
