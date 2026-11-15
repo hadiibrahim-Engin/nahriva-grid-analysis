@@ -51,7 +51,8 @@ import OutageManagement from '../components/OutageManagement';
 import { CHART_TEMPLATES } from '../components/charts/chartTemplates';
 import { SectionCard } from '../components/across/shared';
 import AcrossScenarios from '../components/across/AcrossScenarios';
-const N1PairsChart = lazy(() => import('../components/across/N1PairsChart'));
+import DashboardSection from '../components/DashboardSection';
+import { useWorkspaceScroll } from '../hooks/useWorkspaceScroll';
 import DatabasePicker from '../components/DatabasePicker';
 import GeneratingLoader from '../components/ui/GeneratingLoader';
 import WorkspaceRail from '../components/WorkspaceRail';
@@ -129,11 +130,11 @@ export default function DashboardPage() {
     return isWorkspaceId(value) ? value : 'assessment';
   });
   const tabScrollRef = useRef<HTMLDivElement>(null);
-  const setWorkspace = useCallback((next: WorkspaceId) => {
+  const activateWorkspace = useCallback((next: WorkspaceId) => {
     setWorkspaceState(next);
     writeParam('view', next === 'assessment' ? null : next);
-    tabScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }, []);
+  const setWorkspace = useWorkspaceScroll(tabScrollRef, workspace, activateWorkspace);
   const workspaceMeta = workspaceDefinition(workspace);
   // Restore the locally persisted view once on mount, so a reload (or recovery after a dropped
   // connection) is lossless.
@@ -607,6 +608,9 @@ export default function DashboardPage() {
   );
 
   const timeseriesRefreshing = loading || timeseriesLoadingKeys.size > 0;
+  const assessmentIntro = useMemo(() => <OutageManagement onResultsChanged={() => {
+    clearCache(); refreshFacilities(); setRefreshNonce((n) => n + 1);
+  }} />, [refreshFacilities]);
 
   return (
     <SectionExpansionContext.Provider value={sectionExpansion}>
@@ -768,34 +772,8 @@ export default function DashboardPage() {
           </section>
 
           <div ref={tabScrollRef} className="flex-1 overflow-y-auto">
-            <header className="workspace-heading">
-              <div>
-                <span className="workspace-heading__eyebrow">Active workspace</span>
-                <h2>{workspaceMeta.label}</h2>
-              </div>
-              <p>{workspaceMeta.description}</p>
-            </header>
-            <section className="workspace-content">
-              {workspace === 'assessment' && (
-                <OutageManagement onResultsChanged={() => { clearCache(); refreshFacilities(); setRefreshNonce((n) => n + 1); }} />
-              )}
-              {workspace !== 'n1' && workspace !== 'charts' && (
-                <AcrossScenarios refreshKey={refreshNonce} workspace={workspace} onWorkspaceChange={setWorkspace} />
-              )}
-              {workspace === 'n1' && (
-                <div className="across-scope mt-3">
-                  <ErrorBoundary label="n-1 review">
-                    <Suspense fallback={<GeneratingLoader minHeight={240} />}>
-                      {/* Which contingency overloads which branch: before → after per pair, then the Sankey. */}
-                      <N1PairsChart key={refreshNonce} kind="both" />
-                    </Suspense>
-                  </ErrorBoundary>
-                </div>
-              )}
-            </section>
-              {workspace === 'charts' && (
-              <div>
-
+            <AcrossScenarios refreshKey={refreshNonce} onWorkspaceChange={setWorkspace} intro={assessmentIntro} />
+            <DashboardSection workspace="charts" lazy>
                 {/* -- Charts overlay: rises up over the sticky map ------- */}
                 <section
                   className="charts-overlay"
@@ -926,8 +904,7 @@ export default function DashboardPage() {
                     </SectionCard>
                   </div>
                 </section>
-              </div>
-              )}
+            </DashboardSection>
 
           </div>
         </main>

@@ -1,0 +1,30 @@
+[
+  {
+    "dataset": "small",
+    "branches": 12,
+    "values": 5256,
+    "processing_s": 0.3137493340000219,
+    "export_s": 0.03554079199966509,
+    "restore_s": 0.04411758300193469,
+    "sqlite_bytes": 978944,
+    "value_files_bytes": 67837,
+    "restored_sqlite_bytes": 1077248,
+    "restored_value_files_bytes": 0,
+    "archive_bytes": 214226,
+    "all_table_digests_equal": true
+  },
+  {
+    "dataset": "large",
+    "branches": 1000,
+    "values": 1878000,
+    "processing_s": 7.942727875000855,
+    "export_s": 1.30860062499778,
+    "restore_s": 4.378949625002861,
+    "sqlite_bytes": 119308288,
+    "value_files_bytes": 2023787,
+    "restored_sqlite_bytes": 162410496,
+    "restored_value_files_bytes": 0,
+    "archive_bytes": 2795554,
+    "all_table_digests_equal": true
+  }
+]

@@ -1,7 +1,9 @@
-# Architecture (current state)
+# Architecture (historical snapshot)
 
-State of 2026-11-07 (phases 2 and 3 included), traced in the code. It describes what exists; planned extensions are in
-`dev.md`.
+Snapshot of 2026-11-07 (phases 2 and 3). This predates raw Parquet storage and layout 15; see
+[DATABASE.md](DATABASE.md), [STORAGE.md](STORAGE.md) and [PERFORMANCE.md](PERFORMANCE.md) for the current
+SQLite/Parquet contract, shared DuckDB instance, complete export, serialized imports and restore path. Planned
+extensions are in `dev.md`.
 
 ## Components
 

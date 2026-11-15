@@ -1,0 +1,147 @@
+{
+  "parameters": {
+    "out": "/tmp/nahriva-bench-after-small",
+    "db": null,
+    "queries_only": false,
+    "branches": 50,
+    "cases": 2,
+    "contingencies": 8,
+    "window": 24,
+    "spacing": 48,
+    "repeats": 20
+  },
+  "counts": {
+    "runs": 3,
+    "series": 300,
+    "qds_values": 21900,
+    "n1_cells": 6483
+  },
+  "events": [
+    {
+      "event": "import_start",
+      "s": 0.0,
+      "peak_mb": 28
+    },
+    {
+      "event": "ref_committed",
+      "s": 0.128,
+      "peak_mb": 73,
+      "detail": "QDS REF"
+    },
+    {
+      "event": "first_scenario_committed",
+      "s": 0.158,
+      "peak_mb": 77,
+      "detail": "QDS C1"
+    },
+    {
+      "event": "all_qds_committed",
+      "s": 0.18
+    },
+    {
+      "event": "import_complete",
+      "s": 0.318,
+      "peak_mb": 80
+    }
+  ],
+  "import_s": 0.318,
+  "elmres_read_standin_s": 0.07,
+  "processing_s_excluding_standin": 0.24,
+  "phases_s": {
+    "qds_other_python_and_metadata": 0.1,
+    "n1_sweep_python_and_cells": 0.063,
+    "summaries_run_times": 0.026,
+    "scenario_cells": 0.018,
+    "sqlite_commit": 0.017,
+    "parquet_write": 0.005,
+    "parquet_sidecars": 0.005,
+    "checksum": 0.0,
+    "scenario_rows": 0.0,
+    "summaries_scenario_cells": 0.0,
+    "summaries_areas": 0.0
+  },
+  "peak_rss_mb": 80,
+  "sizes": {
+    "sqlite_mb": 3.3,
+    "values_mb": 0.1,
+    "sidecars_mb": 0.05
+  },
+  "database": "/tmp/nahriva-bench-after-small/bench.sqlite3",
+  "queries": {
+    "series_per_run": 100,
+    "times": 73,
+    "requests": {
+      "analyses": {
+        "status": 200,
+        "first_ms": 19.5,
+        "p50_ms": 1.6,
+        "p95_ms": 2.0,
+        "bytes": 423
+      },
+      "scenario_index": {
+        "status": 200,
+        "first_ms": 2.2,
+        "p50_ms": 1.7,
+        "p95_ms": 1.8,
+        "bytes": 906
+      },
+      "evaluation_all_scenarios": {
+        "status": 200,
+        "first_ms": 5.1,
+        "p50_ms": 3.2,
+        "p95_ms": 3.5,
+        "bytes": 66834
+      },
+      "time_profile_of_scenario": {
+        "status": 200,
+        "first_ms": 2.9,
+        "p50_ms": 2.2,
+        "p95_ms": 2.7,
+        "bytes": 9668
+      },
+      "network_at_time_all_elements": {
+        "status": 200,
+        "first_ms": 131.4,
+        "p50_ms": 6.5,
+        "p95_ms": 8.2,
+        "bytes": 14929
+      },
+      "asset_series_year_reduced": {
+        "status": 200,
+        "first_ms": 5.9,
+        "p50_ms": 2.9,
+        "p95_ms": 3.5,
+        "bytes": 976
+      },
+      "asset_series_year_raw": {
+        "status": 200,
+        "first_ms": 2.9,
+        "p50_ms": 2.6,
+        "p95_ms": 2.9,
+        "bytes": 5482
+      },
+      "n1_pairs_gantt": {
+        "status": 200,
+        "first_ms": 6.6,
+        "p50_ms": 5.6,
+        "p95_ms": 6.9,
+        "bytes": 21703
+      },
+      "areas": {
+        "status": 200,
+        "first_ms": 2.1,
+        "p50_ms": 1.6,
+        "p95_ms": 1.8,
+        "bytes": 434
+      },
+      "evaluation_changed_limits": {
+        "status": 200,
+        "first_ms": 18.8,
+        "p50_ms": 16.6,
+        "p95_ms": 20.0,
+        "bytes": 33380
+      }
+    },
+    "peak_rss_mb": 166
+  }
+}

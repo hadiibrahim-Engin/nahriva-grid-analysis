@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 from itertools import repeat
 
 import gridlens_runtime as engine
-from app.simulation import across, areas, prepared, values as value_files
+from app.simulation import across, areas, imports, prepared
+from app.simulation import values as value_files
 from app.simulation.gridlens_store import RESULT_SCHEMA_VERSION
 from app.simulation.grids import grid_name
 from app.simulation.store import ScenarioStore
@@ -214,9 +215,10 @@ def _values(result, column, rows):
 
 # Per time of a QDS run: extremes and violations (pf_run_times), aggregated in groups of series with pyarrow.
 RunTimes = prepared.RunTimes
+ScenarioStats = prepared.RunStats
 
 
-def _read_qds(db, assessment_id, run, bundle, catalog, elements, database):
+def _read_qds(db, assessment_id, run, bundle, catalog, elements, database, stats=None, window_sets=()):
     """One native column at a time, with every sample retained for the existing widgets.
 
     The values go straight into the run's Parquet file (app/simulation/values.py); SQLite gets the series, limits
@@ -260,33 +262,45 @@ def _read_qds(db, assessment_id, run, bundle, catalog, elements, database):
         writer = value_files.ValueWriter(database, analysis_id)
         per_time = RunTimes(len(timestamps))
         per_area = areas.AreaTimes(len(timestamps))
-        # Columns in key order of analysis_values: every series is appended at the end of the table.
-        for _priority, column, entry, variable in chosen.values():
+        per_scenario = ScenarioStats(timestamps, window_sets)
+        # The transaction already owns SQLite's write lock. Reserve ids once, then insert metadata in batches.
+        next_id = db.execute('SELECT COALESCE(MAX(id),0)+1 FROM analysis_series').fetchone()[0]
+        columns, series, limits, metrics, equipment = [], [], [], {}, {}
+        for offset, (_priority, column, entry, variable) in enumerate(chosen.values()):
             unit = _unit(obj, column)
-            metric = _column(db, result_id, column, entry, variable, unit)
-            db.execute('INSERT OR IGNORE INTO analysis_elements VALUES(?,?,?,?,?,?)',
-                       (analysis_id, entry['id'], entry['name'], entry['class'], entry['category'], entry['key']))
+            metric = STANDARD_METRICS.get(variable, variable.replace(':', '_'))
+            columns.append((result_id, column, entry['id'], entry['name'], entry['key'], entry['class'], variable, metric, unit))
+            equipment.setdefault(entry['id'], (analysis_id, entry['id'], entry['name'], entry['class'], entry['category'], entry['key']))
             lower, upper = elements.limits(entry, metric)
-            db.execute('INSERT OR IGNORE INTO analysis_metrics VALUES(?,?,?,?,?,?)',
-                       (analysis_id, metric, metric.replace('_', ' ').title(), unit, lower, upper))
+            metrics.setdefault(metric, (analysis_id, metric, metric.replace('_', ' ').title(), unit, lower, upper))
             if lower is not None or upper is not None:
-                db.execute('INSERT OR IGNORE INTO pf_element_limits VALUES(?,?,?,?,?)',
-                           (analysis_id, entry['id'], metric, lower, upper))
-            series_id = db.execute('INSERT INTO analysis_series(run_id,metric_id,element_id) VALUES(?,?,?)',
-                                   (analysis_id, metric, entry['id'])).lastrowid
-            values = _values(obj, column, len(timestamps))
-            writer.add(series_id, timestamps, values)
-            per_time.add(metric, entry['category'], values, lower, upper)
+                limits.append((analysis_id, entry['id'], metric, lower, upper))
+            series_id = next_id + offset
+            series.append((series_id, analysis_id, metric, entry['id']))
+        db.executemany('INSERT INTO gl_columns VALUES(?,?,?,?,?,?,?,?,?)', columns)
+        db.executemany('INSERT INTO analysis_elements VALUES(?,?,?,?,?,?)', equipment.values())
+        db.executemany('INSERT INTO analysis_metrics VALUES(?,?,?,?,?,?)', metrics.values())
+        db.executemany('INSERT INTO pf_element_limits VALUES(?,?,?,?,?)', limits)
+        db.executemany('INSERT INTO analysis_series VALUES(?,?,?,?)', series)
+        metadata_rows = {'analysis_series': series, 'analysis_elements': equipment.values(), 'pf_element_limits': limits}
+        for row, (_priority, column, entry, variable) in zip(series, chosen.values()):
+            series_id, _run, metric, _element = row
+            lower, upper = elements.limits(entry, metric)
+            native_values = _values(obj, column, len(timestamps))
+            arrow = writer.pa.array(native_values, writer.pa.float64())
+            writer.add(series_id, timestamps, arrow)
+            per_time.add(metric, entry['category'], arrow, lower, upper)
+            per_scenario.add(entry['id'], metric, arrow, lower, upper)
             if metric == areas.METRIC:
-                per_area.add(entry['category'], entry['area'], values, entry.get('ends'))
-            if None in values:
+                per_area.add(entry['category'], entry['area'], native_values, entry.get('ends'))
+            if arrow.null_count:
                 incomplete = True
                 db.executemany('INSERT INTO gl_values VALUES(?,?,?,?,?,?,?)',
                                ((result_id, t, '', column, None, None, 'invalid_or_missing')
-                                for t, value in zip(timestamps, values) if value is None))
+                                for t, value in zip(timestamps, native_values) if value is None))
         per_time.store(db, analysis_id, timestamps)
         per_area.store(db, analysis_id, timestamps)
-        db.execute('INSERT INTO pf_run_values VALUES(?,?,?,?,?,?)', (analysis_id, *writer.close(db)))
+        db.execute('INSERT INTO pf_run_values VALUES(?,?,?,?,?,?)', (analysis_id, *writer.close(db, metadata_rows)))
         metadata.update(time_encoding=encoding, time_unit='epoch_seconds_utc', rows=len(timestamps), columns=len(chosen))
         status = 'incomplete' if incomplete else 'completed'
         db.execute('UPDATE gl_results SET metadata=?,status=? WHERE id=?', (text_json(metadata), status, result_id))
@@ -299,6 +313,8 @@ def _read_qds(db, assessment_id, run, bundle, catalog, elements, database):
         raise
     finally:
         obj.Release()
+    if stats is not None:
+        stats[analysis_id] = per_scenario
     return result_id, analysis_id
 
 
@@ -516,6 +532,11 @@ def _save_scenario(db, assessment_id, plan, loaded, reused, catalog):
 
 
 def import_results(bundle, database, on_saved=None):
+    with imports.serialized(database):
+        return _import_results(bundle, database, on_saved)
+
+
+def _import_results(bundle, database, on_saved=None):
     """Store one restored native assessment, with no classification or report tables.
 
     The assessment and its cases come first, then every QDS run (REF first) and every n-1 sweep in a
@@ -565,8 +586,21 @@ def import_results(bundle, database, on_saved=None):
 
     store = ScenarioStore(str(database))
     db = store.db
+    imports.recover(db, database)
     elements = Elements(catalog['project_path'], db, assessment_id)
-    loaded = {}
+    loaded, stats = {}, {}
+    windows_by_run = {engine.REFERENCE_CASE_ID: []}
+    sources, remaining = {}, {}
+    for plan in plans.values():
+        windows = prepared.scenario_windows(catalog['outages'], [identifier(r['key']) for r in plan['members']])
+        windows_by_run[engine.REFERENCE_CASE_ID].append(windows)
+        source = plan['id']
+        while source in reused:
+            source = reused[source]
+        sources[plan['id']] = source
+        remaining[source] = remaining.get(source, 0) + 1
+        if source != engine.REFERENCE_CASE_ID:
+            windows_by_run.setdefault(source, []).append(windows)
     engine.open_column_buffer(app)
     try:
         logger.step(6, 'Read native results for the dashboard (no report evaluation)')
@@ -605,12 +639,16 @@ def import_results(bundle, database, on_saved=None):
                                ('FAILED', str(run.get('failed') or 'No result'), assessment_id, run['id']))
                 else:
                     logger.detail('Reading QDS ' + run['id'] + ': ' + engine.object_key(run['snapshot']))
-                    loaded[run['id']] = _read_qds(db, assessment_id, run, bundle, catalog, elements, database)
+                    loaded[run['id']] = _read_qds(db, assessment_id, run, bundle, catalog, elements, database, stats, windows_by_run.get(run['id'], []))
                 if run['id'] in plans and run['id'] in loaded:
                     scenario_id = _save_scenario(db, assessment_id, plans[run['id']], loaded, reused, catalog)
                     # The dashboard's summary of the scenario, committed with it: the first view needs no
                     # reduction of the stored values (about 1 s per scenario on a year of hourly values).
-                    across.prepare_cells(store, scenario_id)
+                    across.prepare_cells(store, scenario_id, stats=stats)
+                    source = sources[run['id']]
+                    remaining[source] -= 1
+                    if source != engine.REFERENCE_CASE_ID and not remaining[source]:
+                        stats.pop(loaded[run['id']][1], None)
                     progress['scenarios'] += 1
             saved('QDS ' + run['id'])
         for case_id, side, kind in sweeps:
@@ -637,6 +675,7 @@ def import_results(bundle, database, on_saved=None):
                                (('IMPORT FAILED', 'Import stopped: ' + str(exc)[:500], assessment_id, case_id)
                                 for case_id in plans if case_id not in loaded))
                 db.execute("UPDATE gl_assessments SET status='failed' WHERE id=?", (assessment_id,))
+            imports.recover(db, database)
         except Exception:
             pass
         raise

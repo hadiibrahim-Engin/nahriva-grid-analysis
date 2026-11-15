@@ -1,0 +1,145 @@
+{
+  "parameters": {
+    "out": "/tmp/nahriva-bench-before-year",
+    "db": null,
+    "queries_only": false,
+    "branches": 1000,
+    "cases": 6,
+    "contingencies": 0,
+    "window": 72,
+    "spacing": null,
+    "repeats": 20
+  },
+  "counts": {
+    "runs": 7,
+    "series": 14000,
+    "qds_values": 85022000,
+    "n1_cells": 0
+  },
+  "events": [
+    {
+      "event": "import_start",
+      "s": 0.0,
+      "peak_mb": 29
+    },
+    {
+      "event": "ref_committed",
+      "s": 8.324,
+      "peak_mb": 253,
+      "detail": "QDS REF"
+    },
+    {
+      "event": "first_scenario_committed",
+      "s": 17.488,
+      "peak_mb": 355,
+      "detail": "QDS C1"
+    },
+    {
+      "event": "all_qds_committed",
+      "s": 61.826
+    },
+    {
+      "event": "import_complete",
+      "s": 61.828,
+      "peak_mb": 485
+    }
+  ],
+  "import_s": 61.828,
+  "elmres_read_standin_s": 49.56,
+  "processing_s_excluding_standin": 12.27,
+  "phases_s": {
+    "parquet_write": 6.709,
+    "summaries_run_times": 2.697,
+    "qds_other_python_and_metadata": 1.822,
+    "scenario_cells": 0.803,
+    "parquet_sidecars": 0.094,
+    "sqlite_commit": 0.088,
+    "checksum": 0.046,
+    "scenario_rows": 0.001,
+    "summaries_areas": 0.0
+  },
+  "peak_rss_mb": 485,
+  "sizes": {
+    "sqlite_mb": 28.5,
+    "values_mb": 62.8,
+    "sidecars_mb": 1.65
+  },
+  "database": "/tmp/nahriva-bench-before-year/bench.sqlite3",
+  "queries": {
+    "series_per_run": 2000,
+    "times": 6073,
+    "requests": {
+      "analyses": {
+        "status": 200,
+        "first_ms": 19.4,
+        "p50_ms": 1.6,
+        "p95_ms": 1.9,
+        "bytes": 408
+      },
+      "scenario_index": {
+        "status": 200,
+        "first_ms": 2.7,
+        "p50_ms": 2.1,
+        "p95_ms": 2.4,
+        "bytes": 2556
+      },
+      "evaluation_all_scenarios": {
+        "status": 200,
+        "first_ms": 133.2,
+        "p50_ms": 89.4,
+        "p95_ms": 97.5,
+        "bytes": 3989727
+      },
+      "time_profile_of_scenario": {
+        "status": 200,
+        "first_ms": 43.4,
+        "p50_ms": 30.4,
+        "p95_ms": 52.9,
+        "bytes": 198264
+      },
+      "network_at_time_all_elements": {
+        "status": 200,
+        "first_ms": 162.2,
+        "p50_ms": 17.5,
+        "p95_ms": 19.4,
+        "bytes": 294249
+      },
+      "asset_series_year_reduced": {
+        "status": 200,
+        "first_ms": 15.9,
+        "p50_ms": 14.3,
+        "p95_ms": 34.4,
+        "bytes": 35101
+      },
+      "asset_series_year_raw": {
+        "status": 200,
+        "first_ms": 27.6,
+        "p50_ms": 27.5,
+        "p95_ms": 46.1,
+        "bytes": 415327
+      },
+      "n1_pairs_gantt": {
+        "status": 404,
+        "first_ms": 2.6,
+        "p50_ms": 1.7,
+        "p95_ms": 2.2,
+        "bytes": 48
+      },
+      "areas": {
+        "status": 200,
+        "first_ms": 1.8,
+        "p50_ms": 1.6,
+        "p95_ms": 1.7,
+        "bytes": 434
+      },
+      "evaluation_changed_limits": {
+        "status": 200,
+        "first_ms": 109.5,
+        "p50_ms": 110.2,
+        "p95_ms": 149.2,
+        "bytes": 664876
+      }
+    },
+    "peak_rss_mb": 456
+  }
+}

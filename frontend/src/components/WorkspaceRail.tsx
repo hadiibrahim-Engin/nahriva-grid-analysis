@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import {
   Activity,
   BarChart3,
@@ -24,17 +25,27 @@ export default function WorkspaceRail({ value, onChange }: {
   value: WorkspaceId;
   onChange: (workspace: WorkspaceId) => void;
 }) {
+  const rail = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const container = rail.current;
+    const current = container?.querySelector<HTMLElement>('[aria-current="location"]');
+    if (!container || !current || container.scrollWidth <= container.clientWidth) return;
+    const bounds = container.getBoundingClientRect();
+    const item = current.getBoundingClientRect();
+    if (item.left < bounds.left) container.scrollLeft -= bounds.left - item.left + 8;
+    else if (item.right > bounds.right) container.scrollLeft += item.right - bounds.right + 8;
+  }, [value]);
   return (
-    <aside className="workspace-rail">
+    <aside ref={rail} className="workspace-rail">
       <div className="workspace-rail__eyebrow">Analysis</div>
-      <nav className="workspace-rail__nav" aria-label="Analysis workspaces">
+      <nav className="workspace-rail__nav" aria-label="Analysis sections">
         {WORKSPACES.map(({ id, label, shortLabel, description }) => {
           const Icon = WORKSPACE_ICONS[id];
           return <button
             key={id}
             type="button"
             className="workspace-rail__item"
-            aria-current={value === id ? 'page' : undefined}
+            aria-current={value === id ? 'location' : undefined}
             title={`${label} — ${description}`}
             onClick={() => onChange(id)}
           >
@@ -45,7 +56,7 @@ export default function WorkspaceRail({ value, onChange }: {
         })}
       </nav>
       <div className="workspace-rail__hint">
-        One workspace at a time. Detailed tables open only when requested.
+        Scroll to explore. Select a section to jump to it; n-1 results load on request.
       </div>
     </aside>
   );

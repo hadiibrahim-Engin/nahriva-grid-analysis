@@ -1,10 +1,10 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import * as echarts from 'echarts/core';
 import { LineChart } from 'echarts/charts';
-import { GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent } from 'echarts/components';
+import { DataZoomComponent, GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import api from '../../api/client';
-import ReactECharts from '../charts/ReactECharts';
+import ReactECharts, { type ReactEChartsHandle } from '../charts/ReactECharts';
 import { useChartTheme } from '../../hooks/useChartTheme';
 import { escapeHtml, readAcrossColors, withAlpha } from '../../util/acrossColors';
 import { SUMMARY_IDS, fmtPct } from '../../util/acrossScenarios';
@@ -12,7 +12,7 @@ import { SectionCard } from './shared';
 import { useGridFilter } from '../../hooks/useGridFilter';
 import { gridLabel } from '../../util/grids';
 
-echarts.use([LineChart, GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([LineChart, DataZoomComponent, GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent, CanvasRenderer]);
 
 interface Profile {
   scenario_id: string;
@@ -27,6 +27,7 @@ interface Profile {
  */
 export default memo(function ScenarioProfile({ scenarioId, label, refreshKey }: { scenarioId: string; label: string; refreshKey: number }) {
   const theme = useChartTheme();
+  const chart = useRef<ReactEChartsHandle>(null);
   const colors = useMemo(() => readAcrossColors(theme.isLight), [theme.isLight]);
   const { grid, kv } = useGridFilter();
   const [loaded, setLoaded] = useState<{ id: string; filter: string; profile: Profile } | null>(null);
@@ -68,7 +69,16 @@ export default memo(function ScenarioProfile({ scenarioId, label, refreshKey }: 
           return `<strong>${when} UTC</strong><br/>${rows.join('<br/>')}`;
         },
       },
-      grid: { left: 8, right: 16, top: 36, bottom: 28, containLabel: true },
+      grid: { left: 8, right: 48, top: 36, bottom: 64, containLabel: true },
+      // A plain wheel scrolls the dashboard. Ctrl + wheel zooms; dragging inside pans.
+      dataZoom: [
+        { type: 'inside', xAxisIndex: 0, filterMode: 'none', zoomOnMouseWheel: 'ctrl', moveOnMouseWheel: false },
+        { type: 'inside', yAxisIndex: 0, filterMode: 'none', zoomOnMouseWheel: 'ctrl', moveOnMouseWheel: false },
+        { type: 'slider', xAxisIndex: 0, filterMode: 'none', bottom: 8, height: 20,
+          borderColor: theme.axis, textStyle: { color: theme.mutedText }, brushSelect: false },
+        { type: 'slider', yAxisIndex: 0, filterMode: 'none', right: 4, width: 16,
+          borderColor: theme.axis, textStyle: { color: theme.mutedText }, brushSelect: false },
+      ],
       xAxis: { type: 'time', axisLabel: { color: theme.mutedText, fontSize: 10 }, axisLine: { lineStyle: { color: theme.axis } }, splitLine: { show: false } },
       yAxis: {
         type: 'value', min: 0,
@@ -112,12 +122,13 @@ export default memo(function ScenarioProfile({ scenarioId, label, refreshKey }: 
     <SectionCard
       id={SUMMARY_IDS.profile}
       title={`Loading profile · ${label}${grid === null ? '' : ` · ${gridLabel(grid)}`}`}
-      hint="The five most heavily loaded equipment items in service over the simulation period. Solid: with outage, dashed: reference (REF). The shaded area marks the outage window; switched-off equipment is missing."
+      actions={legendOption ? <button type="button" className="ab-chip" onClick={() => chart.current?.getEchartsInstance()?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 })}>Reset zoom</button> : undefined}
+      hint="The five most heavily loaded equipment items in service over the simulation period. Zoom with the sliders or Ctrl + mouse wheel; drag the plot to pan. Solid: with outage, dashed: reference (REF). The shaded area marks the outage window; switched-off equipment is missing."
     >
       {failed === scenarioId && !profile && <div className="ab-empty">The profile could not be loaded.</div>}
       {!profile && failed !== scenarioId && <div className="ab-empty" aria-busy>Loading profile …</div>}
       {profile && profile.series.length === 0 && <div className="ab-empty">There are no equipment profiles for this scenario.</div>}
-      {legendOption && <ReactECharts echarts={echarts} option={legendOption} notMerge style={{ height: 330 }} />}
+      {legendOption && <ReactECharts ref={chart} echarts={echarts} option={legendOption} notMerge wheelZoomModifier="ctrl" style={{ height: 370 }} />}
     </SectionCard>
   );
 });

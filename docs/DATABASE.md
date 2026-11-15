@@ -5,11 +5,11 @@ The results live in **one SQLite file and the folder of the same name with `.val
 `outage-assessment.config.json`). SQLite holds analyses, scenarios, elements, limits and every summary written at
 import; the folder holds the raw QDS values, one immutable Parquet file per run (`pf_run_values` names it, decision
 E2, see [STORAGE.md](STORAGE.md)). Both belong together: copy, back up and delete them together. Runs imported
-before layout 14, and databases restored from an archive, keep their values in the table `analysis_values`; the
-dashboard reads both. The PowerFactory script is the only writer; the dashboard and any external tool only read.
+before layout 14, and databases restored by older releases, keep their values in `analysis_values`; the
+dashboard reads both. New archive restorations retain Parquet. The PowerFactory script is the only writer; the dashboard and any external tool only read.
 The SQLite file uses WAL mode, so reading never blocks the script and the script never blocks a reader.
 
-Layout version: **14** (`PRAGMA user_version`; results schema 2 in `schema_migrations`). The tables are defined in
+Layout version: **15** (`PRAGMA user_version`; results schema 2 in `schema_migrations`). The tables are defined in
 `backend/app/analysis/migrations/002_analysis.sql` (results), `backend/app/simulation/store.py` (PowerFactory bridge,
 summaries, views) and `backend/app/simulation/gridlens_store.py` (analyses, master data, native results). An older
 file is brought up to date once when it is opened.
@@ -312,13 +312,46 @@ The file can be read while the dashboard runs. Open it **read-only**, never writ
 | `v_elements` | element of a run | name, class, type, grid, path |
 | `v_series` | time series | run, metric, unit, element, grid |
 | `v_runs` | calculated run | run, `case_kind`, `status` (`completed`, `not_converged`, `incomplete`), `note`, number of linked scenarios (0: a REF saved before its scenarios) |
-| `v_samples` | value | scenario (NULL for a REF no scenario links to yet), `case_kind` (REF/OUTAGE), element, grid, metric, unit, `timestamp_utc`, `epoch`, `value` |
+| `v_run_storage` | run | storage format, relative Parquet path, row count, bytes and SHA-256; NULL file fields for SQLite |
+| `v_samples` | SQLite value only | scenario (NULL for a REF no scenario links to yet), `case_kind` (REF/OUTAGE), element, grid, metric, unit, `timestamp_utc`, `epoch`, `value` |
 | `v_lodf` | LODF value | scenario, element, grid, `lodf`, `p_pre`, `p_post` |
 | `v_lodf_undefined` | scenario without LODF | scenario, reason |
 
 Filter `v_samples` at least by scenario and element (or metric). It holds the values stored in SQLite only; the
 values of runs in `pf_run_values` are Parquet files any Parquet reader opens (DuckDB, pandas, Power BI, Excel via
 Power Query), with `series_id` joining `analysis_series`.
+
+### Complete access across SQLite and Parquet (layout 15)
+
+`v_samples` cannot read Parquet through SQLite. Use the common `values.query()` / `values.iter_query()` for SQL
+on one run, or `values.iter_samples()` for the complete named sample stream, including mixed databases.
+`iter_samples` yields the same columns and scenario multiplicity as `v_samples`: shared REF runs appear for each
+linked scenario, while an unlinked run has NULL scenario and case kind REF. Do not sum shared references across
+scenarios as independent measurements. NULL values remain NULL. Filter by run/scenario and `[start, end)` UTC
+epoch seconds. Batches bound Python output memory; a sorted DuckDB query may still use its own working memory.
+
+```sh
+backend/.venv/bin/python scripts/read_values.py /absolute/results.sqlite3 --format csv > samples.csv
+backend/.venv/bin/python scripts/read_values.py /absolute/results.sqlite3 --run RUN_ID --start 1767225600 --end 1767312000 --format jsonl
+```
+
+The CLI opens a read-only SQLite transaction for a consistent snapshot. CSV uses an empty value field for NULL;
+JSON Lines uses `null`. It never creates a database or writes a second value store.
+
+```python
+import sqlite3
+from contextlib import closing
+from app.simulation.values import iter_samples
+
+with closing(sqlite3.connect('file:/absolute/results.sqlite3?mode=ro', uri=True)) as db:
+    db.execute('BEGIN')
+    for sample in iter_samples(db, scenario_id='SCENARIO_ID', batch_size=16384):
+        consume(sample)  # stream to the consumer; avoid list(...) for large exports
+```
+
+The following SQL/pandas examples query **SQLite values only**. Check `v_run_storage` first or use the complete
+CLI above for new imports. Layout 14 → 15 adds the storage view without moving or rewriting values. Analysis
+schema and result contract remain at version 2; Redispatch remains an open work item.
 
 ### Examples (SQL)
 
@@ -375,3 +408,26 @@ The results can always be calculated again from PowerFactory, so the file is nev
 - When the schema changes, `SCHEMA_VERSION` in `backend/app/analysis/schema.py` is raised together
   with the schema file; views and bridge tables are versioned by `LAYOUT_VERSION` in
   `backend/app/simulation/store.py` and are brought up to date automatically when a file is opened.
+
+## Interrupted imports
+
+The bridge owns `<database>.import.lock` using an OS file lock (Windows byte lock / Unix flock). The file stays
+in place and records diagnostic owner details; an old file by itself does not mean an import is running. A second
+import fails immediately with a retry message. Dashboard readers do not acquire this lock.
+
+After the next importer acquires ownership it marks interrupted `importing` assessments as `failed`, marks
+unstored cases `IMPORT FAILED`, and removes generated UUID/hash Parquet/sidecar/partial files absent from
+`pf_run_values`. Committed runs and unrelated files remain. Reimport the kept native results through the case
+manager; this appends a new assessment and retains the partial earlier analysis for audit.
+
+A raw file and sidecars become final before their SQLite commit. A crash can therefore leave orphan files, but
+cannot publish a completed run before its files exist. Recovery is an explicit import operation, never a side
+effect of a dashboard read. Use the same serialized owner for any future external importer. Network-share locking
+and native Windows process termination remain acceptance checks; no multi-host writer guarantee is claimed.
+
+Archive restore stages the database and `.values` folder, validates schema/checksums, raw series ownership,
+duplicate keys, foreign keys and integrity, then publishes the folder before the database under the destination
+import lock. Existing files/folders are refused. Handled failures remove the staged output. A hard process/power
+failure may leave a hidden `.restore-*` staging folder or a destination `.values` folder without a database;
+inspect/remove that orphan folder before retrying the same restore destination. Existing databases are never
+overwritten.

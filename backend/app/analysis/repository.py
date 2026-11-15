@@ -32,8 +32,7 @@ class AnalysisRepository:
     def run_values(self, run_id, query, params=()):
         """Rows of a query over the values of one run, wherever they are stored (app/simulation/values.py)."""
         from app.simulation import values
-        with self._lock:
-            return values.query(self.db, run_id, query, params)
+        return values.query(self.db, run_id, query, params, lock=self._lock)
 
     def tuples(self, query, params=()):
         """Rows as plain tuples: for the large reads of a series, where a dict per row costs more than the query."""

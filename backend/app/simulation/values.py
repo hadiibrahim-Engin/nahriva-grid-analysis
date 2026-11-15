@@ -17,6 +17,8 @@ import os
 import sqlite3
 import stat
 import threading
+import uuid
+from contextlib import contextmanager, nullcontext
 from collections import namedtuple
 from pathlib import Path
 
@@ -92,7 +94,7 @@ class ValueWriter:
         if not self.pending:
             self.stamps = self.pa.array(timestamps, self.pa.int64())
             self.blocks = self._blocks(timestamps)
-        self.pending.append((series_id, self.pa.array(values, self.pa.float64())))
+        self.pending.append((series_id, values if isinstance(values, self.pa.Array) else self.pa.array(values, self.pa.float64())))
         if len(self.pending) >= SERIES_PER_GROUP:
             self._flush()
 
@@ -121,7 +123,7 @@ class ValueWriter:
             self.rows += len(ids)
         self.pending = []
 
-    def close(self, db=None):
+    def close(self, db=None, metadata=None):
         """Finish the file; returns the row of pf_run_values (without run_id).
 
         With `db` (the bridge's connection, inside the run's transaction) the run's series, elements and limits are
@@ -131,21 +133,18 @@ class ValueWriter:
         self._flush()
         self.writer.close()
         if db is not None:
-            self._write_sidecars(db)
+            self._write_sidecars(db, metadata)
         digest = checksum(self.partial)
         size = self.partial.stat().st_size
         os.replace(self.partial, self.target)
         self.target.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
         return "parquet", self.name, self.rows, size, digest
 
-    def _write_sidecars(self, db):
+    def _write_sidecars(self, db, metadata=None):
         for table, sql in _METADATA.items():
-            cursor = db.execute(sql, (self.run_id,))
-            names = [d[0] for d in cursor.description]
-            rows = cursor.fetchall()
-            columns = list(zip(*rows)) if rows else [[] for _ in names]
+            rows = metadata[table] if metadata is not None else db.execute(sql, (self.run_id,)).fetchall()
             side = self.base / sidecar(self.name, table)
-            self.pq.write_table(self.pa.table({n: list(c) for n, c in zip(names, columns)}), side,
+            self.pq.write_table(_metadata_table(self.pa, table, rows), side,
                                 compression=COMPRESSION)
             side.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
             self.sidecars.append(side)
@@ -202,15 +201,29 @@ def _row_type(names):
     return Row
 
 
-# One in-memory DuckDB per run file: its series, elements and limits copied from SQLite once (they never change for
-# a finished run), the values as a view on the Parquet file. Queries run on cursors, one per call (thread-safe).
+# One shared DuckDB instance, with one cached schema per run file (at most 32). A schema holds immutable metadata
+# and a view on Parquet. Queries use independent cursors; eviction drops a schema after its active queries finish.
 _ENGINES = TTLCache(max_entries=32, ttl_seconds=3600)
-_LOCK = threading.Lock()
+_INSTANCE_LOCK = threading.Lock()
+_INSTANCE = None
+_METADATA_COLUMNS = {
+    "analysis_series": ("id", "run_id", "metric_id", "element_id"),
+    "analysis_elements": ("run_id", "id", "name", "className", "type", "path"),
+    "pf_element_limits": ("run_id", "element_id", "metric_id", "lower", "upper"),
+}
 _METADATA = {
     "analysis_series": "SELECT id, run_id, metric_id, element_id FROM analysis_series WHERE run_id = ?",
     "analysis_elements": "SELECT run_id, id, name, className, type, path FROM analysis_elements WHERE run_id = ?",
     "pf_element_limits": "SELECT run_id, element_id, metric_id, lower, upper FROM pf_element_limits WHERE run_id = ?",
 }
+
+
+def _metadata_table(pa, table, rows):
+    names = _METADATA_COLUMNS[table]
+    columns = list(zip(*rows)) if rows else [[] for _ in names]
+    types = [pa.int64() if table == 'analysis_series' and name == 'id' else
+             pa.float64() if name in ('lower', 'upper') else pa.string() for name in names]
+    return pa.table({name: pa.array(column, type=kind) for name, column, kind in zip(names, columns, types)})
 
 
 def _location(db, run_id):
@@ -221,30 +234,64 @@ def _location(db, run_id):
     return row[0] if row else None
 
 
-def _engine(db, database, run_id, path):
+def _instance():
+    """One DuckDB instance, with a shared memory/thread budget, for every cached run."""
+    global _INSTANCE
+    with _INSTANCE_LOCK:
+        if _INSTANCE is None:
+            import duckdb
+            _INSTANCE = duckdb.connect()
+    return _INSTANCE
+
+
+class _Engine:
+    def __init__(self):
+        self.schema = "run_" + uuid.uuid4().hex
+        self.connection = _instance().cursor()
+        self.connection.execute(f'CREATE SCHEMA {self.schema}')
+        self.connection.execute(f"SET schema='{self.schema}'")
+
+    def cursor(self):
+        cursor = self.connection.cursor()
+        cursor.execute(f"SET schema='{self.schema}'")
+        return cursor
+
+    def __del__(self):
+        # Cache eviction releases metadata only after the last active query lets go of this engine.
+        try:
+            self.connection.execute(f'DROP SCHEMA {self.schema} CASCADE')
+            self.connection.close()
+        except Exception:
+            pass
+
+
+def _engine(db, database, run_id, path, digest, lock=None):
     def build():
-        import duckdb
         pa, _pq = _arrow()
-        con = duckdb.connect()
+        engine = _Engine()
+        con = engine.connection
         file = (folder(database) / path).as_posix().replace("'", "''")
         con.execute(f"CREATE VIEW analysis_values AS SELECT * FROM read_parquet('{file}')")
         for table, sql in _METADATA.items():
             side = folder(database) / sidecar(path, table)
-            if side.exists():  # written at import: loaded natively, no rows pass through Python
+            if side.exists():
                 name = side.as_posix().replace("'", "''")
                 con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_parquet('{name}')")
                 continue
-            cursor = db.execute(sql, (run_id,))
-            names = [d[0] for d in cursor.description]
-            rows = cursor.fetchall()
-            columns = list(zip(*rows)) if rows else [[] for _ in names]
-            arrow = pa.table({name: list(column) for name, column in zip(names, columns)})
+            with lock if lock is not None else nullcontext():
+                rows = db.execute(sql, (run_id,)).fetchall()
+            arrow = _metadata_table(pa, table, rows)
             con.register("_load", arrow)
             con.execute(f"CREATE TABLE {table} AS SELECT * FROM _load")
             con.unregister("_load")
-        return con
-    with _LOCK:
-        return _ENGINES.get_or_compute((str(database), run_id, path), build)
+        return engine
+    file = folder(database) / path
+    identity = file.stat()
+    db_identity = Path(database).stat()
+    key = (str(database), db_identity.st_dev, db_identity.st_ino, run_id, path, digest,
+           identity.st_ino, identity.st_mtime_ns, identity.st_size)
+    # TTLCache coalesces only identical keys; different runs build independently.
+    return _ENGINES.get_or_compute(key, build)
 
 
 def database_of(db):
@@ -252,24 +299,89 @@ def database_of(db):
     return next(row[2] for row in db.execute("PRAGMA database_list") if row[1] == "main")
 
 
-def query(db, run_id, sql, params=()):
-    """Run `sql` over the values of one run where they are: SQLite (analysis_values) or the run's Parquet file.
-
-    The SQL may use analysis_values, analysis_series, analysis_elements and pf_element_limits of that run, in the
-    dialect both engines share. Rows can be read by position or column name.
-    """
-    path = _location(db, run_id) if run_id else None
-    if path is None:
-        return db.execute(sql, params).fetchall()
-    cursor = _engine(db, database_of(db), run_id, path).cursor()
+@contextmanager
+def _query_cursor(db, run_id, sql, params, lock):
+    guard = lock if lock is not None else nullcontext()
+    with guard:
+        path = _location(db, run_id) if run_id else None
+        if path is None:
+            cursor = db.execute(sql, params)
+            try:
+                yield cursor, True
+            finally:
+                cursor.close()
+            return
+        database = database_of(db)
+        digest = db.execute("SELECT sha256 FROM pf_run_values WHERE run_id=?", (run_id,)).fetchone()[0]
+    engine = _engine(db, database, run_id, path, digest, lock)
+    cursor = engine.cursor()
     try:
         cursor.execute(sql, list(params))
-        return list(map(_row_type([d[0] for d in cursor.description])._make, cursor.fetchall()))
+        yield cursor, False
     finally:
         cursor.close()
+
+
+def iter_query(db, run_id, sql, params=(), *, batch_size=16384, lock=None):
+    """Bounded raw query stream on either engine. Close the generator when stopping iteration early."""
+    if not 1 <= batch_size <= 1_000_000:
+        raise ValueError('batch_size must be between 1 and 1000000')
+    with _query_cursor(db, run_id, sql, params, lock) as (cursor, sqlite):
+        row_type = None if sqlite else _row_type([d[0] for d in cursor.description])
+        while True:
+            batch = cursor.fetchmany(batch_size)
+            if not batch:
+                break
+            yield from batch if sqlite else map(row_type._make, batch)
+
+
+def query(db, run_id, sql, params=(), lock=None):
+    """Query one run in SQLite or Parquet. `lock` guards only the shared SQLite connection, never DuckDB work."""
+    return list(iter_query(db, run_id, sql, params, lock=lock))
 
 
 def file_of(db, database, run_id):
     """Path of the run's value file, or None when its values are in SQLite."""
     path = _location(db, run_id)
     return None if path is None else folder(database) / path
+
+
+def iter_samples(db, *, run_id=None, scenario_id=None, start=None, end=None, batch_size=16384):
+    """Complete counterpart of SQLite's v_samples, streamed in bounded batches over both storage formats.
+
+    Returns dictionaries with the same columns as v_samples. Bounds are UTC epoch seconds [start, end).
+    Shared runs appear once per linked scenario, as in v_samples; an unlinked run appears as REF. The caller
+    owns the SQLite connection and, for a stable export during an import, should hold a read transaction.
+    """
+    from datetime import datetime, timezone
+    from app.simulation.grids import grid_name
+
+    if not 1 <= batch_size <= 1_000_000:
+        raise ValueError('batch_size must be between 1 and 1000000')
+    runs = db.execute('SELECT id FROM analysis_runs' + (' WHERE id=?' if run_id is not None else '') + ' ORDER BY id',
+                      (run_id,) if run_id is not None else ()).fetchall()
+    for (run,) in runs:
+        contexts = db.execute('SELECT s.id,s.name,r.kind FROM pf_scenario_runs r JOIN pf_scenarios s ON s.id=r.scenario_id '
+                              'WHERE r.run_id=? ORDER BY s.id', (run,)).fetchall() or [(None, None, 'REF')]
+        if scenario_id is not None:
+            contexts = [c for c in contexts if c[0] == scenario_id]
+        if not contexts:
+            continue
+        units = dict(db.execute('SELECT id,unit FROM analysis_metrics WHERE run_id=?', (run,)).fetchall())
+        rows = iter_query(db, run,
+                          'SELECT se.id,v.t,v.value,e.id,e.name,e.className,e.type,e.path,se.metric_id '
+                          'FROM analysis_series se JOIN analysis_values v ON v.series_id=se.id '
+                          'JOIN analysis_elements e ON e.run_id=se.run_id AND e.id=se.element_id '
+                          'WHERE se.run_id=? AND v.t>=? AND v.t<? ORDER BY se.id,v.t',
+                          (run, start if start is not None else -2**63, end if end is not None else 2**63-1),
+                          batch_size=batch_size)
+        try:
+            for sid, t, value, element, name, kind, category, path, metric in rows:
+                for scenario, label, case in contexts:
+                    yield {'scenario_id': scenario, 'scenario': label, 'case_kind': case, 'run_id': run,
+                           'element_id': element, 'element': name, 'element_class': kind, 'element_type': category,
+                           'grid': grid_name(path or ''), 'metric': metric, 'unit': units.get(metric),
+                           'timestamp_utc': datetime.fromtimestamp(t, timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+                           'epoch': t, 'value': value}
+        finally:
+            rows.close()

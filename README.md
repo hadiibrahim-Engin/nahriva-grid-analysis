@@ -74,6 +74,9 @@ comparison charts, a radar plot and a detail table. A navigation bar follows thi
 - The **time series overlay** is an optional view under the summary. Further charts of selected
   signals or of all scenarios come from **Add chart** (see [docs/ASSESSMENT.md](docs/ASSESSMENT.md)).
 - Thresholds and criteria are central in `frontend/src/config/`.
+- The page scrolls continuously; the left navigation highlights the visible section and jumps to it on click.
+- n-1 results load after **Load n-1 results**; equipment extremes stay hidden until **Show n-1 extremes**.
+- The loading profile supports time/loading sliders, Ctrl + mouse wheel, dragging to pan and **Reset zoom**.
 - Light and dark themes; the database button in the header loads another results file (only when
   the server is not exposed to the network).
 
@@ -125,4 +128,4 @@ is part of that acceptance.
 More: [PowerFactory workflow and data](docs/GRIDLENS.md) · [Database](docs/DATABASE.md) ·
 [Deployment](docs/DEPLOYMENT.md) · [Storage and Parquet archive](docs/STORAGE.md) ·
 [Areas: load, generation, transit](docs/AREAS.md) ·
-[Performance review and restore benchmarks](docs/PERFORMANCE.md) · [Troubleshooting](backend/DEBUGGING.md).
+[Performance review and restore benchmarks](docs/PERFORMANCE.md) · [Complete SQLite/Parquet export](docs/DATABASE.md#complete-access-across-sqlite-and-parquet-layout-15) · [Troubleshooting](backend/DEBUGGING.md).

@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.simulation import values
+from app.simulation.imports import ImportBusy, serialized
 from app.simulation.gridlens_store import RESULT_SCHEMA_VERSION
 from app.simulation.states import STATES_VERSION
 
@@ -35,8 +36,7 @@ FORMAT_VERSION = 2
 COMPRESSION = "zstd"
 COMPRESSION_LEVEL = 3
 ROW_GROUP_ROWS = 1_000_000
-# Oldest layout of a source database whose archive this version restores (layout 14 only added pf_run_values, which a
-# restored database does not need: its values go into analysis_values).
+# Layouts 13 onward have compatible archived tables. Raw QDS files remain Parquet on restore.
 OLDEST_LAYOUT = 13
 _BATCH_ROWS = 250_000
 
@@ -278,6 +278,8 @@ def verify_archive(path):
                 raise ArchiveError("unknown archive table")
             if entry["table"] != "analysis_values" and entry["table"] in tables:
                 raise ArchiveError("duplicate archive table")
+            if entry["table"] == 'analysis_values' and (not isinstance(entry.get('run_id'), str) or not entry['run_id']):
+                raise ArchiveError('invalid value-file run id')
             tables.add(entry["table"])
             listed.add(file)
             if not isinstance(entry.get("rows"), int) or entry["rows"] < 0:
@@ -324,8 +326,8 @@ def import_analysis(archive, database, on_file=None):
     target = Path(database).expanduser()
     if not target.is_absolute():
         raise ArchiveError("Use an absolute path for the restored database.")
-    if target.exists():
-        raise ArchiveError("The restore destination exists; choose a new database path.")
+    if target.exists() or values.folder(target).exists():
+        raise ArchiveError("The restore destination or its values folder exists; choose a new database path.")
     problems = verify_archive(archive)
     if problems:
         raise ArchiveError("Invalid archive: " + "; ".join(problems))
@@ -333,7 +335,8 @@ def import_analysis(archive, database, on_file=None):
     source = manifest.get("source", {})
     if not isinstance(source, dict):
         raise ArchiveError("Invalid archive source metadata.")
-    if (not OLDEST_LAYOUT <= (source.get("layout_version") or 0) <= LAYOUT_VERSION
+    if (not isinstance(source.get("layout_version"), int)
+            or not OLDEST_LAYOUT <= source["layout_version"] <= LAYOUT_VERSION
             or source.get("result_schema_version") != RESULT_SCHEMA_VERSION
             or manifest.get("states_version") != STATES_VERSION):
         raise ArchiveError("Incompatible archive schema or states version. Use a matching dashboard version.")
@@ -341,6 +344,8 @@ def import_analysis(archive, database, on_file=None):
     descriptor, temporary = tempfile.mkstemp(prefix=".restore-", suffix=".sqlite3", dir=target.parent)
     os.close(descriptor)
     db = None
+    published_values = False
+    published_database = False
     try:
         store = ScenarioStore(temporary)
         db = store.db
@@ -353,6 +358,22 @@ def import_analysis(archive, database, on_file=None):
             with pq.ParquetFile(archive / entry["path"]) as parquet:
                 if not parquet.schema_arrow.equals(expected, check_metadata=False):
                     raise ArchiveError(f"Incompatible columns or types in {entry['path']}.")
+                if table == 'analysis_values':
+                    # Keep the already verified immutable file. Do not expand millions of values into SQLite.
+                    run = entry['run_id']
+                    name = hashlib.sha256(run.encode()).hexdigest() + '.parquet'
+                    base = values.folder(temporary)
+                    base.mkdir(exist_ok=True)
+                    dest = base / name
+                    shutil.copyfile(archive / entry['path'], dest)
+                    if _sha256(dest) != entry['sha256']:
+                        raise ArchiveError('Value file changed during restoration: ' + entry['path'])
+                    dest.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+                    db.execute('INSERT INTO pf_run_values VALUES(?,?,?,?,?,?)',
+                               (run, 'parquet', name, entry['rows'], entry['bytes'], entry['sha256']))
+                    if on_file:
+                        on_file(entry['path'], entry['rows'])
+                    continue
                 columns = ",".join('"' + f.name + '"' for f in expected)
                 placeholders = ",".join("?" for _ in expected)
                 sql = f'INSERT INTO "{table}" ({columns}) VALUES ({placeholders})'
@@ -376,6 +397,14 @@ def import_analysis(archive, database, on_file=None):
         value_runs = [e.get("run_id") for e in manifest["files"] if e["table"] == "analysis_values"]
         if set(value_runs) != runs or len(value_runs) != len(runs):
             raise ArchiveError("Missing or duplicate run value files.")
+        for run in runs:
+            invalid = values.query(db, run,
+                'SELECT 1 FROM analysis_values v LEFT JOIN analysis_series s ON s.id=v.series_id '
+                'WHERE s.id IS NULL OR s.run_id<>? OR v.t IS NULL LIMIT 1', (run,))
+            duplicate = values.query(db, run,
+                'SELECT 1 FROM analysis_values GROUP BY series_id,t HAVING COUNT(*)>1 LIMIT 1')
+            if invalid or duplicate:
+                raise ArchiveError('Invalid, foreign or duplicate values in run ' + run)
         if db.execute("PRAGMA foreign_key_check").fetchone():
             raise ArchiveError("Archive has missing or incompatible record references.")
         db.commit()
@@ -383,13 +412,26 @@ def import_analysis(archive, database, on_file=None):
             raise ArchiveError("Restored database failed its integrity check.")
         db.close()
         db = None
-        os.link(temporary, target)  # exclusive publication; a concurrent restore cannot overwrite a file
+        # The destination lock coordinates a concurrent restore/import. Publish files first, SQLite last;
+        # no visible database ever references an incomplete folder.
+        with serialized(target):
+            if target.exists() or values.folder(target).exists():
+                raise ArchiveError('The restore destination exists; choose a new database path.')
+            if values.folder(temporary).exists():
+                values.folder(temporary).rename(values.folder(target))
+                published_values = True
+            os.link(temporary, target)  # exclusive publication
+            published_database = True
         return {"path": str(target.resolve()), "analysis_id": manifest["analysis_id"],
                 "context": manifest.get("context", {})}
-    except (sqlite3.Error, OSError, ValueError, pa.ArrowException) as exc:
+    except (sqlite3.Error, OSError, ValueError, ImportBusy, pa.ArrowException) as exc:
         raise ArchiveError("Archive could not be restored: " + str(exc)) from exc
     finally:
         if db is not None:
             db.close()
+        if values.folder(temporary).exists():
+            _remove(values.folder(temporary))
+        if published_values and not published_database:
+            _remove(values.folder(target))
         for suffix in ("", "-wal", "-shm", "-journal"):
             Path(temporary + suffix).unlink(missing_ok=True)

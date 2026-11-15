@@ -165,7 +165,7 @@ export function LoadingRangeChart({ lines, scenarios, top = TOP }: { lines: Line
     };
   }, [rows, theme, colors, scenarios]);
   if (rows.length === 0) return <div className="ab-empty">No loading values available.</div>;
-  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: rows.length * ROW + 40 + ZOOM_SPACE }} />;
+  return <ReactECharts echarts={echarts} option={option} notMerge wheelZoomModifier="ctrl" style={{ height: rows.length * ROW + 40 + ZOOM_SPACE }} />;
 }
 
 /** Time above the limits, as share of the simulation period (worst scenario per line). */
@@ -349,7 +349,7 @@ export function LodfChart({ lines, scenarios, hasLodf }: { lines: LineStats[]; s
   }, [points, theme, colors]);
   if (!hasLodf) return <div className="ab-empty">{lodfStatus(scenarios.map((s) => s.scenario))?.text ?? 'No LODF for the scenarios shown.'}</div>;
   if (points.length === 0) return <div className="ab-empty">No points with LODF and change available.</div>;
-  return <ReactECharts echarts={echarts} option={option} notMerge style={{ height: 360 + ZOOM_SPACE }} />;
+  return <ReactECharts echarts={echarts} option={option} notMerge wheelZoomModifier="ctrl" style={{ height: 360 + ZOOM_SPACE }} />;
 }
 
 /** Equipment shown at once in the LODF bars; the rest is reached by zooming. */
@@ -427,7 +427,7 @@ export function LodfBarsChart({ lines, scenarios, hasLodf }: { lines: LineStats[
         </select>
         <span className="text-xs text-[var(--grid-muted)]">{rows.length} lines</span>
       </label>
-      <ReactECharts echarts={echarts} option={option} notMerge style={{ height: Math.min(rows.length, LODF_VISIBLE) * ROW + 40 }} />
+      <ReactECharts echarts={echarts} option={option} notMerge wheelZoomModifier="ctrl" style={{ height: Math.min(rows.length, LODF_VISIBLE) * ROW + 40 }} />
     </div>
   );
 }

@@ -38,6 +38,8 @@ interface Props {
   onEvents?: Record<string, (params: unknown) => void>;
   /** File name of the PNG download; false hides the download. Charts with their own toolbox keep it. */
   exportName?: string | false;
+  /** Let unmodified wheel events scroll the page before ECharts' roam controller consumes them. */
+  wheelZoomModifier?: 'ctrl';
 }
 
 /** The option with a PNG download in the corner, drawn on the page background so the picture stays readable. */
@@ -54,7 +56,7 @@ function withExport(option: EChartsCoreOption, exportName: string | false | unde
 }
 
 function ReactECharts(
-  { echarts, option: given, notMerge = false, lazyUpdate = false, theme, opts, style, className, onEvents, exportName }: Props,
+  { echarts, option: given, notMerge = false, lazyUpdate = false, theme, opts, style, className, onEvents, exportName, wheelZoomModifier }: Props,
   ref: Ref<ReactEChartsHandle>,
 ) {
   const option = useMemo(() => withExport(given, exportName), [given, exportName]);
@@ -122,7 +124,8 @@ function ReactECharts(
     };
   }, [instance, onEvents]);
 
-  return <div ref={containerRef} style={style} className={className} />;
+  return <div ref={containerRef} style={style} className={className}
+    onWheelCapture={wheelZoomModifier ? (event) => { if (!event.ctrlKey) event.stopPropagation(); } : undefined} />;
 }
 
 export default forwardRef<ReactEChartsHandle, Props>(ReactECharts);

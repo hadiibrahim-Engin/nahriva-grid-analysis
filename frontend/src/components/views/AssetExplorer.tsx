@@ -44,6 +44,7 @@ export default memo(function AssetExplorer({ items, defaultId, codes, requested 
   const elementId = picked && items.some((i) => i.id === picked) ? picked : defaultId;
   const [asset, setAsset] = useState<{ key: string; data: Asset } | null>(null);
   const [error, setError] = useState('');
+  const [n1For, setN1For] = useState<string | null>(null);
   const [scenario, setScenario] = useState<string | null>(null);
   const [series, setSeries] = useState<{ key: string; ref: TimeseriesData | null; out: TimeseriesData | null } | null>(null);
   const key = `${elementId}|${analysis}`;
@@ -179,7 +180,10 @@ export default memo(function AssetExplorer({ items, defaultId, codes, requested 
         </div>
       )}
       {option && <ReactECharts echarts={echarts} option={option} notMerge style={{ height: 240 }} exportName={`asset-${fileSafe(element?.name ?? 'element')}`} />}
-      {shown && shown.n1.length > 0 && (
+      {shown && shown.n1.length > 0 && <button type="button" className="ab-chip mt-3" aria-expanded={n1For === key} onClick={() => setN1For(n1For === key ? null : key)}>
+        {n1For === key ? 'Hide n-1 extremes' : 'Show n-1 extremes'}
+      </button>}
+      {shown && shown.n1.length > 0 && n1For === key && (
         <div className="ab-scroll mt-3">
           <table className="ab-table">
             <thead><tr><th>Case</th><th>n-1</th><th className="ab-num">Worst after contingency</th><th>At</th><th>Contingency</th><th className="ab-num">Limit</th><th className="ab-num">Times beyond</th></tr></thead>

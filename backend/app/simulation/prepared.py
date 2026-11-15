@@ -214,12 +214,15 @@ class RunStats:
             self._flush(metric)
             self.done[metric] = {name: self.pa.concat_arrays(parts).to_pylist()
                                  for name, parts in self.parts[metric].items()}
+            self.parts[metric] = {}
+            if len(self.done) == len(self.pending):
+                self.tiles = None
         return self.done[metric]
 
     def _rows(self, metric):
         columns = self._columns(metric)
         order = sorted(range(len(self.ids[metric])), key=self.ids[metric].__getitem__)  # ORDER BY element_id
-        return [i for i in order if columns["v_count"][i]], columns  # only elements with a valid value
+        return [i for i in order if columns.get("v_count", [])[i]], columns  # only elements with a valid value
 
     def loading_stats(self, windows, limits):
         """As across._loading_stats; None when this run was not prepared for these windows or limits."""

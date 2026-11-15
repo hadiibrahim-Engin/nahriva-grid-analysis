@@ -105,7 +105,7 @@ def test_restore_keeps_all_rows_and_analytical_results(database, archive, tmp_pa
         for table in {f["table"] for f in manifest["files"]} - {"analysis_values"}:
             assert sorted(original.execute(f'SELECT * FROM "{table}"').fetchall(), key=repr) == sorted(
                 restored.execute(f'SELECT * FROM "{table}"').fetchall(), key=repr), table
-        for (run,) in original.execute("SELECT id FROM analysis_runs"):  # values: Parquet file there, SQLite here
+        for (run,) in original.execute("SELECT id FROM analysis_runs"):  # values: Parquet in both databases
             assert run_values(original, run) == run_values(restored, run)
         assert restored.execute("PRAGMA foreign_key_check").fetchall() == []
     original, restored = ScenarioStore(database[0]), ScenarioStore(target)
@@ -120,7 +120,7 @@ def test_restore_keeps_all_rows_and_analytical_results(database, archive, tmp_pa
         parquet.import_analysis(archive, target)
 
 
-@pytest.mark.parametrize("damage", ["empty", "escape", "bad_schema", "incompatible", "missing_run", "broken_reference"])
+@pytest.mark.parametrize("damage", ["empty", "escape", "bad_schema", "incompatible", "missing_run", "broken_reference", "foreign_value", "duplicate_value"])
 def test_invalid_archives_leave_no_database(archive, tmp_path, damage):
     import shutil
     copy = tmp_path / "archive"
@@ -142,6 +142,20 @@ def test_invalid_archives_leave_no_database(archive, tmp_path, damage):
         entry = next(e for e in m["files"] if e["table"] == "analysis_values")
         m["files"].remove(entry)
         (copy / entry["path"]).unlink()
+    elif damage in ("foreign_value", "duplicate_value"):
+        import pyarrow as pa
+        entry = next(e for e in m["files"] if e["table"] == "analysis_values")
+        file = copy / entry["path"]
+        table = pq.read_table(file)
+        if damage == "duplicate_value":
+            table = pa.concat_tables([table, table.slice(0, 1)])
+        else:
+            ids = table["series_id"].to_pylist()
+            ids[0] = -123456
+            table = table.set_column(0, table.schema.field('series_id'), pa.array(ids, pa.int64()))
+        pq.write_table(table, file)
+        entry["rows"] = table.num_rows
+        entry["bytes"], entry["sha256"] = file.stat().st_size, parquet._sha256(file)
     else:
         import pyarrow as pa
         entry = next(e for e in m["files"] if e["table"] == "pf_scenario_runs")
@@ -156,6 +170,8 @@ def test_invalid_archives_leave_no_database(archive, tmp_path, damage):
     with pytest.raises(parquet.ArchiveError):
         parquet.import_analysis(copy, target)
     assert not target.exists()
+    from app.simulation.values import folder
+    assert not folder(target).exists()
     assert not list(tmp_path.glob(".restore-*"))
 
 
@@ -239,4 +255,19 @@ def test_native_runs_are_saved_even_without_scenario_links(database, tmp_path):
     target = tmp_path / "restore.sqlite3"
     parquet.import_analysis(archive, target)
     with sqlite3.connect(target) as db:
-        assert db.execute("SELECT COUNT(*) FROM analysis_values").fetchone()[0] == expected
+        assert count(db) == expected
+        assert db.execute("SELECT COUNT(*) FROM analysis_values").fetchone()[0] == 0
+
+
+def test_failed_publication_removes_values_folder(database, archive, tmp_path, monkeypatch):
+    from app.simulation import values
+    import os
+
+    target = tmp_path / 'failed.sqlite3'
+    def fail(*args):
+        raise OSError('publication failed')
+    monkeypatch.setattr(os, 'link', fail)
+    with pytest.raises(parquet.ArchiveError, match='publication failed'):
+        parquet.import_analysis(archive, target)
+    assert not target.exists() and not values.folder(target).exists()
+    assert not list(tmp_path.glob('.restore-*'))

@@ -1910,12 +1910,12 @@ body {
   color: var(--grid-muted); background: transparent; text-align: left; transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
 }
 .workspace-rail__item:hover { color: var(--grid-text); background: var(--grid-subpanel); }
-.workspace-rail__item[aria-current="page"] {
+.workspace-rail__item[aria-current="location"] {
   color: var(--grid-text); background: color-mix(in srgb, var(--grid-primary) 11%, var(--grid-surface));
   border-color: color-mix(in srgb, var(--grid-primary) 38%, var(--grid-border));
 }
-.workspace-rail__item[aria-current="page"] svg { color: var(--grid-primary); }
-.workspace-rail__item[aria-current="page"]::before {
+.workspace-rail__item[aria-current="location"] svg { color: var(--grid-primary); }
+.workspace-rail__item[aria-current="location"]::before {
   position: absolute; inset: 7px auto 7px -13px; width: 3px; border-radius: 0 3px 3px 0; background: var(--grid-primary); content: "";
   box-shadow: 0 0 10px color-mix(in srgb, var(--grid-primary) 58%, transparent);
 }
@@ -1954,7 +1954,7 @@ body {
   .workspace-rail { padding-inline: 8px; }
   .workspace-rail__eyebrow, .workspace-rail__label, .workspace-rail__hint { display: none; }
   .workspace-rail__item { display: flex; justify-content: center; padding-inline: 8px; }
-  .workspace-rail__item[aria-current="page"]::before { left: -9px; }
+  .workspace-rail__item[aria-current="location"]::before { left: -9px; }
 }
 
 @media (max-width: 760px) {
@@ -1965,9 +1965,13 @@ body {
   .workspace-rail__nav { display: flex; min-width: max-content; gap: 4px; }
   .workspace-rail__item { width: auto; min-height: 34px; gap: 6px; padding: 6px 10px; }
   .workspace-rail__short { display: inline; font-size: 11px; font-weight: 650; }
-  .workspace-rail__item[aria-current="page"]::before { inset: auto 8px -7px; width: auto; height: 2px; border-radius: 2px 2px 0 0; }
+  .workspace-rail__item[aria-current="location"]::before { inset: auto 8px -7px; width: auto; height: 2px; border-radius: 2px 2px 0 0; }
   .analysis-context-bar { max-height: 154px; overflow-y: auto; }
   .workspace-heading { align-items: flex-start; padding: 16px 14px 10px; }
   .workspace-heading p { display: none; }
   .workspace-content { padding: 10px 12px 20px; }
 }
+
+.dashboard-section { min-width: 0; scroll-margin-top: 0; }
+.dashboard-section__placeholder { min-height: 420px; }
+.workspace-rail__item:focus-visible { outline: 2px solid var(--grid-primary); outline-offset: 2px; }

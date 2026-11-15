@@ -47,7 +47,9 @@ library and its native module. The dashboard uses its existing separate
 backend environment. On updating an installation, stop the old dashboard
 server before starting the new backend.
 
-## Response time
+## Historical response time (before the current Parquet import)
+
+Current measurements and limits: [PERFORMANCE.md](PERFORMANCE.md).
 
 Measured on this Mac with a synthetic year (660 series × 8,760 h, REF + 5
 cases = 34.7 million values): the first case is visible with its complete
@@ -89,7 +91,7 @@ this contract. Existing dashboard widgets still apply their existing analyses
 when requested; they are not a reproduction of the GridLens PDF verdicts.
 New n-1 widgets can use the raw API below without adopting those analyses.
 
-The schema extension is additive (layout 9, analysis schema 2). Existing
+The schema extension is additive (layout 15, analysis schema 2). Existing
 compatible result files are retained and get the new tables when opened.
 
 ## Widget API
@@ -142,7 +144,7 @@ axes are refused. No interpolation or invented samples are used.
 branch the highest loading after the contingency (from the recorded n-1 cells, above the recording limit), the time
 of it, the loading before the contingency at that time (QDS of the planning case for (n-1)', of REF for n-1, read
 from wherever the run keeps its values) and the hours above the branch's limit, worst first, with the number of
-pairs, contingencies and branches in total. The workspace **n-1 review** shows both charts under one set of controls
+pairs, contingencies and branches in total. The section **n-1 review** loads both charts after **Load n-1 results**, under one set of controls
 (scenario, during the maintenance or without, top 10/25/50); *n-1: before → after per branch* and *n-1: contingency →
 overloaded branches (Sankey)* can also be added one by one in **Add chart**. A contingency that has no load-flow solution leaves no row
 in the sweep and therefore no pair. `grid` and `kv` (the header's filters) keep the pairs whose overloaded branch
@@ -186,3 +188,17 @@ Tests cover real orchestration against native API stand-ins, QDS sample
 completeness, n-1/(n-1)' time grids, state restoration, kept/reused runs, sparse
 codes, rollback and the browser handoff. A real PowerFactory 2026 acceptance
 on Windows remains necessary for the installed API, native GUI and model.
+
+## Continuous navigation and chart interaction
+
+The dashboard is one scrolling page. The left rail jumps to Assessment, Scenarios, Network, Assets, n-1 review,
+Compare and Charts, and highlights the current section while scrolling. Deferred views keep their anchors; a jump
+stays aligned while content above it finishes loading. Normal scroll, touch and keyboard input release that alignment.
+The URL's `view` still restores a section, and `scenario` still restores the selected planning case.
+
+The loading profile (including S03 Maintenance Line 16 - 17) zooms along time and loading with sliders or Ctrl +
+mouse wheel; dragging pans and **Reset zoom** restores both axes. Unmodified wheel input scrolls the dashboard.
+The profile keeps the delivered samples, gaps, reference lines and outage windows.
+
+Neither visiting n-1 review nor **Expand** starts n-1-pairs requests. Only **Load n-1 results** mounts those charts;
+**Hide n-1 results** closes them. The asset view separately offers **Show n-1 extremes** for its existing summary.

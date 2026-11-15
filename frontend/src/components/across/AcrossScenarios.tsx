@@ -13,6 +13,8 @@ import { HelpContext } from './help';
 import { SectionCard } from './shared';
 import { readParam, writeParam } from '../../util/shareLink';
 import type { WorkspaceId } from '../../util/workspaces';
+import DashboardSection from '../DashboardSection';
+import N1Review from './N1Review';
 
 const AcrossCharts = lazy(() => import('./AcrossCharts'));
 const ScenarioRadar = lazy(() => import('./ScenarioRadar'));
@@ -55,9 +57,9 @@ function OnDemandPanel({ title, description, children }: {
   );
 }
 
-export default memo(function AcrossScenarios({ refreshKey, workspace, onWorkspaceChange, onSectionsChange }: {
+export default memo(function AcrossScenarios({ refreshKey, intro, onWorkspaceChange, onSectionsChange }: {
   refreshKey: number;
-  workspace: WorkspaceId;
+  intro?: ReactNode;
   onWorkspaceChange?: (workspace: WorkspaceId) => void;
   /** Reports the sections currently on screen, for the navigation bar. */
   onSectionsChange?: (sections: SummarySection[]) => void;
@@ -141,24 +143,22 @@ export default memo(function AcrossScenarios({ refreshKey, workspace, onWorkspac
   const scenarioCodes = useMemo(() => new Map((full?.scenarios ?? []).map((s) => [s.scenario.id, s.code])), [full]);
   const selectedScenario = full?.scenarios.find((s) => s.scenario.id === selectedId) ?? null;
 
-  if (error && !data) return <p role="alert" className="mt-4 text-sm text-[var(--grid-danger)]">{error}</p>;
-  if (!analysis || !full || full.scenarios.length === 0) {
-    if (loading || (data && total > 0 && shown === 0 && failed < total)) {
-      return <p className="mt-4 text-sm text-[var(--grid-muted)]" aria-busy>Loading scenarios …</p>;
-    }
-    if (status !== 'all' && (loaded?.scenarios.length ?? 0) > 0) {
-      return (
-        <p className="mt-4 text-sm text-[var(--grid-muted)]">
-          No scenario matches the status filter. <button type="button" className="ab-chip" onClick={() => setStatus('all')}>Show all scenarios</button>
-        </p>
-      );
-    }
-    return <p className="mt-4 text-sm text-[var(--grid-muted)]">No calculated scenarios yet.</p>;
+  if (error && !data || !analysis || !full || full.scenarios.length === 0) {
+    const message = error && !data ? error : loading ? 'Loading evaluation …' : loaded && status !== 'all'
+      ? 'No scenario matches the status filter.' : 'No calculated scenarios yet.';
+    return <>
+      <DashboardSection workspace="assessment">{intro}<p role={error ? 'alert' : 'status'}>{message}</p>
+        {loaded && status !== 'all' && <button type="button" className="ab-chip" onClick={() => setStatus('all')}>Show all scenarios</button>}
+      </DashboardSection>
+      <N1Review refreshKey={refreshKey} />
+    </>;
   }
   const periodHours = data!.period_hours;
   return (
     <HelpContext.Provider value={help}>
-      <div className="across-scope mt-4 grid gap-3" aria-label="Across-scenarios evaluation">
+      <div className="across-scope grid gap-3" aria-label="Across-scenarios evaluation">
+        <DashboardSection workspace="assessment">
+        {intro}
         <div className="ab-toolbar">
           {loading && shown < total ? (
             <div className="ab-progress" role="status" aria-live="polite">
@@ -190,7 +190,7 @@ export default memo(function AcrossScenarios({ refreshKey, workspace, onWorkspac
           </p>
         )}
 
-        {workspace === 'assessment' && (
+
           <SectionCard
             id={SUMMARY_IDS.kpis}
             title="Assessment overview"
@@ -198,10 +198,9 @@ export default memo(function AcrossScenarios({ refreshKey, workspace, onWorkspac
           >
             <AcrossKpis kpis={full.kpis} scenarios={full.scenarios} assessments={assessments} />
           </SectionCard>
-        )}
 
-        {workspace === 'scenarios' && (
-          <>
+        </DashboardSection>
+        <DashboardSection workspace="scenarios" lazy>
             {selectedScenario && (
               <ErrorBoundary label="Loading profile">
                 <Suspense fallback={<div className="ab-empty" aria-busy>Loading profile …</div>}>
@@ -218,11 +217,10 @@ export default memo(function AcrossScenarios({ refreshKey, workspace, onWorkspac
                 <ScenarioOverview scenarios={full.scenarios} assessments={assessments} selectedId={selectedId} onSelect={setSelected} periodHours={periodHours} period={data!.period} />
               </Suspense>
             </OnDemandPanel>
-          </>
-        )}
+        </DashboardSection>
 
-        {workspace === 'network' && selectedScenario && (
-          <>
+        <DashboardSection workspace="network" lazy>
+          {selectedScenario && <>
             <ErrorBoundary label="Network at a time">
               <Suspense fallback={<div className="ab-empty" aria-busy>Loading network view …</div>}>
                 <TimePointView scenarioId={selectedScenario.scenario.id} label={`${selectedScenario.code} ${selectedScenario.scenario.name}`} refreshKey={refreshKey} onPickAsset={pickAsset} />
@@ -243,19 +241,19 @@ export default memo(function AcrossScenarios({ refreshKey, workspace, onWorkspac
                 </Suspense>
               </OnDemandPanel>
             )}
-          </>
-        )}
+          </>}
+        </DashboardSection>
 
-        {workspace === 'assets' && (
+        <DashboardSection workspace="assets" lazy>
           <ErrorBoundary label="Asset">
             <Suspense fallback={<div className="ab-empty" aria-busy>Loading asset view …</div>}>
               <AssetExplorer items={assetItems} defaultId={worstBranch} codes={scenarioCodes} requested={assetRequest} />
             </Suspense>
           </ErrorBoundary>
-        )}
+        </DashboardSection>
 
-        {workspace === 'compare' && (
-          <>
+        <N1Review refreshKey={refreshKey} />
+        <DashboardSection workspace="compare" lazy>
             <SectionCard id={SUMMARY_IDS.charts} title="Scenario comparison" summary={`${analysis.scenarios.length} scenarios · ${analysis.lines.length} equipment`}>
               <ErrorBoundary label="Evaluation charts">
                 <Suspense fallback={<div className="ab-empty" aria-busy>Loading charts …</div>}>
@@ -287,8 +285,7 @@ export default memo(function AcrossScenarios({ refreshKey, workspace, onWorkspac
                 <LineSummaryTable lines={analysis.lines} scenarios={analysis.scenarios} hasLodf={data!.has_lodf} periodHours={periodHours} />
               </Suspense>
             </OnDemandPanel>
-          </>
-        )}
+        </DashboardSection>
       </div>
     </HelpContext.Provider>
   );

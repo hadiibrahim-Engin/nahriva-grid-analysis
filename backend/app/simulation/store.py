@@ -152,6 +152,14 @@ VIEWS = """
            (SELECT COUNT(*) FROM pf_scenario_runs r WHERE r.run_id = a.id) AS scenarios
     FROM analysis_runs a LEFT JOIN pf_run_notes n ON n.run_id = a.id;
 
+    DROP VIEW IF EXISTS v_run_storage;
+    CREATE VIEW v_run_storage AS
+    SELECT r.id AS run_id, COALESCE(f.format, 'sqlite') AS storage_format,
+           f.path AS relative_path, f.rows AS parquet_rows, f.bytes, f.sha256,
+           CASE WHEN f.run_id IS NULL THEN 'analysis_values' ELSE '<database>.values/' || f.path END AS location
+    FROM analysis_runs r LEFT JOIN pf_run_values f ON f.run_id=r.id;
+
+    -- SQLite-only: use values.iter_samples or scripts/read_values.py for a complete cross-format export.
     DROP VIEW IF EXISTS v_samples;
     CREATE VIEW v_samples AS
     SELECT sc.id AS scenario_id, sc.name AS scenario, r.kind AS case_kind, r.run_id,
@@ -204,7 +212,7 @@ VIEWS = """
 
 # PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
 # database is brought up to date once when it is next opened.
-LAYOUT_VERSION = 14
+LAYOUT_VERSION = 15
 
 # Columns added to tables of earlier layouts: (table, column, declaration). New files get them from the CREATE.
 ADDED_COLUMNS = (

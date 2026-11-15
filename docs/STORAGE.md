@@ -36,8 +36,8 @@ python scripts/export_parquet.py --verify D:/archive/<id>
 - **Immutable:** written to a hidden partial folder, verified (sizes, SHA-256, row counts, no unlisted file),
   made read-only and renamed into place. An existing archive is never overwritten; an analysis that is still
   importing is refused. `--verify` repeats the check at any time.
-- **Dependency:** pyarrow, only for the archive (`pip install "./backend[archive]"`); the dashboard and the
-  PowerFactory side do not need it.
+- **Dependencies:** pyarrow for writing and archive operations; DuckDB and pyarrow for dashboard reads. Both are
+  backend dependencies. PowerFactory needs a compatible pyarrow installation, as described below.
 
 Tests: `backend/tests/test_archive.py` (every value identical to the database including NULL, ZSTD, n-1 code and
 state kept, immutable, changed byte and extra file detected, unknown and importing analyses refused).
@@ -61,7 +61,7 @@ CLI equivalent:
 python scripts/export_parquet.py --restore /absolute/archive/analysis-id --db /absolute/new-results.sqlite3
 ```
 
-Install `pip install "./backend[archive]"` to enable Parquet. Local filesystem operations follow the database-switch
+Install the backend dependencies to enable Parquet (`pip install ./backend`). Local filesystem operations follow the database-switch
 capability and are disabled in production by default. Archives with incompatible schema/layout/state versions or
 missing/corrupt payloads are rejected with an explanation. Version 1 archives with matching versions can reopen;
 they lack browser context and their evaluations may require a first-read rebuild. Existing files are never overwritten.
@@ -162,15 +162,15 @@ flowchart LR
   read-only, and recorded with rows, size and SHA-256 in `pf_run_values` in the run's transaction. A failed run
   leaves no file.
 - **Reading:** every reader asks `values.query(db, run, sql)`. For a run in Parquet the same SQL runs in DuckDB on
-  the file, with the run's series, elements and limits copied once into memory; for an older run it runs in SQLite
-  as before. Row groups carry min/max statistics of series and time, so one series over a year reads one row group
+  the file, with the run's series, elements and limits copied once into a cached schema of one shared DuckDB
+  instance; for an older run it runs in SQLite as before. Row groups carry min/max statistics of series and time, so one series over a year reads one row group
   per week and every element at one time reads one week.
 - **PowerFactory side:** pyarrow is the one exception to "standard library only". It is taken from `backend\.venv`
   when PowerFactory's Python has the same version (assumption A10); otherwise the run stops before calculating,
   with an explanation.
 - **Files:** a results database is now the SQLite file and its `.values` folder; copy and back up both (see
-  [DATABASE.md](DATABASE.md)). The archive copies a run's file as it is; a restored database keeps its values in
-  SQLite (archives of layout 13 and 14 restore).
+  [DATABASE.md](DATABASE.md)). The archive copies a run's file as it is; new restorations retain Parquet
+  (archives of layout 13–15 restore). Older restorations in SQLite remain readable.
 - **Not yet in Parquet:** the n-1 cells (`gl_values`); they are sparse and stay in SQLite for now.
 
 ### Measured after the change (2026-11-15)
@@ -197,3 +197,23 @@ The evaluation from raw values runs only when limits other than the defaults are
 reads the evaluation prepared at import. The first request of a run loads its series, elements and limits into
 DuckDB from small files written beside the values at import (100,000 elements: 0.15–0.3 s instead of 1.6 s when copied
 from SQLite). Synthetic values compress far better than real ones; the sizes are a lower bound.
+
+### Import and access follow-up (2026-11-15, layout 15)
+
+The bridge batches metadata with preassigned series IDs while holding SQLite's write transaction, creates one
+Arrow value array per native column, and shares it between the writer and the reducers. Metadata sidecars use the
+same buffered rows. `RunStats` feeds scenario evaluation without rereading raw values. REF covers the required
+outage windows; each other run covers only its consumers (including reused cases). Statistics are released after
+their final consumer. Tests compare inclusive window extrema, valid-value duration/counts, voltage limits and
+per-time extrema/counts against SQL and a per-value reference reduction.
+
+DuckDB has one instance per process and at most 32 cached run schemas. Independent run builds use the cache's
+per-key coalescing; only initial instance creation takes a global lock. Repository locking covers SQLite work;
+DuckDB queries use independent cursors. Eviction drops metadata after active queries release the schema. Cache
+identity includes database inode, run, path, stored SHA-256 and value-file inode/mtime/size, so replacing a file or
+database does not silently reuse its old metadata. This is invalidation, not a full checksum verification on each
+request. Archive validation still checks full checksums.
+
+No row-group, week-block or compression change was made without comparative evidence. Full sample access and
+recovery are documented in [DATABASE.md](DATABASE.md); current before/after measurements, unmet targets and native
+acceptance limits are in [PERFORMANCE.md](PERFORMANCE.md). Earlier measurements above are historical.
