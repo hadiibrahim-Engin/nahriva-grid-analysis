@@ -52,7 +52,7 @@ Lies vor jeder Planung diese Dateien: `README.md`, `docs/GRIDLENS.md`, `docs/DAT
   ein Port (Standard 8765, `127.0.0.1`). Kein Login; die API schreibt keine Ergebnisse (einzige
   Ausnahme: lokaler Wechsel der Datenbankdatei, gesperrt sobald der Server im Netz erreichbar ist).
 - Zusammenfassung: Key figures (KPIs), Bewertung je Szenario, Lastprofil, Szenariodetails, Spannungsmatrix,
-  Betriebsmittel×Szenario-Matrix, Vergleichs-Charts, Radar, Detailtabelle (virtualisiert), **n-1-Gantt**
+  Betriebsmittel×Szenario-Matrix, Vergleichs-Charts, Radar, Detailtabelle (virtualisiert), **n-1-Auswertung (Vorher → Nachher, Sankey)**
   (je Leitung: Auslastung vor/nach n-1 und auslösender Ausfall).
 - „Added charts“: 20 Vorlagen in 5 Kategorien (Zeitreihen, Verteilung inkl. Boxplot/Dauerlinie,
   Grenzwerte, Korrelation inkl. 3D, Szenariobewertung), PNG-Export.
@@ -68,7 +68,7 @@ Lies vor jeder Planung diese Dateien: `README.md`, `docs/GRIDLENS.md`, `docs/DAT
 | Import 660 Serien × 8.760 h × 7 Läufe (≈ 28 Mio. Werte) + 12 n-1-Sweeps (≈ 95 Mio. Zellen) | ≈ 60 s |
 | Erster Fall sichtbar nach Ende der PowerFactory-Rechnung | ≈ 7,5 s |
 | Bewertung aller Szenarien (vorbereitete Zusammenfassung) | ≈ 11 ms |
-| n-1-Gantt auf 13,4 Mio. n-1-Zellen | ≈ 21 ms (5 ms gecacht) |
+| n-1-Zusammenfassung auf 13,4 Mio. n-1-Zellen (früherer Gantt) | ≈ 21 ms (5 ms gecacht) |
 | Anteil SQLite-Insert am Import | ≈ 70 % (≈ 0,48 µs je Wert) |
 
 ### 1.5 Testdaten und Tests (vorhanden)
@@ -176,7 +176,7 @@ Ziele (P95, warmer Cache, ein Nutzer; Mehrnutzer nur bei E1):
 | Analyse-/Szenarioliste, KPIs, Bewertung | < 200 ms |
 | Eine Asset-Zeitreihe (1 Jahr, auf Bildschirmbreite reduziert) | < 300 ms |
 | Netzzustand zu einem Zeitpunkt (alle Assets eines Grids) | < 1 s |
-| Top-N-Verletzungen, n-1-Gantt | < 500 ms |
+| Top-N-Verletzungen, n-1-Auswertung | < 500 ms |
 | Erster Fall sichtbar nach PowerFactory-Ende | < 10 s |
 
 Messe P50/P95, CPU, RAM, Datei-I/O, kalter und warmer Cache. Benchmarks mit
@@ -217,10 +217,10 @@ Geprüft in Phase 1 (2026-11-07) gegen den Code; Diagramme, Messwerte und Belege
 | Analyseverwaltung: suchen, filtern (Modell, Version, Projekt, Datum, Anwender), Status, Quelle PF/extern, Mehrfachauswahl | **vorhanden (Phase 3b):** Dialog „Compare“: Suche (Projekt, Studienfall, Lauf, Version, Datum), Statusfilter, Auswahl von zwei Analysen | Filter nach Anwender (erst wenn `created_by` befüllt ist) |
 | KPI-Übersicht reagiert auf Filter | vorhanden (Key figures) | um Spannungsebene/Zeitraum-Filter erweitern |
 | Szenario vs. Referenz, Deltas, Ranking | vorhanden (Matrix, Comparison, Radar, Detailtabelle); **Phase 3b:** Analyse A gegen B mit Vergleichbarkeitsprüfung (Projekt, Studienfall, Version, Zeitraum, Einstellungen, Elemente, Ausfallfenster), Szenariopaare nach ausgeschalteten Betriebsmitteln, je Paar alle Elemente mit A, B und B − A (seitenweise, Suche, CSV) | Vergleich eines Assets über mehrere Analysen |
-| n-1-Auswertung | vorhanden (Gantt: vor/nach, auslösender Ausfall) | Zeitpunkt-Detail je Ausfall, Spannung |
+| n-1-Auswertung | **umgebaut (2026-11-15):** Arbeitsbereich „n-1 review“ und „Add chart“: Vorher → Nachher je Paar „überlastete Leitung ← Ausfall“ und Sankey Ausfall → überlastete Leitungen; der Gantt ist entfernt | Zeitverlauf eines Paars per Klick, Spannung |
 | Zeitpunkt-Ansicht (Netzzustand zu t) | **vorhanden (Phase 3):** Zeitverlauf je Szenario gegen REF, kritische Zeitpunkte, alle Elemente zu t (seitenweise, CSV); Verdichtung `pf_run_times` beim Import | Zeitverlauf bei 15-min-Daten reduziert ausliefern |
 | Asset-Explorer | **vorhanden (Phase 3):** Stammdaten, Kennzahlen je Szenario, n-1 je Fall, Zeitreihe gegen REF, CSV | Vergleich eines Assets über mehrere Analysen |
-| Globale Filter (Analyse, Referenz, Szenario, Zeitraum, Zeitpunkt, Grid, Spannungsebene, Asset-Typ, Variable, Status) | vorhanden: Analyse, Grid, **Spannungsebene (Phase 3)**, Szenario, Betriebsmittel, Messgröße, Art; Zeitpunkt in der Zeitpunkt-Ansicht; **Phase 3b:** Berechnungsstatus (alle / vollständig / mit Problemen) und Zeitraum (UTC) für Zeitverlauf und Asset-Zeitreihe, beide in der Adresse | Zeitraum auch für n-1-Gantt und „Added charts“ |
+| Globale Filter (Analyse, Referenz, Szenario, Zeitraum, Zeitpunkt, Grid, Spannungsebene, Asset-Typ, Variable, Status) | vorhanden: Analyse, Grid, **Spannungsebene (Phase 3)**, Szenario, Betriebsmittel, Messgröße, Art; Zeitpunkt in der Zeitpunkt-Ansicht; **Phase 3b:** Berechnungsstatus (alle / vollständig / mit Problemen) und Zeitraum (UTC) für Zeitverlauf und Asset-Zeitreihe, beide in der Adresse | Zeitraum auch für n-1-n-1-Diagramme und „Added charts“ |
 | Bookmarks für Filter/Layouts | **vorhanden (Phase 3b):** benannte Bookmarks (Analyse gepinnt, Grid, Spannungsebene, Szenario), als Link und als Datei teilbar; die Adresszeile ist immer die aktuelle Ansicht | Abschnitt und Diagramm-Layout im Bookmark |
 | Diagramme konfigurierbar, PNG-Export | **vorhanden (Phase 3):** 20 Vorlagen, PNG für jedes Diagramm, CSV für Detailtabelle, Zeitpunkt und Asset, JSON für das Restore-Paket | CSV der Diagrammdaten in „Added charts“ |
 | Fehlende Werte sichtbar, Downsampling erhält Spitzen | **behoben (Phase 2):** Lücken mit Zustand, `MINMAX` als Standard, Zustandskatalog `/states` | Anzeige des Zustands im Tooltip (Phase 3) |

@@ -16,10 +16,9 @@ import uuid
 from array import array
 from datetime import datetime, timezone
 from itertools import repeat
-from operator import add, gt, lt
 
 import gridlens_runtime as engine
-from app.simulation import across, areas, values as value_files
+from app.simulation import across, areas, prepared, values as value_files
 from app.simulation.gridlens_store import RESULT_SCHEMA_VERSION
 from app.simulation.grids import grid_name
 from app.simulation.store import ScenarioStore
@@ -76,7 +75,8 @@ class Elements:
     scope, nominal voltage and voltage band are asked once and reused by every later QDS run and
     sweep. Without a grid selection every element is in scope and its grid is not
     read at all, as main.py does. Every assessed element is written once to gl_elements (the master data
-    of the analysis), inside the transaction of the run that first records it.
+    of the analysis), inside the transaction of the run that first records it: `flush()` writes the elements met
+    since the last call in one statement.
     """
 
     def __init__(self, project_path, db=None, assessment_id=None):
@@ -84,6 +84,13 @@ class Elements:
         self.db, self.assessment_id = db, assessment_id
         self.scoped = bool(engine.current_setting('monitoring_grids') or engine.GRID_NAME_FILTER)
         self._known = {}
+        self._rows, self._ends = [], []
+
+    def flush(self):
+        if self.db is not None:
+            self.db.executemany('INSERT OR IGNORE INTO gl_elements VALUES(?,?,?,?,?,?,?,?)', self._rows)
+            self.db.executemany('INSERT OR IGNORE INTO gl_branch_ends VALUES(?,?,?,?)', self._ends)
+        self._rows, self._ends = [], []
 
     def get(self, obj):
         """The facts of `obj`, or None when it is not assessed (out of scope or a DC node)."""
@@ -102,14 +109,11 @@ class Elements:
                 found['area'] = grid_name(key)
                 if found['category'] in ('line', 'transformer'):
                     found['ends'] = _ends(obj)
-                if self.db is not None:
-                    # mrid stays NULL: no verified PowerFactory attribute supplies the CGMES mRID yet.
-                    self.db.execute('INSERT OR IGNORE INTO gl_elements VALUES(?,?,?,?,?,?,?,?)', (
-                        self.assessment_id, found['id'], found['name'], kind, key, found['area'],
-                        found['nominal_kv'], None))
-                    if 'ends' in found:
-                        self.db.execute('INSERT OR IGNORE INTO gl_branch_ends VALUES(?,?,?,?)',
-                                        (self.assessment_id, found['id'], *found['ends']))
+                # mrid stays NULL: no verified PowerFactory attribute supplies the CGMES mRID yet.
+                self._rows.append((self.assessment_id, found['id'], found['name'], kind, key, found['area'],
+                                   found['nominal_kv'], None))
+                if 'ends' in found:
+                    self._ends.append((self.assessment_id, found['id'], *found['ends']))
         return found if found['assessed'] else None
 
     def limits(self, entry, metric):
@@ -208,43 +212,8 @@ def _values(result, column, rows):
     return engine.read_column(result, column, rows)
 
 
-class RunTimes:
-    """Per time of one QDS run: highest branch loading and branches above their limit, lowest and highest node
-    voltage and nodes outside their band (pf_run_times).
-
-    Built from the columns the import holds in memory anyway, with C-level maps (about 1 s per run of 660
-    series over a year, a third of the same aggregation in SQL afterwards). A time without a valid value
-    counts in no extreme and no violation.
-    """
-
-    def __init__(self, rows):
-        low, high = float('inf'), float('-inf')
-        self.loading_max, self.loading_over = [high] * rows, [0] * rows
-        self.voltage_min, self.voltage_max, self.voltage_outside = [low] * rows, [high] * rows, [0] * rows
-
-    def add(self, metric, category, values, lower, upper):
-        if metric == 'loading' and category in ('line', 'transformer'):
-            high = values if None not in values else [float('-inf') if v is None else v for v in values]
-            self.loading_max = list(map(max, self.loading_max, high))
-            if upper is not None:
-                self.loading_over = list(map(add, self.loading_over, map(gt, high, repeat(upper))))
-        elif metric == 'voltage' and category == 'bus':
-            known = None not in values
-            low = values if known else [float('inf') if v is None else v for v in values]
-            high = values if known else [float('-inf') if v is None else v for v in values]
-            self.voltage_min = list(map(min, self.voltage_min, low))
-            self.voltage_max = list(map(max, self.voltage_max, high))
-            if lower is not None:
-                self.voltage_outside = list(map(add, self.voltage_outside, map(lt, low, repeat(lower))))
-            if upper is not None:
-                self.voltage_outside = list(map(add, self.voltage_outside, map(gt, high, repeat(upper))))
-
-    def store(self, db, run_id, timestamps):
-        finite = lambda value: value if math.isfinite(value) else None  # noqa: E731
-        db.executemany('INSERT INTO pf_run_times VALUES(?,?,?,?,?,?,?)', (
-            (run_id, t, finite(lm), lo, finite(vmin), finite(vmax), vo)
-            for t, lm, lo, vmin, vmax, vo in zip(timestamps, self.loading_max, self.loading_over,
-                                                 self.voltage_min, self.voltage_max, self.voltage_outside)))
+# Per time of a QDS run: extremes and violations (pf_run_times), aggregated in groups of series with pyarrow.
+RunTimes = prepared.RunTimes
 
 
 def _read_qds(db, assessment_id, run, bundle, catalog, elements, database):
@@ -282,6 +251,7 @@ def _read_qds(db, assessment_id, run, bundle, catalog, elements, database):
             priority = 0 if variable in ('c:loading', 'm:u') else 1
             if key not in chosen or priority < chosen[key][0]:
                 chosen[key] = priority, column, entry, variable
+        elements.flush()
         if not chosen:
             raise engine.OutageAssessmentError('The QDS result has no in-scope numeric series.')
         if len(timestamps) * len(chosen) > engine.MAX_RESULT_CELLS:
@@ -507,6 +477,7 @@ def _read_sweep(db, assessment_id, case_id, kind, sweep, entry, elements):
         finally:
             sub.Release()
     db.executemany('INSERT INTO gl_values VALUES(?,?,?,?,?,?,?)', cells)
+    elements.flush()
     summary.finish()
     missing = sorted(set(metadata['requested_times']) - moments)
     metadata.update(calculated_times=sorted(moments), missing_times=missing, unreadable_cells=unreadable)

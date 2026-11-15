@@ -78,20 +78,6 @@ export interface N1Episode {
   violations: number;
 }
 
-export interface N1Gantt {
-  result_id: string;
-  kind: 'n-1' | "(n-1)'";
-  case_id: string;
-  step: number;
-  start: number | null;
-  end: number | null;
-  /** Case whose QDS gives the loading before the contingency; null when it was not imported. */
-  pre_source: string | null;
-  has_reference: boolean;
-  lines: { name: string; path: string; class_name: string; limit: number | null; peak: number; hours: number; segments: N1Episode[] }[];
-  contingencies: Record<string, string>;
-}
-
 const root = '/gridlens';
 const resultPath = (id: string) => `${root}/results/${encodeURIComponent(id)}`;
 
@@ -125,9 +111,5 @@ export const gridlens = {
     return (await api.get<{ result_id: string; column: NativeColumn; contingency_id: string | null;
       metadata: Record<string, unknown>; points: NativePoint[]; offset: number; limit: number }>(
       `${resultPath(id)}/series`, { params: { column_id: columnId, contingency_id: contingencyId, ...range }, signal })).data;
-  },
-  /** Overload episodes per branch of an n-1 sweep, for the Gantt chart (from the summaries written at import). */
-  async n1Gantt(id: string, limit = 40, signal?: AbortSignal) {
-    return (await api.get<N1Gantt>(`${resultPath(id)}/n1-gantt`, { params: { limit }, signal })).data;
   },
 };

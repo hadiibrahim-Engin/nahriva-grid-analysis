@@ -116,8 +116,12 @@ export interface N1Pairs {
 }
 
 export const views = {
-  async n1Pairs(scenarioId: string, kind: N1Pairs['kind'], range: TimeRange, limit: number, signal?: AbortSignal) {
-    const params = { kind, limit, ...(range.from === null ? {} : { start: range.from }), ...(range.to === null ? {} : { end: range.to }) };
+  async n1Pairs(scenarioId: string, kind: N1Pairs['kind'], range: TimeRange, limit: number,
+    filter: { grid: string | null; kv: number | null }, signal?: AbortSignal) {
+    const params = {
+      kind, limit, ...(range.from === null ? {} : { start: range.from }), ...(range.to === null ? {} : { end: range.to }),
+      ...(filter.grid === null ? {} : { grid: filter.grid }), ...(filter.kv === null ? {} : { kv: filter.kv }),
+    };
     return (await api.get<N1Pairs>(`/scenarios/${encodeURIComponent(scenarioId)}/n1-pairs`, { params, signal })).data;
   },
   async times(scenarioId: string, range: TimeRange, signal?: AbortSignal) {

@@ -65,7 +65,8 @@ needs no PowerFactory and leaves the installation untouched.
 | Assessment, Matrix | in both analyses 5 of 6 maintenances overload neighbouring branches (Trf 12 - 13 does not) |
 | Network at a time, scenario "Maintenance Line 02 - 03" | critical time inside the outage window |
 | Network map button | map appears: Line 02 - 03 grey dashed, Line 26 - 27 red (about 137 %); hover shows the value; click opens Asset; wheel zooms, drag moves; hidden again after a second click, also after reloading |
-| n-1 Gantt | branches with loading before and after the contingency and the triggering outage |
+| n-1 review | "before → after" per branch with the outage that causes it, and the Sankey of failing to overloaded branches |
+| Charts → Add chart → n-1 contingencies | "before → after": for S01 Line 01 - 02 at about 243 % when Line 26 - 27 fails; the Sankey links failing to overloaded branches |
 | Compare | both analyses ticked: every check ok, 6 scenario pairs, 44 of 46 branches higher in B |
 | Areas | Area East, North and West; North imports, East exports; flow graph with arrows from East and West into North |
 | Time range, calculation status | filters change the views |

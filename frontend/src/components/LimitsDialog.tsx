@@ -18,7 +18,7 @@ const FIELDS: { key: Field; label: string; unit: string; step: number; current: 
 
 /**
  * The thresholds of the dashboard's evaluation, changeable for this browser. Saving reloads the dashboard so every
- * band, legend and verdict uses the new values. The n-1 Gantt and the counts of the time-point view use the limits
+ * band, legend and verdict uses the new values. The hours above the limit in the n-1 charts and the counts of the time-point view use the limits
  * set for the run in PowerFactory instead; the dialog says so.
  */
 export default function LimitsDialog() {
@@ -52,9 +52,9 @@ export default function LimitsDialog() {
           <button type="button" className="ab-chip" onClick={() => dialog.current?.close()}>Close</button>
         </div>
         <p className="across-card__hint">
-          These thresholds decide bands, verdicts and key figures of the summary, in this browser only. The n-1 Gantt and
-          the violation counts of the time-point view use the limits set for the run in PowerFactory (case manager
-          settings). With limits other than 100/110/120 % the server recalculates each scenario once.
+          These thresholds decide bands, verdicts and key figures of the summary, in this browser only. The hours above the
+          limit in the n-1 charts and the violation counts of the time-point view use the limits set for the run in
+          PowerFactory (case manager settings). With limits other than 100/110/120 % the server recalculates each scenario once.
         </p>
         <div className="ab-limits">
           {FIELDS.map((f) => (

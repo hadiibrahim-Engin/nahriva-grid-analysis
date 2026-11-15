@@ -12,7 +12,7 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
   { id: 'scenarios', label: 'Scenarios', shortLabel: 'Scenarios', description: 'Inspect one outage scenario' },
   { id: 'network', label: 'Network', shortLabel: 'Network', description: 'Grid state, voltage and areas' },
   { id: 'assets', label: 'Assets', shortLabel: 'Assets', description: 'Inspect equipment history' },
-  { id: 'n1', label: 'n-1 review', shortLabel: 'n-1', description: 'Contingency overload timeline' },
+  { id: 'n1', label: 'n-1 review', shortLabel: 'n-1', description: 'Which outage overloads which branch' },
   { id: 'compare', label: 'Compare', shortLabel: 'Compare', description: 'Compare scenarios and evidence' },
   { id: 'charts', label: 'Charts', shortLabel: 'Charts', description: 'Build time-series views' },
 ] as const;

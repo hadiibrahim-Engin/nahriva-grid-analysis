@@ -455,8 +455,6 @@ export const SUMMARY_IDS = {
   asset: 'across-asset',
   /** Load, generation and transit per area (needs active power recorded in PowerFactory). */
   areas: 'across-areas',
-  /** n-1 overloads as a Gantt chart; outside the summary itself, shown when the database has n-1 sweeps. */
-  n1: 'across-n1-gantt',
 } as const;
 
 export interface SummarySection {

@@ -68,7 +68,10 @@ Checklist (tick each point; details in docs\\DEPLOYMENT.md, section "Test before
       the value; click opens the element in Asset; wheel zooms around the pointer, dragging moves; below the
       map: 85 of 85 layers matched, 29 loads and generators without a layer (not drawn on this map)
   [ ] Network map button again: map hidden (stays hidden after reloading)
-  [ ] n-1 Gantt shows branches with loading before and after the contingency
+  [ ] n-1 review: "before -> after" per branch names the outage that causes it; the Sankey below links
+      failing to overloaded branches; "Without maintenance" switches to the plain n-1 sweep
+  [ ] Charts -> Add chart -> n-1 contingencies: "before -> after" shows for S01 Line 01 - 02 at about 243 %
+      when Line 26 - 27 fails; the Sankey links the failing branches to the branches they overload
   [ ] Compare: tick both analyses -> every check ok, 6 scenario pairs; Elements of a pair: 44 of 46 branches
       higher in B (6 % more load)
   [ ] Areas: table of Area East, North, West; North imports (red), East exports; the flow graph shows arrows

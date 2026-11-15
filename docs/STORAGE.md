@@ -136,7 +136,7 @@ Import into SQLite ran at about 300,000 values per second (43.8 M values in 142 
 **Decided by the operator (2026-11-07): Parquet is required for raw results.** QDS values and n-1 cells are stored
 per run as Parquet (ZSTD, manifest, SHA-256, immutable) and read with DuckDB; SQLite keeps the metadata, the master
 data and the summaries written at import (`pf_run_times`, `pf_scenario_cells`, n-1 summaries), so the dashboard's
-lists, evaluation and Gantt stay key lookups. Basis: the measurements above.
+lists and evaluation stay key lookups. Basis: the measurements above.
 
 1. Size: about 65 GB per one-year run at the target size in SQLite against about 10–21 GB in Parquet.
 2. Requests that read raw values stay within the targets: one asset 2–8 ms, all 100,000 elements at one time

@@ -241,7 +241,7 @@ def _bus_row(item_a, item_b):
     }
 
 
-def compare_scenarios(store, a, b, metric="loading", limit=200, offset=0, grid=None, q=None):
+def compare_scenarios(store, a, b, metric="loading", limit=200, offset=0, grid=None, q=None, kv=None):
     """Every element of two scenarios with its value in A and B and the change, worst change first (paged).
 
     None when a scenario is unknown or has no runs.
@@ -299,6 +299,8 @@ def compare_scenarios(store, a, b, metric="loading", limit=200, offset=0, grid=N
     rows_out = result["rows"]
     if grid is not None:
         rows_out = [r for r in rows_out if r["grid"] == grid]
+    if kv is not None:
+        rows_out = [r for r in rows_out if r["nominal_kv"] == kv]
     if q:
         needle = q.lower()
         rows_out = [r for r in rows_out if needle in r["name"].lower()]

@@ -131,24 +131,24 @@ class ValueWriter:
         self._flush()
         self.writer.close()
         if db is not None:
-            for table, sql in _METADATA.items():
-                cursor = db.execute(sql, (self.run_id,))
-                names = [d[0] for d in cursor.description]
-                rows = cursor.fetchall()
-                columns = list(zip(*rows)) if rows else [[] for _ in names]
-                side = self.base / sidecar(self.name, table)
-                self.pq.write_table(self.pa.table({n: list(c) for n, c in zip(names, columns)}), side,
-                                    compression=COMPRESSION)
-                side.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-                self.sidecars.append(side)
-        digest = hashlib.sha256()
-        with open(self.partial, "rb") as handle:
-            while chunk := handle.read(1 << 20):
-                digest.update(chunk)
+            self._write_sidecars(db)
+        digest = checksum(self.partial)
         size = self.partial.stat().st_size
         os.replace(self.partial, self.target)
         self.target.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-        return "parquet", self.name, self.rows, size, digest.hexdigest()
+        return "parquet", self.name, self.rows, size, digest
+
+    def _write_sidecars(self, db):
+        for table, sql in _METADATA.items():
+            cursor = db.execute(sql, (self.run_id,))
+            names = [d[0] for d in cursor.description]
+            rows = cursor.fetchall()
+            columns = list(zip(*rows)) if rows else [[] for _ in names]
+            side = self.base / sidecar(self.name, table)
+            self.pq.write_table(self.pa.table({n: list(c) for n, c in zip(names, columns)}), side,
+                                compression=COMPRESSION)
+            side.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+            self.sidecars.append(side)
 
     def abort(self):
         """Remove whatever was written (before or after close): the run is not stored."""
@@ -161,6 +161,15 @@ class ValueWriter:
             if file.exists():
                 file.chmod(stat.S_IRUSR | stat.S_IWUSR)
                 file.unlink()
+
+
+def checksum(path):
+    """SHA-256 of a file, read in 1 MiB chunks."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def sidecar(name, table):

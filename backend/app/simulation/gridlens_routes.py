@@ -3,7 +3,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from app.core.cache import TTLCache
 
 from app.simulation import gridlens_store as raw
 from app.simulation.routes import store
@@ -86,15 +85,3 @@ def series(identifier: str, column_id: int = Query(..., ge=0), contingency_id: s
             'metadata': native['metadata'], 'offset': offset, 'limit': limit,
             'points': raw.series(db.db, identifier, column_id, contingency_id, start, end, limit, offset)}
 
-
-# Results never change once imported; the Gantt chart of a large sweep is built once per result.
-_GANTT_CACHE = TTLCache(max_entries=64, ttl_seconds=3600)
-
-
-@router.get('/results/{identifier}/n1-gantt')
-def n1_gantt(identifier: str, limit: int = Query(50, ge=1, le=500), db=Depends(store)):
-    """Overload episodes of an n-1 sweep per branch: loading before and after the contingency that triggers it."""
-    native = required_result(db.db, identifier)
-    if native['kind'] == 'QDS':
-        raise HTTPException(422, 'A QDS result has no contingencies.')
-    return JSONResponse(_GANTT_CACHE.get_or_compute((db.path, identifier, limit), lambda: raw.n1_gantt(db.db, identifier, limit)))

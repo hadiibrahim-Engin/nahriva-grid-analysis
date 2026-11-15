@@ -204,9 +204,10 @@ def scenario_profile(
     top: int = Query(5, ge=1, le=10),
     points: int = Query(240, ge=20, le=1000),
     grid: str | None = Query(None, max_length=500),
+    kv: float | None = None,
     db=Depends(store),
 ):
-    result = across.scenario_profile(db, scenario_id, top, points, grid)
+    result = across.scenario_profile(db, scenario_id, top, points, grid, kv)
     if result is None:
         raise HTTPException(404, "Scenario not found.")
     return JSONResponse(result)
@@ -282,11 +283,12 @@ def compare_scenarios(
     offset: int = Query(0, ge=0),
     grid: str | None = Query(None, max_length=200),
     q: str | None = Query(None, max_length=200),
+    kv: float | None = None,
     db=Depends(store),
 ):
     """Scenario A against B (also from different analyses): every element with its value in both and the change
     B - A, largest change first, paged; with the checks that tell how comparable the two are."""
-    result = compare.compare_scenarios(db, a, b, metric, limit, offset, grid, q)
+    result = compare.compare_scenarios(db, a, b, metric, limit, offset, grid, q, kv)
     if result is None:
         raise HTTPException(404, "Scenario not found.")
     return JSONResponse(result)
@@ -327,12 +329,14 @@ def scenario_n1_pairs(scenario_id: str,
                       kind: str = Query("(n-1)'", pattern="^(n-1|\\(n-1\\)')$"),
                       start: int | None = Query(None, description="Range start, epoch seconds (inclusive)"),
                       end: int | None = Query(None, description="Range end, epoch seconds (inclusive)"),
-                      limit: int = Query(100, ge=1, le=2000), db=Depends(store)):
+                      limit: int = Query(100, ge=1, le=100_000),
+                      grid: str | None = Query(None, max_length=200), kv: float | None = None, db=Depends(store)):
     """Which contingency overloads which branch: per pair the loading before and after the contingency and the
-    hours above the limit, worst first. kind "(n-1)'" with the scenario's planned outages, "n-1" without."""
+    hours above the limit, worst first. kind "(n-1)'" with the scenario's planned outages, "n-1" without; grid and
+    kv keep the pairs whose overloaded branch lies there."""
     if start is not None and end is not None and end < start:
         raise HTTPException(422, "The range ends before it starts.")
-    result = gridlens_store.n1_pairs(db.db, scenario_id, kind, start, end, limit)
+    result = gridlens_store.n1_pairs(db.db, scenario_id, kind, start, end, limit, grid, kv)
     if result is None:
         raise HTTPException(404, "The scenario has no such n-1 sweep.")
     return JSONResponse(result)

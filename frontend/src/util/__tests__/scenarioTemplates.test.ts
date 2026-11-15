@@ -7,8 +7,9 @@ import { filterByEquipment } from '../outageAssessment.ts';
 const scenario = CHART_TEMPLATES.filter((t) => t.scenarioLevel);
 
 test('the scenario evaluation charts are offered in "Add chart" and need no signals', () => {
-  assert.deepEqual(scenario.map((t) => t.kind).sort(), ['acrossDelta', 'acrossLoading', 'acrossLodf', 'acrossTime', 'acrossVoltage', 'acrossVoltageDelta']);
-  for (const template of scenario) {
+  const evaluation = scenario.filter((t) => t.category === 'scenarioEvaluation');
+  assert.deepEqual(evaluation.map((t) => t.kind).sort(), ['acrossDelta', 'acrossLoading', 'acrossLodf', 'acrossTime', 'acrossVoltage', 'acrossVoltageDelta']);
+  for (const template of evaluation) {
     assert.equal(template.arity, 'none');
     assert.deepEqual(template.measurements, []);
     assert.equal(template.componentLevel, undefined);
@@ -16,6 +17,17 @@ test('the scenario evaluation charts are offered in "Add chart" and need no sign
     assert.equal(template.category, 'scenarioEvaluation');
   }
   assert.equal(CATEGORY_ORDER[0], 'scenarioEvaluation');
+});
+
+test('the n-1 charts are their own category, read the scenario results and need no signals', () => {
+  const contingency = CHART_TEMPLATES.filter((t) => t.category === 'contingency');
+  assert.deepEqual(contingency.map((t) => t.kind).sort(), ['n1BeforeAfter', 'n1Flow']);
+  for (const template of contingency) {
+    assert.equal(template.scenarioLevel, true);
+    assert.equal(template.arity, 'none');
+    assert.deepEqual(template.measurements, []);
+  }
+  assert.equal(CATEGORY_ORDER[1], 'contingency');
 });
 
 test('template ids are unique and every category is listed in the picker order', () => {

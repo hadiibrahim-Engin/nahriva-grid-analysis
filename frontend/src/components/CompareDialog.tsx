@@ -4,6 +4,7 @@ import { compare, type AnalysisComparison, type CompareCheck, type ElementDelta,
 import { utc } from '../api/views';
 import { UNASSIGNED, type AnalysisInfo } from '../hooks/useAnalysis';
 import { downloadText, toCsv } from '../util/csv';
+import { useGridFilter } from '../hooks/useGridFilter';
 
 const PAGE = 200;
 const num = (v: number | null | undefined, digits = 1, unit = '') =>
@@ -198,21 +199,22 @@ const value = (v: ElementDelta['a'], metric: 'loading' | 'voltage') =>
 
 function ElementComparison({ a, b }: { a: string; b: string }) {
   const [metric, setMetric] = useState<'loading' | 'voltage'>('loading');
+  const { grid, kv } = useGridFilter();  // the header's global filters
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE);
   const [result, setResult] = useState<{ key: string; data: ScenarioComparison } | null>(null);
   const [error, setError] = useState('');
-  const key = `${metric}|${query}|${limit}`;
+  const key = `${metric}|${query}|${limit}|${grid}|${kv}`;
 
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      compare.scenarios(a, b, metric, { limit, offset: 0, q: query.trim() }, controller.signal)
+      compare.scenarios(a, b, metric, { limit, offset: 0, q: query.trim() }, { grid, kv }, controller.signal)
         .then((data) => { setResult({ key, data }); setError(''); })
         .catch(() => { if (!controller.signal.aborted) setError('The two scenarios could not be compared.'); });
     }, 200);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [a, b, metric, query, limit, key]);
+  }, [a, b, metric, query, limit, key, grid, kv]);
   const data = result?.key === key ? result.data : result?.data ?? null;
   const loading = metric === 'loading';
   const unit = loading ? ' pp' : ' p.u.';

@@ -51,7 +51,7 @@ import OutageManagement from '../components/OutageManagement';
 import { CHART_TEMPLATES } from '../components/charts/chartTemplates';
 import { SectionCard } from '../components/across/shared';
 import AcrossScenarios from '../components/across/AcrossScenarios';
-const N1Gantt = lazy(() => import('../components/across/N1Gantt'));
+const N1PairsChart = lazy(() => import('../components/across/N1PairsChart'));
 import DatabasePicker from '../components/DatabasePicker';
 import GeneratingLoader from '../components/ui/GeneratingLoader';
 import WorkspaceRail from '../components/WorkspaceRail';
@@ -273,7 +273,6 @@ export default function DashboardPage() {
   const timeseriesScopeByKeyRef = useRef<Record<string, string>>({});
 
   // null means the n-1 availability check has not completed yet.
-  const [hasN1, setHasN1] = useState<boolean | null>(null);
 
   const { analysis } = useAnalysis();
   const lastFacilityRefreshRef = useRef(0);
@@ -674,8 +673,7 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
-              {workspace === 'charts' && (
-                <>
+              {/* Equipment and measurement are offered in every workspace; their time series are drawn under Charts. */}
               <SearchableDropdown
                 label="Equipment"
                 items={listedComponents}
@@ -719,13 +717,17 @@ export default function DashboardPage() {
                   Add
                 </AnimatedButton>
               </div>
-                </>
-              )}
 
             </div>
 
-            {workspace === 'charts' && selectedSeriesList.length > 0 && (
+            {selectedSeriesList.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-gray-700">
+                {workspace !== 'charts' && (
+                  <button type="button" className="ab-chip" onClick={() => setWorkspace('charts')}
+                    title="The added time series are drawn in the Charts workspace">
+                    Show in Charts →
+                  </button>
+                )}
                 {selectedSeriesList.map((s) => (
                   <span
                     key={s.key}
@@ -782,17 +784,12 @@ export default function DashboardPage() {
               )}
               {workspace === 'n1' && (
                 <div className="across-scope mt-3">
-                  <ErrorBoundary label="n-1 overloads">
+                  <ErrorBoundary label="n-1 review">
                     <Suspense fallback={<GeneratingLoader minHeight={240} />}>
-                      <N1Gantt refreshKey={refreshNonce} onAvailable={setHasN1} />
+                      {/* Which contingency overloads which branch: before → after per pair, then the Sankey. */}
+                      <N1PairsChart key={refreshNonce} kind="both" />
                     </Suspense>
                   </ErrorBoundary>
-                  {hasN1 === false && (
-                    <div className="workspace-empty">
-                      <strong>No n-1 sweep in this analysis</strong>
-                      <span>Import or calculate an assessment with contingency results to use this workspace.</span>
-                    </div>
-                  )}
                 </div>
               )}
             </section>

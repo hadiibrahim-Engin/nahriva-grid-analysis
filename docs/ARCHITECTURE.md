@@ -25,7 +25,7 @@ flowchart LR
     subgraph Server["Dashboard process (backend/.venv, uvicorn)"]
         Main["app/main.py<br/>FastAPI, static frontend/dist"]
         Routes["simulation/routes.py<br/>overview, across, grids"]
-        GL["simulation/gridlens_routes.py<br/>raw results, n-1 Gantt"]
+        GL["simulation/gridlens_routes.py<br/>raw n-1 results"]
         Data["simulation/data.py<br/>time series, analytics"]
         Main --> Routes & GL & Data
     end
@@ -84,7 +84,7 @@ sequenceDiagram
 | `pf_scenario_cells` | bridge (`across.prepare_cells`, same transaction as the scenario) | `across.scenario_cells` |
 | `pf_progress` | starter | overview banner |
 | `gl_assessments`, `gl_cases`, `gl_results`, `gl_columns`, `gl_times`, `gl_time_columns`, `gl_pairs`, `gl_contingencies`, `gl_values` | bridge | `gridlens_routes.py` (raw API) |
-| `gl_n1_hourly`, `gl_n1_columns` | bridge (`SweepSummary`) | n-1 Gantt, asset view |
+| `gl_n1_hourly`, `gl_n1_columns` | bridge (`SweepSummary`) | asset view, limits of the n-1 charts |
 | `pf_run_times` (per run and time: extremes, violation counts) | bridge (`RunTimes`) | time-point view (`timepoint.py`) |
 | `pf_lodf`, `pf_lodf_undefined` | nothing (only the test fixture) | LODF parts of the evaluation |
 
@@ -102,7 +102,7 @@ sequenceDiagram
 | Asset | `GET /assets/{element}`, then `GET /timeseries/raw/…?start&end` of its REF and scenario component |
 | Compare (analysis browser) | `GET /analyses`, `GET /compare/analyses?a&b`, `GET /compare/scenarios?a&b&metric&limit&offset&q` |
 | Voltage level field | `GET /voltage-levels` |
-| n-1 Gantt | `GET /gridlens/assessments`, `GET /gridlens/assessments/{id}`, `GET /gridlens/results/{id}/n1-gantt` |
+| n-1 review (before → after, Sankey) | `GET /scenarios/{id}/n1-pairs?kind&start&end&limit` |
 | Filters (grid, scenario, equipment, measurement) | `GET /grids`, `GET /facilities`, `GET /facilities/{run}/components`, `GET /components/{id}/measurement-types` |
 | Added charts (20 templates) | `GET /timeseries/raw/…` and `/timeseries/aggregate/…`, `GET /analytics/…` |
 | Database picker | `GET /capabilities`, `GET /database`, `POST /database` (POST only while not exposed to the network) |
@@ -129,7 +129,6 @@ Fresh server process with a warm operating-system file cache; P50/P95 over 20 re
 | One asset, 1 year raw | 9 ms | 7.0 ms | 7.3 ms | 409 kB |
 | One asset, daily maximum | 3 ms | 2.5 ms | 2.7 ms | 17 kB |
 | Box plot, one asset | 3 ms | 2.7 ms | 2.8 ms | 3 kB |
-| n-1 Gantt (40 branches) | 60 ms | 1.3 ms | 1.4 ms | 113 kB |
 
 ## 100,000 elements (phase 3b)
 

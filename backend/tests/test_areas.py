@@ -8,11 +8,9 @@ from app.simulation.store import ScenarioStore
 from tests import ieee39, large_dataset
 
 
-@pytest.fixture(scope="module")
-def example(tmp_path_factory):
-    path = tmp_path_factory.mktemp("areas") / "ieee39.sqlite3"
-    ieee39.build(path, runs=(1.0,))
-    return path
+@pytest.fixture
+def example(ieee39_example):
+    return ieee39_example
 
 
 @pytest.fixture

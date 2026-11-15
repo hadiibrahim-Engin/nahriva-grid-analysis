@@ -29,7 +29,7 @@ export interface AnalysisSelection {
 
 /**
  * The analysis chosen in the dashboard header (see components/AnalysisProvider). The summary, the scenario list of
- * the filters and the n-1 Gantt show this analysis only, never a mix of several imports. Without a provider: the newest.
+ * the filters and the n-1 charts show this analysis only, never a mix of several imports. Without a provider: the newest.
  */
 export const AnalysisContext = createContext<AnalysisSelection>({ analysis: null, setAnalysis: () => {} });
 

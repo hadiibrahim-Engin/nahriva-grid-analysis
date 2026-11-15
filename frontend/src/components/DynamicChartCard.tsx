@@ -51,6 +51,7 @@ import {
 import { getTemplate, ARITY_LABELS, type ChartTemplate } from './charts/chartTemplates';
 
 const AcrossChartBody = lazy(() => import('./across/AcrossChartBody'));
+const N1PairsChart = lazy(() => import('./across/N1PairsChart'));
 const TimeseriesChart = lazy(() => import('./charts/TimeseriesChart'));
 const TimeseriesHistogramChart = lazy(() => import('./charts/TimeseriesHistogramChart'));
 const HistogramCombinedChart = lazy(() => import('./charts/HistogramCombinedChart'));
@@ -637,7 +638,9 @@ export default function DynamicChartCard({
     body = (
       <ErrorBoundary label={template.name}>
         <Suspense fallback={CHART_FALLBACK}>
-          <AcrossChartBody kind={template.kind} config={config} />
+          {template.kind === 'n1BeforeAfter' || template.kind === 'n1Flow'
+            ? <N1PairsChart kind={template.kind} config={config} />
+            : <AcrossChartBody kind={template.kind} config={config} />}
         </Suspense>
       </ErrorBoundary>
     );

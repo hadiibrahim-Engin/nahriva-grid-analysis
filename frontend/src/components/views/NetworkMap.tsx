@@ -4,6 +4,7 @@ import { ASSESSMENT } from '../../config/assessment';
 import { LOADING_LIMITS } from '../../config/loadingBands';
 import { useAnalysis } from '../../hooks/useAnalysis';
 import { useChartTheme } from '../../hooks/useChartTheme';
+import { useGridFilter } from '../../hooks/useGridFilter';
 import { readAcrossColors, type AcrossColors } from '../../util/acrossColors';
 
 interface MapInfo { name: string; bytes: number }
@@ -118,6 +119,7 @@ export default function NetworkMap({ scenarioId, t, onPickAsset }: {
   onPickAsset?: (elementId: string) => void;
 }) {
   const { analysis } = useAnalysis();
+  const { grid, kv } = useGridFilter();
   const theme = useChartTheme();
   const colors = useMemo(() => readAcrossColors(theme.isLight), [theme.isLight]);
   const [list, setList] = useState<{ folder: string; maps: MapInfo[] } | null>(null);
@@ -218,15 +220,19 @@ export default function NetworkMap({ scenarioId, t, onPickAsset }: {
   useEffect(() => {
     if (!drawing || drawing === 'invalid' || !values) return;
     const off = new Set(values.off);
+    const elements = shownMap?.match.elements ?? [];
     drawing.paints.forEach((paint, i) => {
-      const colour = colourOf(values, i, colors, theme.mutedText);
+      // Outside the header's grid or voltage-level filter: drawn grey and faint, so the rest stands out.
+      const [, , elementGrid, elementKv] = elements[i] ?? [];
+      const outside = (grid !== null && elementGrid !== grid) || (kv !== null && elementKv !== kv);
+      const colour = outside ? theme.mutedText : colourOf(values, i, colors, theme.mutedText);
       const dashed = off.has(i) ? '6 5' : '';
-      const faint = values.m[i] === null || (values.v[i] === null && !off.has(i)) ? '0.45' : '';
+      const faint = outside ? '0.18' : values.m[i] === null || (values.v[i] === null && !off.has(i)) ? '0.45' : '';
       for (const shape of paint.strokes) { shape.style.stroke = colour; shape.style.strokeDasharray = dashed; }
       for (const shape of paint.fills) shape.style.fill = colour;
       for (const shape of paint.all) shape.style.opacity = faint;
     });
-  }, [drawing, values, colors, theme.mutedText]);
+  }, [drawing, values, colors, theme.mutedText, grid, kv, shownMap]);
 
   // Wheel and trackpad: smooth zoom around the pointer (a pinch arrives as wheel with ctrlKey, in small steps).
   useEffect(() => {

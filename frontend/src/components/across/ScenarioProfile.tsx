@@ -10,7 +10,7 @@ import { escapeHtml, readAcrossColors, withAlpha } from '../../util/acrossColors
 import { SUMMARY_IDS, fmtPct } from '../../util/acrossScenarios';
 import { SectionCard } from './shared';
 import { useGridFilter } from '../../hooks/useGridFilter';
-import { gridLabel, type GridSelection } from '../../util/grids';
+import { gridLabel } from '../../util/grids';
 
 echarts.use([LineChart, GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent, CanvasRenderer]);
 
@@ -28,20 +28,21 @@ interface Profile {
 export default memo(function ScenarioProfile({ scenarioId, label, refreshKey }: { scenarioId: string; label: string; refreshKey: number }) {
   const theme = useChartTheme();
   const colors = useMemo(() => readAcrossColors(theme.isLight), [theme.isLight]);
-  const { grid } = useGridFilter();
-  const [loaded, setLoaded] = useState<{ id: string; grid: GridSelection; profile: Profile } | null>(null);
+  const { grid, kv } = useGridFilter();
+  const [loaded, setLoaded] = useState<{ id: string; filter: string; profile: Profile } | null>(null);
+  const filter = `${grid}|${kv}`;
   const [failed, setFailed] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    const params = { top: 5, points: 300, ...(grid === null ? {} : { grid }) };
+    const params = { top: 5, points: 300, ...(grid === null ? {} : { grid }), ...(kv === null ? {} : { kv }) };
     api.get<Profile>(`/across-scenarios/${encodeURIComponent(scenarioId)}/profile`, { params })
-      .then((response) => { if (active) { setLoaded({ id: scenarioId, grid, profile: response.data }); setFailed(null); } })
+      .then((response) => { if (active) { setLoaded({ id: scenarioId, filter, profile: response.data }); setFailed(null); } })
       .catch(() => { if (active) setFailed(scenarioId); });
     return () => { active = false; };
-  }, [scenarioId, refreshKey, grid]);
+  }, [scenarioId, refreshKey, grid, kv, filter]);
 
-  const profile = loaded?.id === scenarioId && loaded.grid === grid ? loaded.profile : null;
+  const profile = loaded?.id === scenarioId && loaded.filter === filter ? loaded.profile : null;
   const option = useMemo(() => {
     if (!profile || profile.series.length === 0) return null;
     const stamps = profile.times.map((t) => Date.parse(t));

@@ -290,6 +290,43 @@ function ExceedancePreview() {
   );
 }
 
+/** n-1 before → after: one row per branch, a hollow dot (before) joined to a filled dot (after). */
+function DumbbellPreview() {
+  const rows: [number, number][] = [[40, 150], [70, 140], [30, 118], [85, 112], [55, 104]];
+  return (
+    <C>
+      <line x1="120" y1="5" x2="120" y2="59" stroke={RED} strokeWidth="1" strokeDasharray="3 2" strokeOpacity="0.8" />
+      {rows.map(([a, b], i) => {
+        const y = 9 + i * 11;
+        return (
+          <g key={y}>
+            <line x1={a} y1={y} x2={b} y2={y} stroke={MUTED} strokeOpacity="0.4" strokeWidth="2" />
+            <circle cx={a} cy={y} r="3" stroke={MUTED} strokeOpacity="0.7" strokeWidth="1.4" fill="none" />
+            <circle cx={b} cy={y} r="3.4" fill={i < 2 ? RED : AMBER} />
+          </g>
+        );
+      })}
+    </C>
+  );
+}
+
+/** n-1 Sankey: failing branches on the left flowing into the branches they overload on the right. */
+function SankeyPreview() {
+  const left = [10, 30, 48];
+  const right = [14, 36, 54];
+  const links: [number, number, number][] = [[0, 0, 6], [0, 1, 3], [1, 1, 5], [2, 2, 4], [1, 0, 2]];
+  return (
+    <C>
+      {links.map(([a, b, w], i) => (
+        <path key={i} d={`M28,${left[a]} C90,${left[a]} 90,${right[b]} 152,${right[b]}`}
+          stroke={i % 2 ? AMBER : RED} strokeOpacity="0.35" strokeWidth={w} fill="none" />
+      ))}
+      {left.map((y) => <rect key={y} x="20" y={y - 6} width="8" height="12" rx="1.5" fill={MUTED} fillOpacity="0.5" />)}
+      {right.map((y, i) => <rect key={y} x="152" y={y - 6} width="8" height="12" rx="1.5" fill={i === 0 ? RED : AMBER} />)}
+    </C>
+  );
+}
+
 // -- Registry ------------------------------------------------------------------
 
 type PreviewFn = () => React.JSX.Element;
@@ -316,6 +353,8 @@ const PREVIEW_MAP: Record<ChartKind, PreviewFn> = {
   thresholdBands:     ExceedancePreview,
   anomalyScore:       ExceedancePreview,
   voltageCompliance:  ExceedancePreview,
+  n1BeforeAfter:      DumbbellPreview,
+  n1Flow:             SankeyPreview,
 };
 
 // -- Public component ----------------------------------------------------------

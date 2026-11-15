@@ -206,93 +206,12 @@ def qds_series(db, native, column, start, end, limit, offset):
              'code': row['code']} for row in rows]
 
 
-def _names(db, table, identifier, ids):
-    """{id: row} of the given ids only: a sweep can have thousands of contingencies, a view names a few."""
-    ids = list(ids)
-    found = {}
-    for start in range(0, len(ids), 500):
-        part = ids[start:start + 500]
-        key = 'column_id' if table == 'gl_columns' else 'id'
-        for row in db.execute('SELECT * FROM {} WHERE result_id=? AND {} IN ({})'.format(table, key, ','.join('?' * len(part))),
-                              (identifier, *part)):
-            found[row[key]] = row
-    return found
-
-
-def n1_gantt(db, identifier, limit):
-    """Overload episodes of an n-1 sweep per branch, for a Gantt chart; reads the import summaries by key only.
-
-    An episode is a run of consecutive study times in which the loading after the worst contingency exceeds the
-    limit of the run's settings and the same contingency triggers it. Each episode gives the loading before the
-    contingency (the QDS of the same case at that time: the planning case for (n-1)', REF for n-1), the loading
-    after it, and for (n-1)' the n-1 loading of the same branch without the planned outages.
-    """
-    native = result(db, identifier)
-    times = [row[0] for row in db.execute('SELECT t FROM gl_times WHERE result_id=? ORDER BY t', (identifier,))]
-    step = min((b - a for a, b in zip(times, times[1:])), default=3600)
-    prime = native['kind'] == "(n-1)'"
-    row = db.execute("SELECT analysis_run_id FROM gl_results WHERE assessment_id=? AND case_id=? AND kind='QDS' "
-                     'AND analysis_run_id IS NOT NULL', (native['assessment_id'], native['case_id'] if prime else 'REF')).fetchone()
-    pre_run = row[0] if row else None
-    row = db.execute("SELECT id FROM gl_results WHERE assessment_id=? AND case_id=? AND kind='n-1'",
-                     (native['assessment_id'], native['case_id'])).fetchone() if prime else None
-    reference = row[0] if row else None
-    lines, contingencies = [], set()
-    for column in db.execute(
-            'SELECT k.column_id, k.upper, k.high, k.violation_times, c.element_id, c.name, c.path, c.class_name '
-            'FROM gl_n1_columns k JOIN gl_columns c ON c.result_id=k.result_id AND c.column_id=k.column_id '
-            "WHERE k.result_id=? AND k.metric='loading' AND k.violation_times>0 "
-            'ORDER BY k.severity DESC, k.violation_times DESC LIMIT ?', (identifier, limit)).fetchall():
-        hours = db.execute('SELECT t, high, high_contingency, violations FROM gl_n1_hourly '
-                           'WHERE result_id=? AND column_id=? AND violations>0 ORDER BY t',
-                           (identifier, column['column_id'])).fetchall()
-        first, last = hours[0]['t'], hours[-1]['t']
-        pre = {}
-        if pre_run is not None:
-            pre = {row[0]: row[1] for row in values.query(
-                db, pre_run,
-                "SELECT v.t, v.value FROM analysis_series s JOIN analysis_values v ON v.series_id=s.id "
-                "WHERE s.run_id=? AND s.element_id=? AND s.metric_id='loading' AND v.t BETWEEN ? AND ?",
-                (pre_run, column['element_id'], first, last))}
-        before = {}
-        if reference is not None:
-            before = dict(db.execute(
-                "SELECT h.t, h.high FROM gl_columns c JOIN gl_n1_hourly h ON h.result_id=c.result_id AND h.column_id=c.column_id "
-                "WHERE c.result_id=? AND c.element_id=? AND c.metric='loading' AND h.t BETWEEN ? AND ?",
-                (reference, column['element_id'], first, last)).fetchall())
-        segments, current = [], None
-        for hour in hours:
-            if current is None or hour['t'] != current['end'] or hour['high_contingency'] != current['contingency']:
-                current = {'start': hour['t'], 'end': hour['t'], 'contingency': hour['high_contingency'],
-                           'post': None, 'peak_t': None, 'pre': None, 'pre_max': None, 'reference': None, 'violations': 0}
-                segments.append(current)
-            current['end'] = hour['t'] + step
-            current['violations'] = max(current['violations'], hour['violations'])
-            value = pre.get(hour['t'])
-            if value is not None and (current['pre_max'] is None or value > current['pre_max']):
-                current['pre_max'] = value
-            if current['post'] is None or hour['high'] > current['post']:
-                current.update(post=hour['high'], peak_t=hour['t'], pre=value, reference=before.get(hour['t']))
-        contingencies.update(segment['contingency'] for segment in segments)
-        lines.append({'name': column['name'], 'path': column['path'], 'class_name': column['class_name'],
-                      'limit': column['upper'], 'peak': column['high'], 'hours': column['violation_times'],
-                      'segments': segments})
-    contingencies.discard(None)
-    return {
-        'result_id': identifier, 'kind': native['kind'], 'case_id': native['case_id'], 'step': step,
-        'start': times[0] if times else None, 'end': times[-1] + step if times else None,
-        'pre_source': (native['case_id'] if prime else 'REF') if pre_run else None, 'has_reference': reference is not None,
-        'lines': lines,
-        'contingencies': {key: row['name'] for key, row in _names(db, 'gl_contingencies', identifier, contingencies).items()},
-    }
-
-
-N1_KINDS = ("(n-1)'", 'n-1')
-
-
-def n1_pairs(db, scenario_id, kind="(n-1)'", start=None, end=None, limit=100):
+def n1_pairs(db, scenario_id, kind="(n-1)'", start=None, end=None, limit=100, grid=None, kv=None):
     """Which contingency overloads which branch, and how strongly: per pair the highest loading after the
     contingency, the loading before it at that time, and the hours above the branch's limit, worst first.
+
+    `grid` and `kv` (the dashboard's global filters) keep the pairs whose overloaded branch lies in that grid or
+    at that nominal voltage; the contingency may lie anywhere, since its effect across grids is the point.
 
     `kind` "(n-1)'" is the sweep with the scenario's planned outages, "n-1" the one without (before: the QDS of the
     planning case, or REF). Reads the recorded n-1 cells (above the recording limit) and one value per pair from
@@ -320,11 +239,16 @@ def n1_pairs(db, scenario_id, kind="(n-1)'", start=None, end=None, limit=100):
         'FROM gl_values v JOIN gl_n1_columns k ON k.result_id=v.result_id AND k.column_id=v.column_id '
         "WHERE v.result_id=? AND k.metric='loading' AND v.contingency_id<>'' AND v.value IS NOT NULL" + window +
         ' GROUP BY v.contingency_id, v.column_id HAVING over_n > 0', params).fetchall()
+    columns = {r[0]: r[1:] for r in db.execute(
+        'SELECT c.column_id, c.element_id, c.name, c.path, e.nominal_kv FROM gl_columns c '
+        'LEFT JOIN gl_elements e ON e.assessment_id=? AND e.element_id=c.element_id WHERE c.result_id=?',
+        (assessment, identifier))}
+    if grid is not None or kv is not None:
+        found = [r for r in found if (grid is None or grid_name(columns[r[1]][2]) == grid)
+                 and (kv is None or columns[r[1]][3] == kv)]
     found.sort(key=lambda r: (-r[2], -r[4]))
     shown = found[:limit]
     names = dict(db.execute('SELECT id, name FROM gl_contingencies WHERE result_id=?', (identifier,)).fetchall())
-    columns = {r[0]: r[1:] for r in db.execute(
-        'SELECT c.column_id, c.element_id, c.name, c.path FROM gl_columns c WHERE c.result_id=?', (identifier,))}
     prime = kind == "(n-1)'"
     pre = db.execute("SELECT analysis_run_id FROM gl_results WHERE assessment_id=? AND case_id=? AND kind='QDS' "
                      'AND analysis_run_id IS NOT NULL', (assessment, case if prime else 'REF')).fetchone()
@@ -340,7 +264,7 @@ def n1_pairs(db, scenario_id, kind="(n-1)'", start=None, end=None, limit=100):
             (pre[0], *elements, *times))}
     pairs = []
     for contingency, column, post, t, over, upper in shown:
-        element_id, name, path = columns[column]
+        element_id, name, path, _kv = columns[column]
         pairs.append({
             'contingency': names.get(contingency, contingency), 'element_id': element_id, 'element': name,
             'grid': grid_name(path), 'post': post, 't': t, 'pre': before.get((element_id, t)),

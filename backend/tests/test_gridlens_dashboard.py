@@ -390,19 +390,15 @@ def test_native_n1_and_n1_prime_run_and_restore_before_raw_import(native, monkey
     assert all(point['state'] == 'missing_row' for point in raw.series(store.db, prime['id'], 0, cid))
     assert store.db.execute('SELECT COUNT(*) FROM pf_lodf').fetchone()[0] == 0
     store.close()
-    # The Gantt chart reads the n-1 summaries written at import, never the raw cells.
+    # The n-1 pairs: which contingency overloads which branch, before (the QDS of C1) and after.
     monkeypatch.setattr(settings, 'ANALYSIS_DB_PATH', str(path))
     monkeypatch.setattr(settings, 'ANALYSIS_MODE', 'sqlite')
     from app.main import app as web
     with TestClient(web) as client:
-        gantt = client.get('/api/simulation/gridlens/results/{}/n1-gantt'.format(prime['id'])).json()
-        # (n-1)': 110 % after 'Monitored fault' at every study time, one episode; before it the QDS of C1 (90 %).
-        [line] = gantt['lines']
-        assert (line['limit'], line['peak'], line['hours']) == (100.0, 110.0, 4)
-        [episode] = line['segments']
-        assert (episode['start'], episode['end']) == (expected_times[0], expected_times[-1] + 900)
-        assert gantt['contingencies'][episode['contingency']] == 'Monitored fault'
-        assert (episode['post'], episode['pre'], episode['reference'], episode['violations']) == (110.0, 90.0, 90.0, 1)
-        assert gantt['pre_source'] == 'C1' and gantt['has_reference']
-        # n-1 stays below the limit: no episode.
-        assert client.get('/api/simulation/gridlens/results/{}/n1-gantt'.format(n1['id'])).json()['lines'] == []
+        url = '/api/simulation/scenarios/{}-C1/n1-pairs'.format(outcome['assessment_id'])
+        # (n-1)': 110 % after 'Monitored fault' at every study time; before it the QDS of C1 (90 %).
+        [pair] = client.get(url).json()['pairs']
+        assert (pair['contingency'], pair['post'], pair['pre'], pair['limit']) == ('Monitored fault', 110.0, 90.0, 100.0)
+        assert pair['hours_over'] == 4 * 0.25 and pair['t'] in expected_times
+        # n-1 stays below the limit: no pair.
+        assert client.get(url, params={'kind': 'n-1'}).json()['total_pairs'] == 0

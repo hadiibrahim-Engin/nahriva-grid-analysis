@@ -1756,27 +1756,6 @@ body {
 @media (max-width: 1100px) { .ab-charts { grid-template-columns: minmax(0, 1fr); } }
 .ab-empty { display: flex; align-items: center; justify-content: center; min-height: 140px; font-size: 12.5px; color: var(--grid-muted); text-align: center; padding: 0 12px; }
 
-/* n-1 overload timeline: keep dense engineering data readable without printing
-   a contingency label into every episode. Full details remain in the tooltip. */
-.n1-gantt__limit { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; font-size: 11px; color: var(--grid-muted); }
-.n1-gantt__summary {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px;
-  margin-bottom: 10px; overflow: hidden; border: 1px solid var(--grid-border); border-radius: 7px;
-  background: var(--grid-border);
-}
-.n1-gantt__summary > div { min-width: 0; padding: 8px 10px; background: var(--grid-subpanel); }
-.n1-gantt__summary span { display: block; font-size: 10px; color: var(--grid-muted); }
-.n1-gantt__summary strong { display: block; margin-top: 2px; font-size: 15px; font-weight: 650; color: var(--grid-text); font-variant-numeric: tabular-nums; }
-.n1-gantt__plot {
-  overflow: hidden; border: 1px solid var(--grid-border); border-radius: 7px;
-  background: var(--grid-bg);
-}
-.n1-gantt__scroll { max-height: min(680px, 68vh); overflow-y: auto; scrollbar-gutter: stable; }
-.n1-gantt__legend { margin-top: 9px; }
-@media (max-width: 720px) {
-  .n1-gantt__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .n1-gantt__scroll { max-height: 62vh; }
-}
 
 /* Full-width technical tables and consistent section disclosures. */
 .dashboard-shell { --query-rail-gutter: 0px; }

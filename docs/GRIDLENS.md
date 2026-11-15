@@ -24,7 +24,8 @@ existing `setup.cmd` / `setup.ps1` first.
    its dashboard summary (`pf_scenario_cells`), so the evaluation appears at
    once instead of reducing every value on first view.
 6. n-1 sweeps follow; while their cells are read the bridge writes the n-1
-   summaries the Gantt chart uses (see below).
+   summaries (`gl_n1_hourly`, `gl_n1_columns`: per column and study time the worst value and contingency, per
+   column the extremes, limits and violating times) used by the asset view and the n-1 charts.
 
 A cancelled case manager calculates nothing, opens no browser and stops the
 server it started. A failure keeps the cases already stored; the cases that
@@ -53,7 +54,7 @@ cases = 34.7 million values): the first case is visible with its complete
 evaluation 7.5 s after PowerFactory finished, all cases after 25 s; the
 dashboard answers the evaluation of all five cases in 11 ms (before: about
 1.2 s per case on first view). A sweep of 13.4 million n-1 cells (168 study
-times × 200 contingencies × 400 columns) answers the Gantt chart in 21 ms
+times × 200 contingencies × 400 columns) answered the former n-1 Gantt chart in 21 ms
 (5 ms cached). About 70 % of the import is SQLite inserting one row per value;
 the PowerFactory reads use one `GetColumnValues` call per column, as main.py.
 
@@ -106,7 +107,6 @@ The read-only prefix is `/api/simulation/gridlens`:
 | `/results/{id}/times?offset=0&limit=1000` | Actual timestamps, in epoch seconds UTC |
 | `/results/{id}/series?column_id=0&contingency_id=...` | Raw values and quality states for one object/quantity/fault |
 
-| `/results/{id}/n1-gantt?limit=50` | n-1 overload episodes per branch for the Gantt chart |
 
 `series` accepts `start`, `end` (exclusive), `offset` and `limit` (at most
 5,000). All pages contain original samples; pagination is not downsampling.
@@ -136,24 +136,17 @@ when it starts at zero and the configured QDS start supplies its origin;
 this is recorded as `relative_to_qds_start`. Ambiguous, descending or duplicate
 axes are refused. No interpolation or invented samples are used.
 
-## n-1 Gantt chart
+## n-1 pairs (contingency → overloaded branch)
 
-The dashboard section **n-1 overloads · Gantt** shows one row per branch and
-one bar per episode: consecutive study times in which the loading after the
-worst contingency exceeds the limit of the run's settings, triggered by the
-same contingency. Each bar names the triggering contingency and gives the
-loading before it (the QDS of the same case at that time; REF for the n-1
-reference) and after it; for (n-1)' also the n-1 loading without the planned
-outages. The colour is the loading after the contingency; a dashed outline
-marks a branch that was already above the limit before it. The 40 branches
-furthest beyond their limit are shown; case and n-1 / (n-1)' are selectable.
-
-It reads summaries the bridge writes while importing a sweep, never the raw
-cells: `gl_n1_hourly` (per column and study time the lowest/highest value over
-every contingency, the contingency that gave it, and how many contingencies
-violate the limit) and `gl_n1_columns` (per column the extremes, the limits
-used, the study times with a violation and a severity for ranking). A sweep
-imported before these tables existed shows no episodes; import it again.
+`GET /api/simulation/scenarios/{id}/n1-pairs?kind=(n-1)'|n-1&start&end&limit&grid&kv` gives per pair of contingency and
+branch the highest loading after the contingency (from the recorded n-1 cells, above the recording limit), the time
+of it, the loading before the contingency at that time (QDS of the planning case for (n-1)', of REF for n-1, read
+from wherever the run keeps its values) and the hours above the branch's limit, worst first, with the number of
+pairs, contingencies and branches in total. The workspace **n-1 review** shows both charts under one set of controls
+(scenario, during the maintenance or without, top 10/25/50); *n-1: before → after per branch* and *n-1: contingency →
+overloaded branches (Sankey)* can also be added one by one in **Add chart**. A contingency that has no load-flow solution leaves no row
+in the sweep and therefore no pair. `grid` and `kv` (the header's filters) keep the pairs whose overloaded branch
+lies in that grid or at that nominal voltage; `limit` up to 100,000 ("All" in the charts).
 
 ## Analyses, states and time series
 

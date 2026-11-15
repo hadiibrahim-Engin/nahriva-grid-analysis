@@ -18,7 +18,7 @@
 
 - **Limits** (header): the thresholds of this evaluation (loading bands, voltage band and margin, thermal reserve,
   aggravation) can be changed for this browser; saving reloads the dashboard so every band, legend and verdict uses
-  them. Defaults stay in `frontend/src/config/`. The n-1 Gantt and the counts of the time-point view use the limits set
+  them. Defaults stay in `frontend/src/config/`. The hours above the limit in the n-1 charts and the counts of the time-point view use the limits set
   for the run in PowerFactory instead.
 - **Large analyses** (more than 5,000 elements per scenario): only the relevant elements are listed, with a note
   saying how many of how many; verdicts and key figures are complete.
@@ -58,6 +58,21 @@ Heavy sections load only when they come close to the viewport (see "Large databa
 Explanations are off by default; open them per card with **i** or for everything with
 **Explanations**.
 
+## Global filters
+
+The header's **Grid** and **Voltage level** (and the toolbar's **Time range**) apply to every view and chart; each
+is part of the address, so a link or bookmark keeps them. **Equipment**, **Measurement** and **Add** are in the
+header of every workspace; added time series are drawn under **Charts** (elsewhere a chip offers "Show in Charts").
+
+| View | Grid | Voltage level |
+|---|---|---|
+| Assessment, matrix, comparison, radar, detail table, scenario charts of **Add chart** | yes | yes |
+| Network at a time, network map (elements outside are greyed), loading profile | yes | yes |
+| n-1 review and n-1 charts | the overloaded branch lies there (the failing one may lie anywhere) | yes |
+| Areas | only that area and the flows touching it | does not apply (a balance sums every level; the widget says so) |
+| Compare A against B (elements) | yes | yes |
+| Equipment list of the header, asset view | yes | yes |
+
 ## Adding charts
 
 **Add chart** offers the charts that make sense for the exported signals: loading (L), voltage (U), and where the
@@ -65,6 +80,13 @@ result file records them active power (P), reactive power (Q) and current (I):
 
 - **Scenario evaluation** (no selected signals needed): highest loading, overload duration, change of
   loading, **LODF per line of one outage** (zoomable), LODF and change (zoomable), **voltage per busbar** and **voltage change (ΔU)**.
+- **n-1 contingencies** (no selected signals needed): **n-1: before → after per branch** — one row per pair
+  "branch overloaded ← contingency that causes it", the loading before the contingency (hollow dot) and after it
+  (coloured by band), worst first; **n-1: contingency → overloaded branches (Sankey)** — the failing branches on the
+  left, the branches they overload on the right, the width the hours above the limit or the highest loading above
+  it. Both choose on the chart: the scenario, *during the maintenance* ((n-1)', before = the planning case) or
+  *without maintenance* (n-1, before = REF), and the worst 10, 25 or 50 pairs; the time range of the toolbar
+  applies, the tooltip gives both loadings, the time of the highest one and the hours above the limit.
 - **Time series, distribution, limits:** time series overlay, aggregated trend, rolling mean, anomaly
   score, histogram, boxplot, duration curve, threshold exceedance, multi-level threshold lines,
   voltage compliance.

@@ -7,6 +7,7 @@ import { getAreas, type AreaRow, type AreaView } from '../../api/areas';
 import { utc } from '../../api/views';
 import ReactECharts from '../charts/ReactECharts';
 import { useChartTheme } from '../../hooks/useChartTheme';
+import { useGridFilter } from '../../hooks/useGridFilter';
 import { useTimeRange } from '../../hooks/useTimeRange';
 import { readAcrossColors, withAlpha } from '../../util/acrossColors';
 import { SUMMARY_IDS } from '../../util/acrossScenarios';
@@ -44,7 +45,17 @@ export default memo(function AreasView({ scenarioId, label, refreshKey }: { scen
     return () => controller.abort();
   }, [key, scenarioId, range]);
 
-  const data = view?.key === key ? view.data : null;
+  const loaded = view?.key === key ? view.data : null;
+  // The header's grid filter: an area is a grid, so only that area, its course and the flows touching it remain.
+  const { grid, kv } = useGridFilter();
+  const data = useMemo(() => {
+    if (!loaded || grid === null) return loaded;
+    const keep = <T,>(record: Record<string, T> | undefined) => (record && grid in record ? { [grid]: record[grid] } : {});
+    return {
+      ...loaded, areas: (loaded.areas ?? []).filter((a) => a.area === grid), course: keep(loaded.course), daily: keep(loaded.daily),
+      flows: (loaded.flows ?? []).filter((f) => f.from === grid || f.to === grid),
+    };
+  }, [loaded, grid]);
   const areas = useMemo(() => data?.areas ?? [], [data]);
   const area = picked && areas.some((a) => a.area === picked) ? picked : neediest(areas);
   const { axis, tooltip } = useMemo(() => ({
@@ -197,6 +208,12 @@ export default memo(function AreasView({ scenarioId, label, refreshKey }: { scen
           {!capability.flows && (
             <p className="ab-sub" role="status">
               Flows between areas and transit cannot be evaluated: {[...capability.missing, ...capability.notes].join(' ') || 'no recorded branch connects two areas.'}
+            </p>
+          )}
+          {(grid !== null || kv !== null) && (
+            <p className="ab-sub" role="status">
+              {grid !== null ? `Grid filter: only ${grid} and the flows touching it. ` : ''}
+              {kv !== null ? 'The voltage-level filter does not apply here: an area balance sums every voltage level.' : ''}
             </p>
           )}
           <div className="ab-scroll">

@@ -75,8 +75,11 @@ export const compare = {
     return (await api.get<AnalysisComparison>('/compare/analyses', { params: { a, b }, signal })).data;
   },
   async scenarios(a: string, b: string, metric: 'loading' | 'voltage', page: { limit: number; offset: number; q: string },
-    signal?: AbortSignal) {
-    const params = { a, b, metric, limit: page.limit, offset: page.offset, ...(page.q ? { q: page.q } : {}) };
+    filter: { grid: string | null; kv: number | null }, signal?: AbortSignal) {
+    const params = {
+      a, b, metric, limit: page.limit, offset: page.offset, ...(page.q ? { q: page.q } : {}),
+      ...(filter.grid === null ? {} : { grid: filter.grid }), ...(filter.kv === null ? {} : { kv: filter.kv }),
+    };
     return (await api.get<ScenarioComparison>('/compare/scenarios', { params, signal })).data;
   },
 };

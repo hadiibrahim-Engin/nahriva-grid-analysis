@@ -23,3 +23,12 @@ def _clear_analytics_cache():
     analytics_cache.clear()
     yield
     analytics_cache.clear()
+
+
+@pytest.fixture(scope="session")
+def ieee39_example(tmp_path_factory):
+    """The IEEE 39-bus example with one analysis (base load), built once for every test that needs it."""
+    from tests import ieee39
+    path = tmp_path_factory.mktemp("ieee39") / "ieee39.sqlite3"
+    ieee39.build(path, runs=(1.0,))
+    return path

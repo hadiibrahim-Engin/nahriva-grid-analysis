@@ -401,13 +401,15 @@ def relevant_cells(cells, warning=80.0, band=(0.9, 1.1), margin=0.02, top=TOP_PE
     }}
 
 
-def prepare_cells(store, scenario_id, limits=DEFAULT_LIMITS):
+def prepare_cells(store, scenario_id, limits=DEFAULT_LIMITS, stats=None):
     """Reduce a just-saved scenario once and store the result for the dashboard (called by the script).
 
     Inside the caller's open transaction the summary is committed together with the scenario, so the
-    dashboard never lists the scenario without it and never reduces it a second time.
+    dashboard never lists the scenario without it and never reduces it a second time. `stats` maps run ids to the
+    figures the bridge computed while importing those runs (app/simulation/prepared.py); a figure they do not
+    hold is read from the stored values.
     """
-    cells = _scenario_cells(store, scenario_id, limits)
+    cells = _scenario_cells(store, scenario_id, limits, stats)
     if cells is None:
         return False
     row = (scenario_id, json.dumps(list(limits)), _scenario_lodf_stamp(store.db, scenario_id), json.dumps(cells))
@@ -452,10 +454,19 @@ def _branch_rows(elements, ref, out, equipment, lodf):
     return lines, period_hours
 
 
-def _bus_rows(db, runs, windows, elements, equipment, unit):
-    volt_ref = _voltage_range(db, runs["REF"], windows)
-    volt_out = _voltage_range(db, runs["OUTAGE"], windows)
-    volt_hours = _hours_outside(db, runs["OUTAGE"])
+def _prepared(stats, run_id, figure, *args):
+    """A figure the bridge computed while importing the run, or None when it has to be read from the values."""
+    found = stats.get(run_id) if stats else None
+    return None if found is None else getattr(found, figure)(*args)
+
+
+def _bus_rows(db, runs, windows, elements, equipment, unit, stats=None):
+    volt_ref = _prepared(stats, runs["REF"], "voltage_range", windows)
+    volt_ref = _voltage_range(db, runs["REF"], windows) if volt_ref is None else volt_ref
+    volt_out = _prepared(stats, runs["OUTAGE"], "voltage_range", windows)
+    volt_out = _voltage_range(db, runs["OUTAGE"], windows) if volt_out is None else volt_out
+    volt_hours = _prepared(stats, runs["OUTAGE"], "hours_outside")
+    volt_hours = _hours_outside(db, runs["OUTAGE"]) if volt_hours is None else volt_hours
     band = _voltage_limits(db, runs["OUTAGE"])
     buses = []
     for element_id, rng in volt_out.items():
@@ -482,7 +493,7 @@ def _bus_rows(db, runs, windows, elements, equipment, unit):
     return buses
 
 
-def _scenario_cells(store, scenario_id, limits):
+def _scenario_cells(store, scenario_id, limits, stats=None):
     db = store.db
     row = db.execute("SELECT * FROM pf_scenarios WHERE id=?", (scenario_id,)).fetchone()
     runs = _runs(db, scenario_id) if row else {}
@@ -497,8 +508,10 @@ def _scenario_cells(store, scenario_id, limits):
         e["id"]: e
         for e in db.execute("SELECT id, name, className, type, path FROM analysis_elements WHERE run_id=?", (runs["OUTAGE"],))
     }
-    ref = _loading_stats(db, runs["REF"], windows, limits)
-    out = _loading_stats(db, runs["OUTAGE"], windows, limits)
+    ref = _prepared(stats, runs["REF"], "loading_stats", windows, limits)
+    ref = _loading_stats(db, runs["REF"], windows, limits) if ref is None else ref
+    out = _prepared(stats, runs["OUTAGE"], "loading_stats", windows, limits)
+    out = _loading_stats(db, runs["OUTAGE"], windows, limits) if out is None else out
     lines, period_hours = _branch_rows(elements, ref, out, equipment, lodf)
     unit = _voltage_unit(db, runs["OUTAGE"])
     return {
@@ -506,7 +519,7 @@ def _scenario_cells(store, scenario_id, limits):
         "period_hours": period_hours,
         "voltage_unit": unit,
         "lines": lines,
-        "buses": _bus_rows(db, runs, windows, elements, equipment, unit),
+        "buses": _bus_rows(db, runs, windows, elements, equipment, unit, stats),
     }
 
 
@@ -559,25 +572,26 @@ class _NoProfile(Exception):
     """An unknown scenario: answered with None and never cached, it may be saved later."""
 
 
-def scenario_profile(store, scenario_id, top=5, points=240, grid=None):
-    """Loading over time of the most critical branches of one scenario (of one grid, when `grid` is given), cached.
+def scenario_profile(store, scenario_id, top=5, points=240, grid=None, kv=None):
+    """Loading over time of the most critical branches of one scenario (of one grid and nominal voltage, when
+    `grid` / `kv` are given), cached.
 
     The elements switched off in the scenario are left out. Series are reduced to at
     most `points` buckets by their maximum, so short peaks are never averaged away.
     """
     def compute():
-        result = _scenario_profile(store, scenario_id, top, points, grid)
+        result = _scenario_profile(store, scenario_id, top, points, grid, kv)
         if result is None:
             raise _NoProfile()
         return result
 
     try:
-        return _PROFILE_CACHE.get_or_compute((getattr(store, "path", None), scenario_id, top, points, grid), compute)
+        return _PROFILE_CACHE.get_or_compute((getattr(store, "path", None), scenario_id, top, points, grid, kv), compute)
     except _NoProfile:
         return None
 
 
-def _scenario_profile(store, scenario_id, top, points, grid):
+def _scenario_profile(store, scenario_id, top, points, grid, kv=None):
     db = store.db
     row = db.execute("SELECT * FROM pf_scenarios WHERE id=?", (scenario_id,)).fetchone()
     if row is None:
@@ -592,9 +606,12 @@ def _scenario_profile(store, scenario_id, top, points, grid):
     elements = {
         e["id"]: e
         for e in db.execute(
-            "SELECT id, name, className, type, path FROM analysis_elements WHERE run_id=?", (runs["OUTAGE"],)
+            "SELECT e.id, e.name, e.className, e.type, e.path, g.nominal_kv FROM analysis_elements e "
+            "LEFT JOIN gl_elements g ON g.assessment_id=? AND g.element_id=e.id WHERE e.run_id=?",
+            (row["analysis_id"], runs["OUTAGE"]),
         )
-        if e["type"] != "bus" and e["name"] not in equipment and (grid is None or grid_name(e["path"]) == grid)
+        if e["type"] not in ("bus", "load", "generator", "external") and e["name"] not in equipment
+        and (grid is None or grid_name(e["path"]) == grid) and (kv is None or e["nominal_kv"] == kv)
     }
     peaks = _extremes(db, runs["OUTAGE"], windows)
     ranked = sorted((i for i in peaks if i in elements), key=lambda i: peaks[i], reverse=True)[: max(1, top)]

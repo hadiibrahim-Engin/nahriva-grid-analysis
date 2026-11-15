@@ -584,8 +584,13 @@ function ConfigPanel(props: ConfigPanelProps) {
       <div className="flex-1 overflow-y-auto px-5 py-4">
         <p className="mb-4 text-xs leading-relaxed text-[var(--grid-muted)]">{template.question}</p>
 
-        {template.scenarioLevel ? (
+        {template.scenarioLevel && template.needsScenarioOptions ? (
           <ScenarioOptions kind={template.kind} config={scenarioConfig} onChange={setScenarioConfig} />
+        ) : template.scenarioLevel ? (
+          <p className="text-sm text-[var(--grid-muted)]">
+            Reads the n-1 results of the scenarios. Scenario, with or without the maintenance and how many pairs are
+            chosen on the chart itself; the time range of the toolbar applies.
+          </p>
         ) : noSources ? (
           <div className="rounded border border-[var(--grid-warning)]/40 bg-[var(--grid-danger-soft)] px-4 py-3 text-sm text-[var(--grid-warning)]">
             First add time series with the dropdowns above; they then become available as the source of this chart.
