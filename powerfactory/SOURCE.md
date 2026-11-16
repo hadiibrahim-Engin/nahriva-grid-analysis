@@ -21,8 +21,9 @@ n-1-only runs use the source's own outage-window time grid, create dashboard sce
 inventing QDS runs, and appear in the source assessment panel with contingency extremes. QDS-dependent
 profiles and before/after comparisons require actual QDS data.
 
-Setup installs PyQt6. PowerFactory's Python must match the backend environment's major/minor version to
-reuse its PyQt/pyarrow packages, or have compatible packages installed in its own environment. The starter
+The starter automatically runs setup with a Windows progress window when backend dependencies or frontend
+assets are missing. Setup installs PyQt6 and matches PowerFactory's Python major/minor version so
+the host can reuse the environment's PyQt/pyarrow packages. The starter
 refuses a missing Qt binding before opening the manager rather than silently calculating saved cases.
 
 The dashboard components originate from `DashB/Api-main/frontend`, commit

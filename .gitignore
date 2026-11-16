@@ -31,3 +31,6 @@ backend/.env
 release/
 outage-assessment.config.json
 PythonReference_en.pdf
+
+.tools/
+backend/.venv.backup-*/

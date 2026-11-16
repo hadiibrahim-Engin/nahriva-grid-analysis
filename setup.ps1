@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   One script from A to Z: sets up Python, the backend, Node, the frontend and the configuration.
   Needs no administrator rights and changes nothing outside this folder.
@@ -24,6 +24,8 @@
 .PARAMETER Database    Results database (default: backend\data\outage-assessment.sqlite3)
 .PARAMETER Port        Dashboard port (default 8765)
 .PARAMETER Python      Path of a specific python.exe (3.12+)
+.PARAMETER PythonVersion  Match the PowerFactory Python major/minor version (automatic first start)
+.PARAMETER ProgressFile   JSON progress for the first-start window
 .PARAMETER Wheelhouse  Folder with pre-downloaded packages for PCs without internet access
 .PARAMETER Autostart   Also start the dashboard at every logon of this user (no elevation)
 .PARAMETER Package     Also build the release ZIP for other PCs (release\outage-assessment-<version>.zip)
@@ -40,6 +42,8 @@ param(
   [string]$Database,
   [int]$Port = 8765,
   [string]$Python,
+  [ValidatePattern('^\d+\.\d+$')][string]$PythonVersion,
+  [string]$ProgressFile,
   [string]$Wheelhouse,
   [switch]$Autostart,
   [switch]$Package,
@@ -74,11 +78,26 @@ function Close-Step([string]$status = 'ok') {
     $script:CurrentStep = $null
   }
 }
+function Write-SetupProgress([string]$message, [int]$percent, [string]$status = 'running') {
+  if (-not $ProgressFile) { return }
+  $record = @{ message = $message; percent = $percent; status = $status }
+  $temporary = "$ProgressFile.tmp"
+  try {
+    $record | ConvertTo-Json -Compress | Set-Content -Path $temporary -Encoding UTF8
+    Move-Item -Path $temporary -Destination $ProgressFile -Force
+  } catch { Write-Verbose "Progress update unavailable: $($_.Exception.Message)" }
+}
 function Step($text) {
   Close-Step
   $script:CurrentStep = $text
   $script:StepClock = [Diagnostics.Stopwatch]::StartNew()
   Write-Host "`n[$(Stamp)] == $text" -ForegroundColor Cyan
+  if ($text -match '^(\d+)/6 (.+)$') {
+    $number = [int]$Matches[1]
+    $labels = @('Python vorbereiten', 'Backend und Python-Pakete installieren', 'Frontend bauen',
+                'Konfiguration vorbereiten', 'Startoptionen prüfen', 'Dashboard testen')
+    Write-SetupProgress "Schritt $number/6: $($labels[$number - 1])" ([int](100 * ($number - 1) / 6))
+  }
 }
 function Info($text) { Write-Host "   [$(Stamp)] $text" }
 function Fail($text) { throw $text }
@@ -113,10 +132,11 @@ trap {
   Write-Host "   $($_.Exception.Message)" -ForegroundColor Red
   Write-Host "   Call stack:"
   foreach ($line in ($_.ScriptStackTrace -split "`n")) { Write-Host "     $($line.Trim())" }
+  try { Write-SetupProgress "Einrichtung fehlgeschlagen: $($_.Exception.Message)" 0 'failed' } catch { }
   Close-Step 'FAILED'
   Show-Summary
   if ($script:Transcript) { Write-Host "   Full log: $(Join-Path $Tools 'setup.log')"; try { Stop-Transcript | Out-Null } catch { } }
-  break
+  exit 1
 }
 
 try {
@@ -150,6 +170,7 @@ function Test-Python($exe, $prefix) {
     $v = & $exe @prefix -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
     if ($LASTEXITCODE -ne 0) { Info "  candidate '$label': does not run (exit code $LASTEXITCODE)"; return $null }
     if ([version]$v -lt [version]'3.12') { Info "  candidate '$label': Python $v is too old (3.12+ needed)"; return $null }
+    if ($PythonVersion -and $v.Trim() -ne $PythonVersion) { Info "  candidate '$label': Python $v does not match PowerFactory $PythonVersion"; return $null }
     $where = (& $exe @prefix -c 'import sys; print(sys.executable)' 2>$null)
     Info "  candidate '$label': Python $v at $where - usable"
     return @($exe) + $prefix
@@ -160,7 +181,7 @@ function Test-Python($exe, $prefix) {
 function Find-Python {
   $found = @()
   if ($Python) { $found = @(Test-Python $Python @()) }
-  if (-not $found) { $found = @(Test-Python 'py' @('-3.12')) }
+  if (-not $found) { $found = @(Test-Python 'py' @($(if ($PythonVersion) { "-$PythonVersion" } else { '-3.12' }))) }
   if (-not $found) { $found = @(Test-Python 'python' @()) }
   if (-not $found) { $found = @(Test-Python 'python3' @()) }
   return $found
@@ -210,6 +231,15 @@ if ($py) { Info "Decision: use $($py -join ' ')" } else {
 # ---- 2. Backend ----------------------------------------------------------------------------------
 
 Step '2/6 Backend environment'
+if ($PythonVersion -and (Test-Path $VenvPython)) {
+  $existingVersion = ''
+  try { $existingVersion = (& $VenvPython -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null) } catch { }
+  if (-not $existingVersion -or $existingVersion.Trim() -ne $PythonVersion) {
+    $backup = "$Venv.backup-$([guid]::NewGuid().ToString('N'))"
+    Info "Existing environment does not match PowerFactory $PythonVersion; preserving it at $backup"
+    Move-Item -Path $Venv -Destination $backup
+  }
+}
 if (Test-Path $VenvPython) {
   Info "Virtual environment exists: $Venv (not recreated)"
 } else {
@@ -219,7 +249,7 @@ if (Test-Path $VenvPython) {
     if ($py.Length -gt 1) { $pyArgs = $py[1..($py.Length - 1)] }
     if (Invoke-Logged $py[0] ($pyArgs + @('-m', 'venv', $Venv))) { Fail 'The virtual environment could not be created.' }
   } else {
-    if (Invoke-Logged (Get-Uv) @('venv', '--python', '3.12', $Venv)) { Fail 'uv could not create the Python 3.12 environment.' }
+    if (Invoke-Logged (Get-Uv) @('venv', '--python', $(if ($PythonVersion) { $PythonVersion } else { '3.12' }), $Venv)) { Fail 'uv could not create the Python 3.12 environment.' }
   }
 }
 Info "Environment Python: $VenvPython"
@@ -412,6 +442,7 @@ Show-Summary
 if ($script:Transcript) { Write-Host "   Full log: $(Join-Path $Tools 'setup.log')"; try { Stop-Transcript | Out-Null } catch { } }
 
 $StartScript = Join-Path $Root 'powerfactory\start_assessment.py'
+Write-SetupProgress 'Einrichtung abgeschlossen. Der Case Manager wird geöffnet.' 100 'complete'
 Write-Host "`nReady." -ForegroundColor Green
 Write-Host '  In PowerFactory add ONE script:'
 Write-Host '    Data Manager > new object "ComPython" (external script file) > script file:'

@@ -211,6 +211,7 @@ def test_launcher_starts_once_then_reuses_and_falls_back_when_the_port_is_taken(
 def run_starter(tmp_path, monkeypatch):
     """start_assessment.main() with a synthetic PowerFactory, the calculation and the dashboard replaced."""
     monkeypatch.setattr(starter, "prepare_imports", lambda: None)
+    monkeypatch.setattr(starter, "ensure_installation", lambda app: None)
     monkeypatch.setenv("OA_DATABASE", str(tmp_path / "results.sqlite3"))
     app = App()
     monkeypatch.setitem(sys.modules, "powerfactory", type("PF", (), {"GetApplication": staticmethod(lambda: app)}))

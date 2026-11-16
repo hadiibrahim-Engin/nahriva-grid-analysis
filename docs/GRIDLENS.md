@@ -4,8 +4,9 @@
 
 Point an external **ComPython** in the active study case at
 `powerfactory/start_assessment.py`. Use a normal ComPython; no IntReport or
-report template is required. Prepare the dashboard installation with the
-existing `setup.cmd` / `setup.ps1` first.
+report template is required. On Windows, the starter prepares missing backend packages and frontend
+builds automatically, with a separate progress window before loading Qt. Manual `setup.cmd` / `setup.ps1`
+is optional. PowerFactory needs Python 3.12 or newer.
 
 1. The starter starts the local dashboard server at once (or reuses the one
    that serves this database) and lets it come up in the background.

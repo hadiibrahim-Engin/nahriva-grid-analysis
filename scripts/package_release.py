@@ -25,6 +25,7 @@ INCLUDE = [
     "scripts/appconfig.py",
     "scripts/dashboard_launcher.py",
     "scripts/serve.py",
+    "scripts/first_run.ps1",
     "deploy",
     "setup.ps1",
     "setup.cmd",
@@ -75,7 +76,7 @@ def wheelhouse(root=ROOT, out_dir=None):
     target.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [sys.executable, "-m", "pip", "download", "--dest", str(target), "--platform", "win_amd64",
-         "--python-version", "3.12", "--only-binary=:all:", f"{root / 'backend'}[archive]"],  # incl. pyarrow for the archive
+         "--python-version", "3.12", "--only-binary=:all:", str(root / "backend"), "PyQt6>=6.7,<7"],  # incl. pyarrow for the archive
         check=True,
     )
     return target

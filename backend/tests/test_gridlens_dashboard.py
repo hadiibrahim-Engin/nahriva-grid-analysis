@@ -279,6 +279,7 @@ def test_starter_starts_dashboard_early_shows_it_after_the_first_case_and_never_
     starter = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(starter)
     monkeypatch.setattr(starter, 'prepare_imports', lambda: None)
+    monkeypatch.setattr(starter, 'ensure_installation', lambda app: None)
     monkeypatch.setattr(starter, 'preflight', lambda database: 50.0)
     monkeypatch.setattr(gl, 'load_qt', lambda: None)
     monkeypatch.setenv('OA_DATABASE', str(tmp_path / 'starter.sqlite3'))

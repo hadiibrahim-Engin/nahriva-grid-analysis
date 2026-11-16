@@ -17,7 +17,26 @@ flowchart LR
     Browser[Browser on the same PC] --> Server
 ```
 
-## One-time setup (on the PowerFactory PC)
+## Automatic first start
+
+After cloning/copying the project, configure a ComPython external script pointing to
+`powerfactory/start_assessment.py` and execute it in the active study case. No separate setup command is
+required. A separate Windows Forms progress window works before PyQt is installed and stays responsive while
+`setup.ps1` runs in a child process. The bar advances after completed steps; an activity indicator remains active
+during downloads/builds. The window shows recent output and reports failures with a log path.
+
+Backend readiness checks import the required packages in the backend interpreter and verify its Python
+major/minor against PowerFactory. The frontend check verifies the index and its referenced assets. Completed
+installations skip setup; broken packages and incomplete builds trigger repair. Python 3.12+ is required in
+PowerFactory. The installer can obtain a matching Python and portable Node when missing. An existing backend
+venv with another Python version is moved to a backup before replacement. Project-local setup output is in
+`.tools/setup.log`, `first-run.stdout.log` and `first-run.stderr.log`; the JSON progress file is internal.
+
+Setup needs internet access unless dependencies are already available. For offline provisioning use the manual
+`-Wheelhouse` workflow below. The first-start window has no dependency on PyQt or tkinter. Concurrent setup
+windows are blocked per project folder; after the active setup finishes, another run can proceed normally.
+
+## Manual setup (optional)
 
 1. **Copy the project** (or unpack the release package) to the PC, for example to `C:\OutageAssessment`.
    A release package is built with `.\setup.ps1 -Package` and already contains the finished frontend.

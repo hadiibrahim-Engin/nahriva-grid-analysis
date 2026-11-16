@@ -18,29 +18,29 @@ One script sets everything up (`setup.cmd`), one script runs in PowerFactory (`p
 
 1. Copy the project folder (or unpack the release package) to the PC, for example to
    `C:\OutageAssessment`.
-2. Double-click **`setup.cmd`** (or run `.\setup.ps1` in a normal PowerShell). It sets up everything
-   from A to Z by itself, without administrator rights and inside the folder only:
-   - Python 3.12+ (uses yours; otherwise it downloads the portable `uv`, which installs Python for you),
-   - the backend environment and packages, including PyQt6 for the case manager,
-   - the frontend build (needs Node 22.13+; if Node is missing it downloads a portable Node; a release
-     package already contains the finished build),
-   - `outage-assessment.config.json`, an optional per-user autostart (`-Autostart`) and a self-test.
-3. In PowerFactory add **one** script: create a `ComPython` object (external script file) that points to
+2. In PowerFactory add **one** script: create a `ComPython` object (external script file) that points to
 
    ```
    C:\OutageAssessment\powerfactory\start_assessment.py
    ```
 
-   Activate the project and study case and execute it. Define the cases and assessments in the case manager.
-   The script calculates the selected runs and reads the kept native result objects. **The browser opens as soon
-   as the first case is stored** (default `http://127.0.0.1:8765`); the other cases follow by themselves.
+3. Activate the project and study case and execute the script. On first start it automatically prepares
+   the backend packages and frontend build. A Windows progress window shows the six setup steps, an activity
+   indicator and live output. Missing Node is downloaded locally; Python is chosen to match PowerFactory.
+   Internet access is needed for downloads. PowerFactory must use Python 3.12 or newer.
+4. After setup the case manager opens automatically. Define the cases and assessments and calculate.
+   **The browser opens as soon as the first case is stored** (default `http://127.0.0.1:8765`).
+
+Later starts reuse the installation. Incomplete builds and missing backend packages trigger automatic repair.
+Setup failures display the reason and point to `.tools\setup.log`; run the script again after fixing the cause.
+An incompatible existing backend environment is preserved as `backend/.venv.backup-<id>` before replacement.
+`setup.cmd` / `setup.ps1` remain available for manual setup, offline installation and advanced options.
 
 Build a release package for other PCs with `.\setup.ps1 -Package`
 (`release\outage-assessment-<version>.zip`). More options: `Get-Help .\setup.ps1 -Detailed`.
 
-For the Qt case manager and Parquet writing, configure PowerFactory to use the same Python major/minor
-version as `backend\.venv\pyvenv.cfg`, or install compatible PyQt6/PyQt5 and pyarrow in its Python.
-To choose a specific interpreter during setup, run `.\setup.ps1 -Python C:\path\to\python.exe`.
+The automatic setup matches PowerFactory's Python major/minor version. For manual setup, use
+`.\setup.ps1 -PythonVersion 3.12 -Python C:\path\to\python.exe` (replace 3.12 with PowerFactory's version).
 Untick **n-0** to run n-1 without QDS: the **n-1 time step** in Settings samples the outage windows.
 The **PowerFactory assessment** panel shows the original 8.2 findings and contingency extremes; the dashboard
 analysis below uses its own adjustable criteria. Earlier imports have no stored original assessment.

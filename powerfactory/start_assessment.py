@@ -1,7 +1,7 @@
 """PowerFactory entry point: GridLens GUI, native calculations, then dashboard.
 
 Configure this file as an external ComPython script in the active study case.
-The complete project folder and its prepared dashboard installation are required.
+On Windows a complete fresh clone is prepared automatically on first execution.
 No IntReport or report template is required. The Qt manager needs PyQt6/PyQt5; Parquet writing needs pyarrow.
 """
 
@@ -52,7 +52,7 @@ def prepare_imports():
     packages = venv_packages()
     if packages is not None and str(packages) not in sys.path:
         sys.path.append(str(packages))  # last: PowerFactory's own packages keep precedence
-    names = {'app', 'gridlens_runtime', 'gridlens_dashboard', 'appconfig', 'dashboard_launcher'}
+    names = {'app', 'gridlens_runtime', 'gridlens_dashboard', 'appconfig', 'dashboard_launcher', 'first_run'}
     for name in list(sys.modules):
         if name in names or name.startswith('app.'):
             del sys.modules[name]
@@ -147,17 +147,25 @@ class Dashboard:
             stop_started_dashboard(self.handle)
 
 
+def ensure_installation(app):
+    from first_run import ensure_installation as ensure
+    return ensure(app, PROJECT_DIR, DASHBOARD_PYTHON)
+
+
 def main():
     prepare_imports()
     import powerfactory
+    app = powerfactory.GetApplication()
+    if app is None:
+        raise RuntimeError('Run this script in an active PowerFactory 2026 study case.')
+    ensure_installation(app)
+    # Setup may just have created site-packages. Reload paths before importing project dependencies.
+    prepare_imports()
     import appconfig
     import gridlens_runtime as engine
     from app.simulation.store import ScenarioStore
     from dashboard_launcher import validate_installation
 
-    app = powerfactory.GetApplication()
-    if app is None:
-        raise RuntimeError('Run this script in an active PowerFactory 2026 study case.')
     logger = engine.RunLogger(app)
     directory = Path(DATABASE_DIRECTORY).expanduser()
     if not directory.is_absolute():
