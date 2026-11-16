@@ -68,6 +68,10 @@ def recover(db, database):
             file.unlink()
             removed.append(file.name)
     with db:
+        db.execute("UPDATE gl_evaluations SET payload=? WHERE assessment_id IN "
+                   "(SELECT id FROM gl_assessments WHERE status='evaluating') AND json_extract(payload,'$.status')='pending'",
+                   ('{"status":"failed","reason":"Original evaluation was interrupted; reimport kept native results."}',))
+        db.execute("UPDATE gl_assessments SET status='evaluation_failed' WHERE status='evaluating'")
         db.execute("UPDATE gl_cases SET status='IMPORT FAILED',reason='Previous import was interrupted; reimport kept native results.' "
                    "WHERE assessment_id IN (SELECT id FROM gl_assessments WHERE status='importing') "
                    "AND NOT EXISTS (SELECT 1 FROM gl_results r WHERE r.assessment_id=gl_cases.assessment_id "

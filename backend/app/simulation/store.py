@@ -212,7 +212,7 @@ VIEWS = """
 
 # PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
 # database is brought up to date once when it is next opened.
-LAYOUT_VERSION = 15
+LAYOUT_VERSION = 16
 
 # Columns added to tables of earlier layouts: (table, column, declaration). New files get them from the CREATE.
 ADDED_COLUMNS = (

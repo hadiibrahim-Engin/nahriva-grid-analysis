@@ -9,7 +9,7 @@ before layout 14, and databases restored by older releases, keep their values in
 dashboard reads both. New archive restorations retain Parquet. The PowerFactory script is the only writer; the dashboard and any external tool only read.
 The SQLite file uses WAL mode, so reading never blocks the script and the script never blocks a reader.
 
-Layout version: **15** (`PRAGMA user_version`; results schema 2 in `schema_migrations`). The tables are defined in
+Layout version: **16** (`PRAGMA user_version`; results schema 2 in `schema_migrations`). The tables are defined in
 `backend/app/analysis/migrations/002_analysis.sql` (results), `backend/app/simulation/store.py` (PowerFactory bridge,
 summaries, views) and `backend/app/simulation/gridlens_store.py` (analyses, master data, native results). An older
 file is brought up to date once when it is opened.
@@ -227,7 +227,7 @@ analysis at a time, by default the newest one that has a scenario (`GET /api/sim
 different imports are never evaluated together. Columns added in layout 10: `status` (`importing`, `complete`,
 `failed`; `unknown` only for imports before layout 10), `source_system`, `calculation_types` (JSON list such as
 `["QDS","n-1","(n-1)'"]`), `project_path`, `study_case_path`, `created_by`, `period_start`, `period_end` (epoch seconds
-of the period the runs covered) and `result_schema_version` (2; 1 for earlier imports).
+of the period the runs covered) and `result_schema_version` (3; 1/2 for earlier imports).
 
 `gl_elements` holds the master data of every monitored element of an analysis: `element_id` (the internal key below),
 `name`, `class_name`, `path`, `grid`, `nominal_kv` and `mrid`. `mrid` stays NULL until a verified source supplies the
@@ -431,3 +431,10 @@ import lock. Existing files/folders are refused. Handled failures remove the sta
 failure may leave a hidden `.restore-*` staging folder or a destination `.values` folder without a database;
 inspect/remove that orphan folder before retrying the same restore destination. Existing databases are never
 overwritten.
+
+
+Layout 16 adds `gl_evaluations(assessment_id, case_id, payload)` for original 8.2 source verdicts,
+n-0 episodes with locations, and n-1 statistics. Analysis schema remains 2; the native result contract is 3.
+Existing layouts upgrade without rewriting values. Archives include evaluations; older contract-2 archives
+remain restorable without this optional table. Original evaluation status is separate from native import
+success: `evaluating` blocks archiving until the assessment becomes `complete`.

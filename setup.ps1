@@ -237,12 +237,12 @@ if ($hasPip) {
   Info 'Installer: pip'
   $pipArgs = @('-m', 'pip', 'install', '--disable-pip-version-check')
   if ($Wheelhouse) { $pipArgs += @('--no-index', '--find-links', $Wheelhouse) }
-  $code = Invoke-Logged $VenvPython ($pipArgs + @($BackendDir))
+  $code = Invoke-Logged $VenvPython ($pipArgs + @($BackendDir, 'PyQt6>=6.7,<7'))
 } else {
   Info 'Installer: uv (the environment has no pip)'
   $uvArgs = @('pip', 'install', '--python', $VenvPython)
   if ($Wheelhouse) { $uvArgs += @('--no-index', '--find-links', $Wheelhouse) }
-  $code = Invoke-Logged (Get-Uv) ($uvArgs + @($BackendDir))
+  $code = Invoke-Logged (Get-Uv) ($uvArgs + @($BackendDir, 'PyQt6>=6.7,<7'))
 }
 if ($code) { Fail 'Package installation failed (no internet access? Use -Wheelhouse, see docs/DEPLOYMENT.md).' }
 Info 'Installed packages in the backend environment:'

@@ -113,7 +113,7 @@ def test_layout_14_adds_storage_view_without_changing_values(tmp_path):
         db.execute('DROP VIEW v_run_storage')
         db.execute('PRAGMA user_version=14')
     store = ScenarioStore(path)
-    assert store.db.execute('PRAGMA user_version').fetchone()[0] == 15
+    assert store.db.execute('PRAGMA user_version').fetchone()[0] == 16
     assert store.db.execute('SELECT COUNT(*) FROM v_run_storage').fetchone()[0] == 16
     assert store.db.execute('SELECT COUNT(*) FROM analysis_values').fetchone()[0] == before
     store.close()
@@ -133,3 +133,19 @@ def test_empty_parquet_run_and_missing_sidecars_are_readable(tmp_path):
     values._ENGINES.clear()
     assert values.query(store.db, 'empty', 'SELECT COUNT(*) FROM analysis_series WHERE run_id=?', ('empty',))[0][0] == 0
     store.close()
+
+
+def test_layout_15_adds_original_evaluation_storage_without_inventing_verdicts(tmp_path):
+    from tests.qds_fixture import create_dummy_database
+    path = create_dummy_database(tmp_path / 'layout15.sqlite3')
+    with sqlite3.connect(path) as db:
+        before = db.execute('SELECT COUNT(*) FROM analysis_values').fetchone()[0]
+        db.execute('DROP TABLE gl_evaluations')
+        db.execute('PRAGMA user_version=15')
+    store = ScenarioStore(path)
+    try:
+        assert store.db.execute('PRAGMA user_version').fetchone()[0] == 16
+        assert store.db.execute('SELECT COUNT(*) FROM gl_evaluations').fetchone()[0] == 0
+        assert store.db.execute('SELECT COUNT(*) FROM analysis_values').fetchone()[0] == before
+    finally:
+        store.close()

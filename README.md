@@ -1,6 +1,6 @@
 # Outage Assessment
 
-The PowerFactory script runs the Outage Assessment of GridLensAssessment (`main.py` 8.1): its case manager
+The PowerFactory script runs the Outage Assessment of GridLensAssessment (`main_qt.py` 8.2): its case manager
 selects cases and settings, its native QDS/n-1/(n-1)' pipeline calculates and keeps `ElmRes` results. Instead
 of a PDF report the raw results are imported into a local database and the dashboard opens as soon as the first
 case is stored. Workflow, result contract and widget API: [docs/GRIDLENS.md](docs/GRIDLENS.md).
@@ -21,7 +21,7 @@ One script sets everything up (`setup.cmd`), one script runs in PowerFactory (`p
 2. Double-click **`setup.cmd`** (or run `.\setup.ps1` in a normal PowerShell). It sets up everything
    from A to Z by itself, without administrator rights and inside the folder only:
    - Python 3.12+ (uses yours; otherwise it downloads the portable `uv`, which installs Python for you),
-   - the backend environment and packages,
+   - the backend environment and packages, including PyQt6 for the case manager,
    - the frontend build (needs Node 22.13+; if Node is missing it downloads a portable Node; a release
      package already contains the finished build),
    - `outage-assessment.config.json`, an optional per-user autostart (`-Autostart`) and a self-test.
@@ -37,6 +37,13 @@ One script sets everything up (`setup.cmd`), one script runs in PowerFactory (`p
 
 Build a release package for other PCs with `.\setup.ps1 -Package`
 (`release\outage-assessment-<version>.zip`). More options: `Get-Help .\setup.ps1 -Detailed`.
+
+For the Qt case manager and Parquet writing, configure PowerFactory to use the same Python major/minor
+version as `backend\.venv\pyvenv.cfg`, or install compatible PyQt6/PyQt5 and pyarrow in its Python.
+To choose a specific interpreter during setup, run `.\setup.ps1 -Python C:\path\to\python.exe`.
+Untick **n-0** to run n-1 without QDS: the **n-1 time step** in Settings samples the outage windows.
+The **PowerFactory assessment** panel shows the original 8.2 findings and contingency extremes; the dashboard
+analysis below uses its own adjustable criteria. Earlier imports have no stored original assessment.
 
 ## Try it on this computer
 

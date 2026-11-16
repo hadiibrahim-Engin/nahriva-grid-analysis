@@ -50,6 +50,7 @@ TABLES = (
     ("lodf_undefined", "pf_lodf_undefined", "outage_key IN (SELECT id FROM _outages)"),
     ("elements", "gl_elements", "assessment_id = :analysis"),
     ("cases", "gl_cases", "assessment_id = :analysis"),
+    ("evaluations", "gl_evaluations", "assessment_id = :analysis"),
     ("scenarios", "pf_scenarios", "id IN (SELECT id FROM _scenarios)"),
     ("scenario_runs", "pf_scenario_runs", "scenario_id IN (SELECT id FROM _scenarios)"),
     ("scenario_provenance", "pf_scenario_provenance", "scenario_id IN (SELECT id FROM _scenarios)"),
@@ -301,7 +302,7 @@ def verify_archive(path):
                     if columns != entry.get("columns"):
                         problems.append(f"{name} schema differs from manifest")
         optional_v1 = {"pf_catalog", "pf_jobs", "pf_scenario_cells", "pf_lodf", "pf_lodf_undefined"}
-        required = {table for _, table, _ in TABLES}
+        required = {table for _, table, _ in TABLES} - {"gl_evaluations"}
         if manifest["format_version"] == 1:
             required -= optional_v1
         if required - tables:
@@ -337,8 +338,8 @@ def import_analysis(archive, database, on_file=None):
         raise ArchiveError("Invalid archive source metadata.")
     if (not isinstance(source.get("layout_version"), int)
             or not OLDEST_LAYOUT <= source["layout_version"] <= LAYOUT_VERSION
-            or source.get("result_schema_version") != RESULT_SCHEMA_VERSION
-            or manifest.get("states_version") != STATES_VERSION):
+            or source.get("result_schema_version") not in (2, RESULT_SCHEMA_VERSION)
+            or manifest.get("states_version") not in (1, STATES_VERSION)):
         raise ArchiveError("Incompatible archive schema or states version. Use a matching dashboard version.")
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".restore-", suffix=".sqlite3", dir=target.parent)

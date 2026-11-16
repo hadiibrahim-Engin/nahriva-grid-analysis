@@ -2,7 +2,7 @@
 
 Configure this file as an external ComPython script in the active study case.
 The complete project folder and its prepared dashboard installation are required.
-No IntReport or report template is required. Uses the standard library only.
+No IntReport or report template is required. The Qt manager needs PyQt6/PyQt5; Parquet writing needs pyarrow.
 """
 
 import shutil
@@ -86,6 +86,10 @@ def preflight(database):
 
 
 def run_assessment(app, database, on_saved=None):
+    import gridlens_runtime as engine
+    # A missing Qt installation must not silently run saved cases instead of opening the manager.
+    if engine.CASE_SOURCE == 'gui':
+        engine.load_qt()
     from gridlens_dashboard import run_assessment as calculate
     return calculate(app, database, on_saved)
 

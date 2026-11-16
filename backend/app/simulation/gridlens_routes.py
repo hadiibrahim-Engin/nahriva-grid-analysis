@@ -23,8 +23,8 @@ def assessments(db=Depends(store)):
 
 
 @router.get('/assessments/{identifier}')
-def assessment(identifier: str, db=Depends(store)):
-    result = raw.assessment(db.db, identifier)
+def assessment(identifier: str, summary: bool = False, db=Depends(store)):
+    result = raw.assessment(db.db, identifier, summary=summary)
     if result is None:
         raise HTTPException(404, 'GridLens assessment not found.')
     return result
@@ -85,3 +85,14 @@ def series(identifier: str, column_id: int = Query(..., ge=0), contingency_id: s
             'metadata': native['metadata'], 'offset': offset, 'limit': limit,
             'points': raw.series(db.db, identifier, column_id, contingency_id, start, end, limit, offset)}
 
+
+
+@router.get('/results/{identifier}/extremes')
+def extremes(identifier: str, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=1000), db=Depends(store)):
+    required_result(db.db, identifier)
+    rows = db.db.execute(
+        'SELECT c.name,c.variable,c.unit,n.low,n.high,n.lower,n.upper,n.violation_times,n.violations '
+        'FROM gl_n1_columns n JOIN gl_columns c USING(result_id,column_id) WHERE n.result_id=? '
+        'ORDER BY n.severity DESC,c.name,n.column_id LIMIT ? OFFSET ?', (identifier, limit, offset))
+    total = db.db.execute('SELECT COUNT(*) FROM gl_n1_columns WHERE result_id=?', (identifier,)).fetchone()[0]
+    return {'rows': [dict(row) for row in rows], 'total': total, 'offset': offset, 'limit': limit}

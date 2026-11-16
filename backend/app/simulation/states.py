@@ -5,7 +5,7 @@ Cell states describe one value at one time, result and case states one stored re
 states one import. The catalogue holds only states the code produces; a new state is added here first.
 """
 
-STATES_VERSION = 1
+STATES_VERSION = 2
 
 # QDS value the bridge stored as NULL: PowerFactory wrote no valid number (de-energised node, invalid cell).
 INVALID_OR_MISSING = "invalid_or_missing"
@@ -38,7 +38,9 @@ CASE_STATES = {
 }
 ANALYSIS_STATES = {
     "importing": "The import is running; stored cases are already shown.",
-    "complete": "Every result was imported.",
+    "complete": "Every result was imported; original evaluation is complete when requested.",
+    "evaluating": "Native results were imported; original PowerFactory assessment is running.",
+    "evaluation_failed": "Native results are retained, but original assessment failed or was interrupted.",
     "failed": "The import stopped; stored cases are shown, the others are marked IMPORT FAILED.",
     "unknown": "Imported before the status was recorded.",
 }

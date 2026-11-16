@@ -51,6 +51,7 @@ import OutageManagement from '../components/OutageManagement';
 import { CHART_TEMPLATES } from '../components/charts/chartTemplates';
 import { SectionCard } from '../components/across/shared';
 import AcrossScenarios from '../components/across/AcrossScenarios';
+import NativeAssessment from '../components/NativeAssessment';
 import DashboardSection from '../components/DashboardSection';
 import { useWorkspaceScroll } from '../hooks/useWorkspaceScroll';
 import DatabasePicker from '../components/DatabasePicker';
@@ -643,9 +644,9 @@ export default function DashboardPage() {
   );
 
   const timeseriesRefreshing = loading || timeseriesLoadingKeys.size > 0;
-  const assessmentIntro = useMemo(() => <OutageManagement onResultsChanged={() => {
+  const assessmentIntro = useMemo(() => <><NativeAssessment refreshKey={refreshNonce} /><OutageManagement onResultsChanged={() => {
     clearCache(); refreshFacilities(); setRefreshNonce((n) => n + 1);
-  }} />, [refreshFacilities]);
+  }} /></>, [refreshFacilities, refreshNonce]);
 
   return (
     <SectionExpansionContext.Provider value={sectionExpansion}>

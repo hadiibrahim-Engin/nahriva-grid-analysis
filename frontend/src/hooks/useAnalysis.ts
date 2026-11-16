@@ -9,7 +9,7 @@ export interface AnalysisInfo {
   engine_version: string | null;
   created_at: string | null;
   mode: string | null;
-  /** importing, complete, failed or unknown (imported before the status was recorded). */
+  /** importing, evaluating, complete, evaluation_failed, failed or unknown (imported before the status was recorded). */
   status: string;
   source_system: string;
   calculation_types: string[];

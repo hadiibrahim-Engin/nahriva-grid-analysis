@@ -6,7 +6,9 @@ the report tables; a standalone run builds the tables without publishing.
 PDF rendering is handled by PowerFactory.
 
 The runtime uses Python's standard library, PowerFactory's Python module
-and tkinter for the optional case manager. No repository modules are required.
+and PyQt6 or PyQt5 for the optional case manager (QT_BINDING). No repository
+modules are required. This file is the PyQt variant of main.py;
+everything outside the case-manager window is identical.
 Configuration defaults are defined below and can be overridden in the case
 manager or the saved case configuration.
 
@@ -59,14 +61,17 @@ VOLTAGE_MAX = 1.05
 ENERGIZED_MIN_PU = 0.1
 # Upper bound of n-1 study times per case: every study time calculates every contingency.
 MAX_N1_TIMES = 2000
+# Time step of the n-1 study times when no quasi-dynamic simulation runs (n-1 only): the windows of the planned
+# outages are sampled every N1_STEP_MINUTES; with n-0 the n-1 study times are the QDS steps instead.
+N1_STEP_MINUTES = 60
 TIME_UNIT_FALLBACK = 'h'
-PUBLISHER_VERSION = '8.1.0'
+PUBLISHER_VERSION = '8.2.0'
 TEMPLATE_NAME = 'MASTER_OUTAGE_ASSESSMENT'
-TEMPLATE_VERSION = '7.1.0'
-DATA_CONTRACT_VERSION = '7.1'
+TEMPLATE_VERSION = '7.2.0'
+DATA_CONTRACT_VERSION = '7.2'
 RUN_REFERENCE_CASE = True
 # Where the planning cases come from:
-#   'gui'        open the case manager; without tkinter use the saved
+#   'gui'        open the case manager; without PyQt use the saved
 #                configuration, without one fall back to 'per_outage'
 #   'saved'      the configuration saved for this project, no dialog
 #   'per_outage' one case per planned outage in the simulated period
@@ -180,6 +185,8 @@ MATRIX_FIELDS = (
     (("block", "integer"), ("row_order", "integer"), ("element_name", "string"), ("ref_text", "string"))
     + _slot_fields(case_text_field, "string") + _slot_fields(case_name_field, "string")
     + (("col_count", "integer"), ("violation", "integer")))
+# The appendix matrices of contract 7.2 name where each element is, so that equal names are told apart.
+APPENDIX_FIELDS = MATRIX_FIELDS + (("location_text", "string"),)
 # Charts that draw REF and up to CASE_SLOTS cases: one fixed series per slot.
 SERIES_NAME_FIELDS = _slot_fields(series_name_field, "string", 0)
 SERIES_VALUE_FIELDS = _slot_fields(series_value_field, "number", 0)
@@ -230,11 +237,11 @@ TABLES = (
         ("run_order", "integer"), ("run_id", "string"), ("run_kind", "string"), ("case_name", "string"),
         ("reference_text", "string"), ("period_text", "string"), ("time_steps", "integer"),
         ("elapsed_text", "string"), ("status", "string"), ("provenance_text", "string"), ("result_object", "string"),
-        ("note", "string"))),
+        ("result_path", "string"), ("note", "string"))),
     ("ScriptedTopLinesByCase", MATRIX_FIELDS),
-    ("ScriptedAppendixLine", MATRIX_FIELDS),
-    ("ScriptedAppendixTransformer", MATRIX_FIELDS),
-    ("ScriptedAppendixVoltage", MATRIX_FIELDS),
+    ("ScriptedAppendixLine", APPENDIX_FIELDS),
+    ("ScriptedAppendixTransformer", APPENDIX_FIELDS),
+    ("ScriptedAppendixVoltage", APPENDIX_FIELDS),
     # --- contract 7.0: statistics of the reporting core (main report H02-H10, detail report D01-D12)
     ("ScriptedCaseStatistics", (
         ("case_order", "integer"), ("case_name", "string"), ("level", "string"), ("assessment", "string"),
@@ -261,7 +268,8 @@ TABLES = (
     ("ScriptedOutageWindows", (
         ("row_order", "integer"), ("case_order", "integer"), ("case_name", "string"), ("outage_name", "string"),
         ("outage_path", "string"), ("equipment_name", "string"), ("start_text", "string"), ("end_text", "string"),
-        ("start_hours", "number"), ("end_hours", "number"), ("gantt_label", "string"), ("duration_hours", "number"))),
+        ("start_hours", "number"), ("end_hours", "number"), ("gantt_label", "string"), ("duration_hours", "number"),
+        ("duration_text", "string"))),
     ("ScriptedReferenceFindings", (
         ("row_order", "integer"), ("level", "string"), ("criterion_order", "integer"), ("main_rank", "integer"),
         ("element_name", "string"), ("element_type", "string"), ("grid_name", "string"), ("criterion", "string"),
@@ -306,6 +314,21 @@ TABLES = (
     ("ScriptedResultProvenance", (
         ("row_order", "integer"), ("level", "string"), ("case_name", "string"), ("object_name", "string"),
         ("object_path", "string"), ("content_text", "string"), ("status", "string"))),
+    # Contract 7.2, tabular report: every fact about a case in one row, and the n-0 violation episodes.
+    ("ScriptedCaseSummary", (
+        ("case_order", "integer"), ("case_id", "string"), ("case_name", "string"), ("assessment", "string"),
+        ("assessment_reason", "string"), ("max_loading_text", "string"), ("max_loading_element", "string"),
+        ("max_loading_location", "string"), ("max_loading_time", "string"), ("coincident_delta_text", "string"),
+        ("coincident_delta_element", "string"), ("coincident_delta_time", "string"),
+        ("maxima_difference_text", "string"), ("lines_text", "string"), ("transformers_text", "string"),
+        ("nodes_text", "string"), ("violation_hours_text", "string"), ("voltage_range_text", "string"),
+        ("coverage_text", "string"), ("violation", "integer"))),
+    ("ScriptedEpisodes", (
+        ("case_order", "integer"), ("row_order", "integer"), ("row_kind", "string"), ("case_name", "string"),
+        ("element_name", "string"), ("location_text", "string"), ("element_type", "string"), ("criterion", "string"),
+        ("start_text", "string"), ("end_text", "string"), ("duration_text", "string"), ("peak_text", "string"),
+        ("peak_time", "string"), ("reference_text", "string"), ("delta_text", "string"), ("status", "string"),
+        ("violation", "integer"))),
 )
 REQUIRED_FIELDS = {
     "ScriptedReportMeta": (
@@ -352,6 +375,9 @@ REQUIRED_FIELDS = {
     "ScriptedTimeCriticality": ("time_label", "timestamp", "series_ref_name"),
     "ScriptedAssessmentSettings": ("row_order", "setting_key", "label"),
     "ScriptedResultProvenance": ("row_order", "level", "case_name", "object_name"),
+    "ScriptedCaseSummary": ("case_order", "case_id", "case_name", "assessment", "violation"),
+    # A case row carries only its case name, an episode row no case name.
+    "ScriptedEpisodes": ("case_order", "row_order", "row_kind", "violation"),
 }
 
 # Fields the builders compute for the script itself (summaries, log, checks) that no template shows: they are not
@@ -462,6 +488,31 @@ def element_grid_name(obj):
             return part[:-len('.ElmNet')]
     return ''
 
+
+
+# PowerFactory classes that hold equipment as a station: the nearest one in an element's path names its station.
+STATION_CLASSES = ('ElmSubstat', 'ElmTrfstat', 'ElmSite')
+
+
+def element_location(obj):
+    """'Grid / Station' of an element for the report, 'Grid' without a station, '-' without either.
+
+    Several elements may share a name (two substations each with a 'TR1'); the location tells them apart. The
+    station is the nearest ElmSubstat, ElmTrfstat or ElmSite in the element's path, else its cpSubstat (an element
+    of a variant lies in an expansion stage, not in its station).
+    """
+    station = ''
+    for part in reversed(object_key(obj).split('\\')[:-1]):
+        name, _, kind = part.rpartition('.')
+        if kind in STATION_CLASSES and name:
+            station = name
+            break
+    if not station:
+        found = safe_attr(obj, 'cpSubstat')
+        if found is not None and not isinstance(found, (str, int, float, bool)):
+            station = object_name(found)
+    parts = [part for part in (element_grid_name(obj), station) if part]
+    return ' / '.join(parts) if parts else '-'
 
 
 def grid_in_scope(grid_name):
@@ -927,6 +978,7 @@ def collect_series(elmres, counters=None):
             'key': object_key(obj),
             'element_id': object_id(obj),
             'element_name': object_name(obj),
+            'location': element_location(obj),
             'voltage_level': voltage_level(obj),
             'nominal_kv': nominal,
             'limits': voltage_band(nominal) if category == 'voltage' else None,
@@ -1273,7 +1325,7 @@ QDS_SPAN_OUTAGES, QDS_SPAN_CONFIGURED = 'outages', 'configured'
 QDS_SPAN_CHOICES = ((QDS_SPAN_OUTAGES, 'first to last planned outage of the cases'),
                     (QDS_SPAN_CONFIGURED, 'as set in ComStatsim'))
 # Upper bounds of the count settings: beyond them a run takes hours or the report gets unreadable.
-COUNT_LIMITS = {'top_n': 50, 'max_plot_points': 2000, 'max_n1_times': 20000, 'max_cases': 20}
+COUNT_LIMITS = {'top_n': 50, 'max_plot_points': 2000, 'max_n1_times': 20000, 'max_cases': 20, 'n1_step': 1440}
 # The most planning cases a run can have: the templates hold a band pair for every block up to this number.
 MAX_PLANNING_CASES = COUNT_LIMITS['max_cases']
 NOT_VERIFIED = 'not verified yet'
@@ -1303,11 +1355,7 @@ SETTINGS = (
              note='evaluation only, also in a re-evaluation; no grid selected: every grid (or GRID_NAME_FILTER)'),
     _setting('contingency_grids', 'Network scope', 'n-1 filter: grids of the outaged equipment', '', None, 'grids',
              CATEGORY_CALCULATION, applies="n-1, (n-1)'", source=SOURCE_OUTAGE_ASSESSMENT,
-             note='calculation: the other contingencies are "Not analysed" (outserv) for the run; none: every grid'),
-    _setting('contingency_elements', 'Network scope', 'n-1 filter: outaged elements', '', (), 'elements',
-             CATEGORY_CALCULATION, applies="n-1, (n-1)'", source=SOURCE_OUTAGE_ASSESSMENT,
-             note='calculation: only contingencies outaging a selected element are analysed, the others are "Not '
-                  'analysed" for the run; none selected: every element'),
+             note='calculation: one contingency per branch element in these grids; none: every grid'),
     _setting('line_warning', 'Thermal limits', 'Warning threshold, lines', '%', LOADING_WARNING, 'limit'),
     _setting('transformer_warning', 'Thermal limits', 'Warning threshold, transformers', '%', LOADING_WARNING, 'limit'),
     _setting('line_limit', 'Thermal limits', 'Maximum loading for n-0, lines', '%', LOADING_MAX, 'limit'),
@@ -1361,6 +1409,10 @@ SETTINGS = (
              note='every case is one more QDS run over the complete period'),
     _setting('max_n1_times', 'Run', 'n-1 study times per case, at most', 'study times', MAX_N1_TIMES, 'count',
              applies="n-1, (n-1)'", note='every study time calculates every contingency'),
+    _setting('n1_step', 'Run', 'n-1 time step without n-0', 'min', N1_STEP_MINUTES, 'count',
+             CATEGORY_CALCULATION, applies="n-1, (n-1)'",
+             note='only when n-0 is not ticked: the n-1 time sweep samples the outage windows with this step; '
+                  'with n-0 it uses the QDS steps'),
     _contingency_setting('contingency_set', 'Contingency set'),
     _contingency_setting('contingency_categories', 'Equipment categories with contingencies'),
     _contingency_setting('monitored_scope', 'Monitored equipment and network areas'),
@@ -1438,6 +1490,11 @@ def parse_grids(key, value):
     return tuple(sorted(names, key=str.casefold)), None
 
 
+# Settings of earlier versions that no longer exist; a saved value is ignored, not an error. The n-1 element
+# filter went on 16 Nov 2026: n-1 has only the grid filter and defines a contingency for every element there.
+RETIRED_SETTINGS = ('contingency_elements',)
+
+
 def validate_settings(overrides):
     """(key, message) for every problem of a set of overrides; [] when they can be used."""
     if not isinstance(overrides, dict):
@@ -1445,6 +1502,8 @@ def validate_settings(overrides):
     problems = []
     values = default_settings()
     for key, value in overrides.items():
+        if key in RETIRED_SETTINGS:
+            continue
         parsed, problem = parse_setting(key, value)
         if problem:
             problems.append((key, problem))
@@ -1473,7 +1532,8 @@ def effective_settings(overrides=None):
         raise OutageAssessmentError('The settings cannot be used: {}.'.format('; '.join(message for _, message in problems)))
     values = default_settings()
     for key, value in overrides.items():
-        values[key] = parse_setting(key, value)[0]
+        if key not in RETIRED_SETTINGS:
+            values[key] = parse_setting(key, value)[0]
     return values
 
 
@@ -1565,6 +1625,7 @@ _SETTING_CONSTANTS = {
     'run_reference': 'RUN_REFERENCE_CASE',
     'max_cases': 'MAX_CASES',
     'max_n1_times': 'MAX_N1_TIMES',
+    'n1_step': 'N1_STEP_MINUTES',
 }
 
 
@@ -1866,6 +1927,24 @@ def outage_span(windows, step):
     return start, end
 
 
+def n1_only_grid(plans, minutes=None):
+    """(start, end, step) of the n-1 study times of a run without the QDS (n-1 only); None without a known window.
+
+    The step is the setting 'n1_step' (minutes); the grid spans the windows of the planned outages of `plans`
+    from local midnight of the first start to one step after the last end (outage_span). Nothing of the
+    ComStatsim is read: the quasi-dynamic simulation and the n-1 time sweep are separate calculations.
+    """
+    step = (setting_value('n1_step') if minutes is None else minutes) * 60.0
+    windows = [window for plan in plans for window in plan['windows'].values() if None not in window]
+    span = outage_span(windows, step)
+    return (span[0], span[1], step) if span is not None else None
+
+
+def n1_steps_label():
+    """What the n-1 study times are sampled on in this run: 'QDS steps', or 'n-1 time steps' without the QDS."""
+    return RUN_CONTEXT.get('n1_steps') or 'QDS steps'
+
+
 def n1_study_times(windows, grid, limit=None):
     """The QDS steps that lie in at least one window [begin, end), inside the QDS period; sorted.
 
@@ -1886,7 +1965,8 @@ def n1_study_times(windows, grid, limit=None):
             if len(times) > limit:
                 raise OutageAssessmentError(
                     "The n-1 time sweep would need more than {} study times; every one calculates every "
-                    "contingency. Shorten the outage windows or the QDS period.".format(limit))
+                    "contingency. Shorten the outage windows or the period of the {}.".format(
+                        limit, 'QDS' if n1_steps_label() == 'QDS steps' else 'n-1 time sweep'))
             index += 1
             moment = start + index * step
     return sorted(times)
@@ -2942,6 +3022,16 @@ def case_result(case, series, labels, plot_times, time_unit):
 
 
 
+# The status of a planning case whose n-0 QDS was not calculated because the run is n-1 only.
+CASE_N0_SKIPPED = 'NOT SIMULATED'
+N0_SKIPPED_TEXT = 'n-0 not calculated: n-1 only, no quasi-dynamic simulation in this run.'
+
+
+def n0_skipped_case(case):
+    """A planning case of a run without n-0: no QDS result; its n-1 entry is added by evaluate_n1."""
+    return case_result(dict(case, status=CASE_N0_SKIPPED, error_code=0, message=N0_SKIPPED_TEXT), [], [], [], '')
+
+
 def failed_case(case, message):
     """A case that produced no usable result; it stays in the report with its reason."""
     result = case_result(dict(case, status=CASE_FAILED, error_code=-1, message=message), [], [], [], '')
@@ -3149,6 +3239,7 @@ def compare_element(item, case_values, ref_values, rows, steps, labels, out_of_s
     tolerance = _tolerance(item)
     statuses = []
     caused_rows = []
+    findings = []
     caused = violated = ref_violated = dark = 0.0
     best = None
     for row in rows:
@@ -3162,6 +3253,8 @@ def compare_element(item, case_values, ref_values, rows, steps, labels, out_of_s
         if status is None:
             continue
         statuses.append(status)
+        if (in_case is not None and in_case > 0) or (status == STATUS_DEENERGIZED and not is_loading):
+            findings.append((row, status, case_value, ref_value))
         weight = steps[row]
         if status in CAUSED_STATUSES:
             caused += weight
@@ -3186,7 +3279,8 @@ def compare_element(item, case_values, ref_values, rows, steps, labels, out_of_s
             'coincident_delta': best[1] if best else None, 'coincident_time': best[2] if best else '',
             'maxima_difference': difference, 'caused_hours': caused, 'violation_hours': violated,
             'ref_violation_hours': ref_violated, 'deenergized_hours': dark, 'out_of_service': out_of_service,
-            'caused_rows': caused_rows if status != STATUS_OUT_OF_SERVICE else []}
+            'caused_rows': caused_rows if status != STATUS_OUT_OF_SERVICE else [],
+            'episodes': [] if status == STATUS_OUT_OF_SERVICE else build_episodes(item, findings, steps)}
 
 
 
@@ -3563,10 +3657,11 @@ def _result_name(result):
 
 
 def _matrix_tables(payload, results, table, entries):
-    """Write entries (name, REF text, {case id: text}, violation) as blocks of CASE_SLOTS cases."""
+    """Write entries (name, REF text, {case id: text}, violation[, location]) as blocks of CASE_SLOTS cases."""
     cases = outage_cases(results)
     for block_number, block in enumerate(case_blocks(cases), 1):
-        for order, (name, ref_text, texts, violation) in enumerate(entries, 1):
+        for order, entry in enumerate(entries, 1):
+            name, ref_text, texts, violation = entry[:4]
             row = {
                 'block': block_number,
                 'row_order': order,
@@ -3575,6 +3670,8 @@ def _matrix_tables(payload, results, table, entries):
                 'col_count': len(block),
                 'violation': violation,
             }
+            if len(entry) > 4:
+                row['location_text'] = entry[4]
             for slot, case in enumerate(block, 1):
                 row[case_name_field(slot)] = case['name']
                 row[case_text_field(slot)] = texts.get(case['id'], 'n/a')
@@ -3613,7 +3710,7 @@ def _loading_appendix(payload, results, category, table):
             continue
         case_stats = [by_result[case['id']][key][1] for case in cases if key in by_result[case['id']]]
         texts = {case['id']: loading_text(by_result[case['id']][key][1]['max']) if key in by_result[case['id']] else 'n/a' for case in cases}
-        listed.append((-max(peaks), item['element_name'].casefold(), item['element_name'], loading_text(ref_stats['max'] if ref_stats else None), texts, _violation_flag(item, ref_stats, case_stats)))
+        listed.append((-max(peaks), item['element_name'].casefold(), item['element_name'], loading_text(ref_stats['max'] if ref_stats else None), texts, _violation_flag(item, ref_stats, case_stats), item.get('location') or '-'))
     _matrix_tables(payload, results, table, [entry[2:] for entry in sorted(listed, key=lambda entry: entry[:2])])
 
 
@@ -3635,10 +3732,16 @@ def _voltage_appendix(payload, results):
             continue
         lower, upper = voltage_limits(item)
         excess = max(max(lower - stats['min'], stats['max'] - upper) for _, stats in found)
-        texts = {case['id']: voltage_text(by_result[case['id']][key][1]['min']) if key in by_result[case['id']] else 'n/a' for case in cases}
-        listed.append((-excess, item['element_name'].casefold(), item['element_name'], voltage_text(ref_stats['min'] if ref_stats else None), texts, _violation_flag(item, ref_stats, case_stats)))
+        # Minimum and maximum: a node can leave the band on either side.
+        texts = {case['id']: _voltage_extremes_text(by_result[case['id']][key][1]) if key in by_result[case['id']] else 'n/a' for case in cases}
+        listed.append((-excess, item['element_name'].casefold(), item['element_name'], _voltage_extremes_text(ref_stats), texts, _violation_flag(item, ref_stats, case_stats), item.get('location') or '-'))
     _matrix_tables(payload, results, 'ScriptedAppendixVoltage', [entry[2:] for entry in sorted(listed, key=lambda entry: entry[:2])])
 
+
+
+def _voltage_extremes_text(stats):
+    """'0.931 / 1.010': minimum and maximum of a node over the period; 'n/a' without a value."""
+    return 'n/a' if stats is None else '{} / {}'.format(voltage_text(stats.get('min')), voltage_text(stats.get('max')))
 
 
 def _top_lines_by_case(payload, results):
@@ -3876,10 +3979,10 @@ def _model_quality(payload, results, request=None):
     n1_kinds = {result['n1'].get('kind') for result in results if result.get('n1', {}).get('status') == 'EVALUATED'}
     if n1_kinds:
         _quality(payload, 'security_scope', 'Assessment scope', 'WARNING',
-                 'N-0 assessment of the planned network states and {} with the contingency analysis of the study case at '
-                 'the QDS time steps inside the outage windows (rows n-1 below). This is no proof of n-1 security; security '
-                 'of supply, protection coordination and safe isolation are not assessed.'.format(
-                     "(n-1)' against n-1" if N1_PRIME in n1_kinds else 'the n-1 reference'))
+                 'N-0 assessment of the planned network states and {} with the contingency analysis Outage Assessment '
+                 'defines, at the {} inside the outage windows (rows n-1 below). This is no proof of n-1 security; '
+                 'security of supply, protection coordination and safe isolation are not assessed.'.format(
+                     "(n-1)' against n-1" if N1_PRIME in n1_kinds else 'the n-1 reference', n1_steps_label()))
     else:
         _quality(payload, 'security_scope', 'Assessment scope', 'WARNING',
                  'N-0 assessment of the planned network states. N-1 security, security of supply, protection coordination and safe isolation are not assessed.')
@@ -3962,6 +4065,7 @@ def assess_case(results, case):
         'violation': 1 if verdict in ASSESSMENT_CAUSED else 2 if verdict in ASSESSMENT_ATTENTION else 0,
         'max_loading': worst['outage']['max'] if worst else None,
         'max_loading_element': worst['item']['element_name'] if worst else '',
+        'max_loading_location': worst['item'].get('location') or '-' if worst else '',
         'max_loading_time': worst['outage']['time_max'] if worst else '',
         'reference_max_loading': worst['ref']['max'] if worst and worst['ref'] else None,
         'delta': _loading_delta(rising) if rising else None,
@@ -4146,7 +4250,11 @@ def _case_rows(payload, results, request):
         if plan['status'] == PLAN_READY and result is not None:
             status = result['status']
             provenance = result.get('provenance', 'CALCULATED')
-            if result['status'] != CONVERGED:
+            if result['status'] == CASE_N0_SKIPPED:
+                values = {'assessment': ASSESSMENT_SKIPPED, 'violation': 0}
+                detail = result['message']
+                provenance = 'n-1 ONLY'
+            elif result['status'] != CONVERGED:
                 values = {'assessment': AXIS_MISMATCH if result['status'] == AXIS_MISMATCH else ASSESSMENT_NOT_EVALUATED, 'violation': 0}
                 detail = result['message']
             else:
@@ -4267,7 +4375,9 @@ def _calculation_runs(payload, results, request):
             'status': result['status'],
             'provenance_text': provenance,
             'result_object': result.get('result_object') or '-',
-            'note': result.get('run_note') or result.get('message') or '-',
+            'result_path': result.get('result_path') or '-',
+            # The reason a case failed stands in its assessment; the run note only says how the run was made.
+            'note': result.get('run_note') or '-',
         })
     for plan in request.get('cases') or ():
         if plan['id'] in by_id:
@@ -4285,7 +4395,8 @@ def _calculation_runs(payload, results, request):
             'status': plan['status'],
             'provenance_text': 'NOT CALCULATED',
             'result_object': '-',
-            'note': plan.get('reason') or '-',
+            'result_path': '-',
+            'note': '-',
         })
 
 
@@ -4632,7 +4743,9 @@ def _outage_windows(payload, request):
             'gantt_label': '{} · {}'.format(plan['name'], record['name']),
             # The window chart stacks an invisible bar of start_hours and a visible bar of this duration: the
             # range (Gantt) chart of PowerFactory 2026 SP1 does not draw the end column.
-            'duration_hours': (end - start) / 3600.0 if None not in (start, end) and origin is not None else 0.0})
+            'duration_hours': (end - start) / 3600.0 if None not in (start, end) and origin is not None else 0.0,
+            # The tabular report prints the duration as text: a number would follow the Windows culture of the export.
+            'duration_text': hours_text((end - start) / 3600.0) if None not in (start, end) else '-'})
 
 
 def _element_view(results):
@@ -4789,16 +4902,18 @@ def _table_cut(payload, table, text):
              'the rows left out.'.format(text, MAX_TABLE_ROWS))
 
 
-def _fair_cut(payload, table, group, priority):
-    """At most MAX_TABLE_ROWS rows of `table`, shared between the groups (cases): small groups keep everything, the
-    others an equal share of the rest; each group keeps its most severe rows (`priority`), in their order."""
+def _fair_cut(payload, table, group, priority, limit=None):
+    """At most `limit` (default MAX_TABLE_ROWS) rows of `table`, shared between the groups (cases): small groups keep
+    everything, the others an equal share of the rest; each group keeps its most severe rows (`priority`), in their
+    order."""
     rows = payload[table]
-    if len(rows) <= MAX_TABLE_ROWS:
+    limit = MAX_TABLE_ROWS if limit is None else max(0, limit)
+    if len(rows) <= limit:
         return
     groups = {}
     for row in rows:
         groups.setdefault(group(row), []).append(row)
-    remaining, kept = MAX_TABLE_ROWS, set()
+    remaining, kept = limit, set()
     for position, (_key, members) in enumerate(sorted(groups.items(), key=lambda item: len(item[1]))):
         take = min(len(members), remaining // (len(groups) - position))
         kept.update(id(row) for row in sorted(members, key=priority)[:take])
@@ -5339,6 +5454,255 @@ def _result_provenance(payload, results):
             })
 
 
+# ---------------------------------------------------------------------------
+# n-0 violation episodes (tabular report)
+# ---------------------------------------------------------------------------
+EPISODE_TYPES = {'line': 'Line', 'transformer': 'Transformer', 'voltage': 'Node'}
+CRITERION_DEENERGIZED = 'de-energised'
+
+
+def _episode_criterion(item, status, value):
+    """'loading', 'voltage low', 'voltage high' or 'de-energised' of one finding step."""
+    if item['category'] in LOADING_CATEGORIES:
+        return 'loading'
+    if status == STATUS_DEENERGIZED or value is None:
+        return CRITERION_DEENERGIZED
+    lower, _upper = voltage_limits(item)
+    return 'voltage low' if value < lower else 'voltage high'
+
+
+def build_episodes(item, findings, steps):
+    """Episodes of one element from its finding steps [(row, status, value, ref value)] in row order.
+
+    An episode is a run of directly consecutive rows with the same criterion; a row without a finding, without a
+    value or outside the assessed rows ends it. Peak: the highest value (loading, voltage high) or the lowest
+    (voltage low) and the reference at that row; status: the most severe step status; hours: the steps' durations.
+    """
+    episodes, current = [], None
+    for row, status, value, ref in findings:
+        criterion = _episode_criterion(item, status, value)
+        if current is None or current['criterion'] != criterion or row != current['end_row'] + 1:
+            current = {'criterion': criterion, 'start_row': row, 'end_row': row, 'peak_row': row, 'peak': value,
+                       'ref': ref, 'statuses': [], 'hours': 0.0}
+            episodes.append(current)
+        current['end_row'] = row
+        current['hours'] += steps[row]
+        current['statuses'].append(status)
+        if value is not None and (current['peak'] is None or (
+                value < current['peak'] if criterion == 'voltage low' else value > current['peak'])):
+            current.update(peak=value, peak_row=row, ref=ref)
+    for episode in episodes:
+        episode['status'] = _worst_status(episode.pop('statuses'))
+    return episodes
+
+
+def reference_episodes(reference):
+    """Episodes of REF over its whole period, status EXCEEDED; kept as reference['episodes'] = [(item, episode)].
+
+    Called right after REF is evaluated, while its values are still there.
+    """
+    steps = row_steps(reference['hours']) if reference.get('hours') else []
+    found = []
+    for item in reference['item_by_key'].values():
+        values = item.get('values')
+        if values is None:
+            continue
+        measure = excess_function(item)
+        findings = []
+        for row in range(len(steps)):
+            value = array_value(values, row)
+            if value is not None and measure(value) > 0:
+                findings.append((row, STATUS_EXCEEDED, value, None))
+        found.extend((item, episode) for episode in build_episodes(item, findings, steps))
+    reference['episodes'] = found
+
+
+def _time_after(result, row, steps):
+    """The time a row's step ends: the next row's label, after the last row its own time plus its step."""
+    labels = result['labels']
+    if row + 1 < len(labels):
+        return labels[row + 1]
+    moment = result['hours'][row] + steps[row]
+    return format_absolute_time(moment) if result.get('absolute') else format_clock(moment)
+
+
+def _episode_value_text(item, value):
+    if value is None:
+        return ''
+    return loading_text(value) if item['category'] in LOADING_CATEGORIES else '{:.3f} p.u.'.format(value)
+
+
+def _episode_delta_text(item, value, ref):
+    if value is None or ref is None:
+        return ''
+    return delta_text(value - ref) if item['category'] in LOADING_CATEGORIES else '{:+.3f} p.u.'.format(value - ref)
+
+
+def _episode_severity(item_episode):
+    """(status rank, peak) of one episode: the smaller, the more severe."""
+    _item, episode = item_episode
+    peak = episode['peak']
+    rank = STATUS_PRECEDENCE.index(episode['status']) if episode['status'] in STATUS_PRECEDENCE else len(STATUS_PRECEDENCE)
+    return rank, 0.0 if peak is None else peak if episode['criterion'] == 'voltage low' else -peak
+
+
+def _ordered_episodes(found):
+    """Elements by their most severe episode, then name; the episodes of one element in time order."""
+    by_element = {}
+    for item_episode in found:
+        by_element.setdefault((item_episode[0]['category'], item_episode[0]['key']), []).append(item_episode)
+    elements = sorted(by_element.values(), key=lambda episodes: (min(_episode_severity(entry) for entry in episodes),
+                                                                  episodes[0][0]['element_name'].casefold()))
+    return [entry for episodes in elements for entry in sorted(episodes, key=lambda entry: entry[1]['start_row'])]
+
+
+def _episode_row(case_order, result, item, episode, steps, is_reference):
+    status = episode['status']
+    return {
+        'case_order': case_order, 'row_kind': 'episode', 'case_name': '',
+        'element_name': item['element_name'], 'location_text': item.get('location') or '-',
+        'element_type': EPISODE_TYPES.get(item['category'], item['category']), 'criterion': episode['criterion'],
+        'start_text': result['labels'][episode['start_row']], 'end_text': _time_after(result, episode['end_row'], steps),
+        'duration_text': hours_text(episode['hours']),
+        'peak_text': _episode_value_text(item, episode['peak']) or 'no voltage',
+        'peak_time': result['labels'][episode['peak_row']],
+        'reference_text': '' if is_reference else _episode_value_text(item, episode['ref']),
+        'delta_text': '' if is_reference else _episode_delta_text(item, episode['peak'], episode['ref']),
+        'status': status,
+        'violation': 2 if is_reference or status not in CAUSED_STATUSES else 1,
+    }
+
+
+def _n0_episodes(payload, results):
+    """ScriptedEpisodes: REF, then every calculated case; a case row ('ID · name') before the episodes of each.
+
+    Only sections with an episode are written. More than MAX_TABLE_ROWS rows are cut fairly between the sections,
+    each keeping its most severe episodes; the case rows always stay.
+    """
+    sections = []
+    reference = find_reference(results)
+    if reference is not None and reference.get('episodes'):
+        sections.append((reference, _ordered_episodes(reference['episodes']), True))
+    for case in outage_cases(results):
+        found = [(record['item'], episode) for records in (case.get('comparison') or {}).values()
+                 for record in records for episode in record.get('episodes') or ()]
+        if found:
+            sections.append((case, _ordered_episodes(found), False))
+    rows = []
+    for case_order, (result, found, is_reference) in enumerate(sections, 0 if reference is not None else 1):
+        steps = row_steps(result['hours']) if result.get('hours') else []
+        order = 0 if is_reference else case_order
+        rows.extend(dict(_episode_row(order, result, item, episode, steps, is_reference), rank=rank)
+                    for rank, (item, episode) in enumerate(found))
+    names = {(0 if is_reference else case_order): '{} \u00b7 {}'.format(result['id'], _result_name(result))
+             for case_order, (result, _found, is_reference) in enumerate(sections, 0 if reference is not None else 1)}
+    payload['ScriptedEpisodes'][:] = rows
+    if len(rows) + len(names) > MAX_TABLE_ROWS:
+        _fair_cut(payload, 'ScriptedEpisodes', lambda row: row['case_order'], lambda row: row['rank'],
+                  limit=MAX_TABLE_ROWS - len(names))
+    kept = payload['ScriptedEpisodes']
+    table, seen = [], set()
+    for row in kept:
+        if row['case_order'] not in seen:
+            seen.add(row['case_order'])
+            table.append(dict({field: '' for field in row}, case_order=row['case_order'], row_kind='case',
+                              case_name=names[row['case_order']], violation=0))
+        table.append(row)
+    for position, row in enumerate(table, 1):
+        row.pop('rank', None)
+        row['row_order'] = position
+    payload['ScriptedEpisodes'][:] = table
+
+
+# ---------------------------------------------------------------------------
+# Case summary (tabular report): every fact about a case in one row
+# ---------------------------------------------------------------------------
+def _status_counts_text(statuses):
+    """'2 new · 1 pre-existing' from the element statuses of one category; 'none' without a finding."""
+    groups = (('new', (STATUS_NEW,)), ('exceeded', (STATUS_EXCEEDED,)), ('worsened', (STATUS_WORSENED,)),
+              ('pre-existing', (STATUS_PREEXISTING, STATUS_IMPROVED)), ('de-energised', (STATUS_DEENERGIZED,)))
+    parts = ['{} {}'.format(sum(1 for status in statuses if status in members), label)
+             for label, members in groups if any(status in members for status in statuses)]
+    return ' \u00b7 '.join(parts) or 'none'
+
+
+def _summary_row(case_order, case_id, case_name, assessment, reason='', violation=0):
+    row = {field: '' for field, _ in dict(TABLES)['ScriptedCaseSummary']}
+    row.update(case_order=case_order, case_id=case_id, case_name=case_name, assessment=assessment,
+               assessment_reason=reason, violation=violation)
+    return row
+
+
+def _voltage_range_text(low, high):
+    return '-' if low is None or high is None else '{:.3f} - {:.3f} p.u.'.format(low, high)
+
+
+def _case_summary(payload, results, request):
+    """ScriptedCaseSummary: REF first, then every planning case in its order, also those not calculated."""
+    table = payload['ScriptedCaseSummary']
+    reference = find_reference(results)
+    if reference is not None:
+        loading = [(item, stats) for category in LOADING_CATEGORIES for item, stats in reference['by_category'][category]
+                   if stats.get('max') is not None]
+        top = max(loading, key=lambda entry: (entry[1]['max'], entry[0]['element_name']), default=None)
+        voltages = [stats for _, stats in reference['by_category']['voltage']]
+        row = _summary_row(0, REFERENCE_ID, _result_name(reference), 'BASELINE')
+        row.update(
+            max_loading_text=loading_text(top[1]['max']) if top else '-',
+            max_loading_element=top[0]['element_name'] if top else '-',
+            max_loading_location=(top[0].get('location') or '-') if top else '-',
+            max_loading_time=top[1].get('time_max') or '-' if top else '-',
+            lines_text=_status_counts_text([STATUS_EXCEEDED for item, stats in reference['by_category']['line']
+                                            if is_critical(item, stats)]),
+            transformers_text=_status_counts_text([STATUS_EXCEEDED for item, stats in reference['by_category']['transformer']
+                                                   if is_critical(item, stats)]),
+            nodes_text=_status_counts_text([STATUS_EXCEEDED for item, stats in reference['by_category']['voltage']
+                                            if is_critical(item, stats)]),
+            voltage_range_text=_voltage_range_text(
+                min((stats['min'] for stats in voltages if stats.get('min') is not None), default=None),
+                max((stats['max'] for stats in voltages if stats.get('max') is not None), default=None)),
+            coverage_text='whole period')
+        table.append(row)
+    by_id = {result['id']: result for result in results}
+    for case_order, plan in enumerate(request.get('cases') or (), 1):
+        result = by_id.get(plan['id'])
+        if plan['status'] != PLAN_READY or result is None:
+            table.append(_summary_row(case_order, plan['id'], plan['name'],
+                                      ASSESSMENT_SKIPPED if plan['status'] == PLAN_NOT_SIMULATED else ASSESSMENT_NOT_EVALUATED,
+                                      plan.get('reason') or ''))
+            continue
+        if result['status'] != CONVERGED:
+            table.append(_summary_row(case_order, plan['id'], plan['name'],
+                                      ASSESSMENT_SKIPPED if result['status'] == CASE_N0_SKIPPED else ASSESSMENT_NOT_EVALUATED,
+                                      result.get('message') or ''))
+            continue
+        verdict = judged(results, result)
+        if verdict is None:
+            table.append(_summary_row(case_order, plan['id'], plan['name'], ASSESSMENT_NO_DATA,
+                                      'No result rows fall inside the outage windows of this case.'))
+            continue
+        row = _summary_row(case_order, plan['id'], plan['name'], verdict['assessment'], violation=verdict['violation'])
+        counts = {category: _status_counts_text([limit_status(record) for record in paired(results, category, result, True)])
+                  for category in ('line', 'transformer', 'voltage')}
+        row.update(
+            max_loading_text=loading_text(verdict['max_loading']),
+            max_loading_element=verdict['max_loading_element'] or '-',
+            max_loading_location=verdict.get('max_loading_location') or '-',
+            max_loading_time=verdict['max_loading_time'] or '-',
+            # An increase within the change tolerance is no increase: '-' instead of '+0.0 pp' on some element.
+            **(dict(coincident_delta_text=delta_text(verdict['delta']),
+                    coincident_delta_element=verdict['delta_element'] or '-',
+                    coincident_delta_time=verdict['delta_time'] or '-')
+               if verdict['delta'] is not None and verdict['delta'] > change_tolerance('line') else
+               dict(coincident_delta_text='-', coincident_delta_element='', coincident_delta_time='')),
+            maxima_difference_text=delta_text(verdict['maxima_difference']),
+            lines_text=counts['line'], transformers_text=counts['transformer'], nodes_text=counts['voltage'],
+            violation_hours_text=hours_text(verdict['caused_hours'] or 0.0),
+            voltage_range_text=_voltage_range_text(verdict['min_voltage'], verdict['max_voltage']),
+            coverage_text=percent_text(verdict['coverage']) if verdict['coverage'] is not None else 'whole axis')
+        table.append(row)
+
+
 def _reporting_tables(payload, results, request):
     """Every contract 7.0 table built from the reporting core; returns the notes for ScriptedReportMeta."""
     notes = {}
@@ -5429,7 +5793,8 @@ def n1_meta_text(results):
         assessed = any(case.get('n1') for _order, case in planning_results(results))
         return '0', ('n-1 was requested but could not be evaluated; see the quality register and the model quality page.'
                      if assessed else 'n-1 was not assessed in this run (tick n-1 in the case manager).')
-    return '1', ("Contingency analysis of the study case at the QDS time steps inside each case's outage windows. "
+    return '1', ("Contingency analysis with one contingency per branch element of the n-1 grids, at the {} inside "
+                 "each case's outage windows. ".format(n1_steps_label())
                  + ("(n-1)' (with the case's planned outages) is classified against n-1 (without them) per study time, "
                     "contingency and element; an element counts with its worst result. " if N1_PRIME in kinds else
                     "Only the n-1 reference was calculated: its violations are shown as PRE-EXISTING. ")
@@ -5521,6 +5886,8 @@ def build_cases_payload(study_case, results, project_name, result_name, request,
     _loading_appendix(payload, results, 'transformer', 'ScriptedAppendixTransformer')
     _voltage_appendix(payload, results)
     notes = _reporting_tables(payload, results, request)
+    _case_summary(payload, results, request)
+    _n0_episodes(payload, results)
     meta = payload['ScriptedReportMeta'][0]
     meta.update(overall_text=overall_text(payload), critical_note=critical_note(notes), events_note=events_note(notes))
     _enforce_table_limits(payload)
@@ -6804,8 +7171,8 @@ def validate_case_config(config, max_cases=-1):
     assessments = config.get('assessments', ['n-0'])
     if not _is_text_list(assessments) or not assessments or set(assessments) - set(ASSESSMENTS):
         problems.append('assessments must name at least one of {}'.format(', '.join(ASSESSMENTS)))
-    elif 'n-0' not in assessments:
-        problems.append('the n-0 quasi-dynamic assessment is always calculated: the report is built on it')
+    elif 'n-0' not in assessments and N1_REFERENCE not in assessments:
+        problems.append('choose n-0 (quasi-dynamic simulation), n-1 or both')
     elif N1_PRIME in assessments and N1_REFERENCE not in assessments:
         problems.append("(n-1)' is compared with n-1, so it needs n-1")
     if config.get('log_level', LOG_STANDARD) not in LOG_LEVELS:
@@ -7141,14 +7508,14 @@ def preview_text(request, period=(None, None)):
 
 
 # ---------------------------------------------------------------------------
-# Case manager dialog (tkinter / ttk, standard library only)
+# Case manager dialog (PyQt6 or PyQt5, Qt Widgets)
 #
 # Configuration only: the dialog reads the planned outages Outage Assessment already
 # collected and edits a configuration dictionary. It writes nothing into
 # PowerFactory. Every QDS starts after the dialog is closed.
 # ---------------------------------------------------------------------------
 class CaseManagerUnavailable(OutageAssessmentError):
-    """tkinter or Tcl/Tk cannot open a window in this PowerFactory installation."""
+    """PyQt or Qt cannot open a window in this PowerFactory installation."""
 
 
 # The first column of the outage list is a check box: ticked = in the selected case.
@@ -7181,9 +7548,10 @@ SETTINGS_INTRO = ('Limits and classification parameters (category A) only interp
                   'only until the PowerFactory contingency interface is verified. Settings are stored provisionally '
                   'in the case configuration file of this project, not yet inside the PowerFactory project.')
 CONTINGENCIES_NOT_READ = 'not read'
-N1_NOTE = ("Calculated with the contingency analysis (ComSimoutage) of the active study case, at the QDS time steps "
-           "inside the outage windows of each case. Results appear in the log and in the contingency and quality "
-           "sections of the reports.")
+N1_NOTE = ("Calculated with a contingency analysis (ComSimoutage) Outage Assessment defines and keeps: one contingency "
+           "per branch element of the n-1 grids. Its time sweep covers the outage windows of each case: at the QDS "
+           "steps with n-0, every 'n-1 time step' of the Settings without n-0 (no quasi-dynamic simulation). Results "
+           "appear in the log and in the contingency and quality sections of the reports.")
 # Case-manager help texts describing each control's effect on the calculation.
 HELP_TEXTS = {
     'description': "Double-click to write or change the description of the case: Enter or a click elsewhere "
@@ -7221,8 +7589,9 @@ HELP_TEXTS = {
                  "second only after the first: the second may only start after the first has ended.\n"
                  "only together: a case with one of them must contain the other, at the same time.\n"
                  "Rules apply to every case; a case that breaks one is not calculated and is reported.",
-    'n0': "n-0 - reference QDS\nCalculates the time-dependent base state of the network without planned outages and "
-          "without additional contingencies. Loads and infeeds change as in the quasi-dynamic simulation.",
+    'n0': "n-0 - quasi-dynamic simulation\nCalculates the reference and every planning case with the "
+          "quasi-dynamic simulation (ComStatsim). Untick it for an n-1 analysis only: then no QDS runs, the n-1 "
+          "time sweep samples the outage windows with the n-1 time step of the Settings.",
     'n1': "n-1 - reference contingency analysis\nAssesses the security of the base network without planned outages. "
           "Every defined unplanned single contingency is assessed at the chosen points in time.\n" + N1_NOTE,
     'n1_prime': "(n-1)' - contingency analysis with planned-outage scenarios\nAssesses a planned-outage scenario with "
@@ -7291,6 +7660,10 @@ SETTING_HELP = {
                  "so the run time grows with each case.",
     'max_n1_times': "Most n-1 study times per case. Every study time calculates every contingency twice (n-1 and "
                     "(n-1)'); a case with more study times is not evaluated and says so.",
+    'n1_step': "Only for a run without n-0 (n-1 only, no quasi-dynamic simulation): the n-1 time sweep "
+               "samples the windows of the planned outages of the calculated cases every this many minutes, from "
+               "local midnight of the first window on. With n-0 the n-1 study times are the QDS steps inside the "
+               "windows and this setting is not used.",
     'post_fault_voltage': "Post-fault voltage limits per post-fault time phase. PowerFactory's post-fault phases are "
                           "not verified yet, so no separate limit can be set.",
     'loading_change_tolerance': "n-0 QDS: a loading change smaller than this (in %-points) counts as unchanged when a "
@@ -7334,18 +7707,13 @@ SETTING_HELP = {
                         "left out of the report. No grid selected: every grid. It never changes the calculation "
                         "(PowerFactory calculates the whole network) and applies in full when a kept run is "
                         "re-evaluated.",
-    'contingency_grids': "n-1 filter for the calculation. Only contingencies whose outaged equipment lies in the "
-                         "selected grids are analysed; the others are set to 'Not analysed' for the n-1 run and "
-                         "restored afterwards. 'Every grid' analyses every contingency. In a re-evaluation it leaves "
+    'contingency_grids': "n-1 filter for the calculation. Outage Assessment defines one contingency for every line, "
+                         "branch, transformer, reactor, compensation and FACTS element in the selected grids; a "
+                         "contingency analysis already in the study case is not used. 'Every grid' defines one for "
+                         "every such element of the whole model, independent of the report filter. In a re-evaluation it leaves "
                          "contingencies out of the evaluation; it cannot add ones that were not calculated.",
-    'contingency_elements': "n-1 filter for the calculation. Choose the elements that are outaged in n-1 and (n-1)': "
-                            "only contingencies that outage at least one selected element are analysed, every other is "
-                            "set to 'Not analysed' for the n-1 run (or not created when Outage Assessment defines the "
-                            "contingencies). None selected: every element is outaged. The loading of every element is "
-                            "still assessed under the analysed contingencies. In a re-evaluation it leaves the other "
-                            "contingencies out of the evaluation.",
-    'contingency_preview': "How many contingencies of the study case's contingency analysis the selection would keep. "
-                           "Their equipment is read with ComOutage.GetObject; nothing is changed.",
+    'contingency_preview': "How many contingencies Outage Assessment defines for the n-1 grids: one per line, branch, "
+                           "transformer, reactor, compensation and FACTS element. Read only; nothing is created here.",
     'grid_buttons': "Selects every grid, or clears the selection so that every grid is assessed. Takes effect at once.",
     'source': "Origin of the value: Outage Assessment (Outage Assessment default), PowerFactory (read from the model or the calculation "
               "configuration) or user (changed by you). 'edited, not applied' means the entry differs from the applied "
@@ -7465,15 +7833,13 @@ class CaseEditor:
     """Every editing step of the case manager, without a window.
 
     The dialog only shows this state and forwards clicks, so the editing
-    rules can be tested without Tk. The configuration is a private copy; it
+    rules can be tested without a window toolkit. The configuration is a private copy; it
     reaches the caller only through "Start calculation".
     """
 
     def __init__(self, records, config, period, qds_text='', qds_info=None, grids=None, contingencies=CONTINGENCIES_NOT_READ,
                  kept=(), elements=()):
         self.records = list(records)
-        # [(key, name, class, grid)] the n-1 element filter offers (contingency_element_choices).
-        self.element_choices = [tuple(item) for item in elements or ()]
         # Stamps of earlier runs whose result objects are kept in the study case (kept_stamps), newest first,
         # and the one chosen for a re-evaluation without calculation (None: calculate now).
         self.kept_stamps = list(kept or ())
@@ -7865,30 +8231,6 @@ class CaseEditor:
         value = self.settings_overrides().get(key, SETTINGS_BY_KEY[key]['default'])
         return None if value is None else tuple(value)
 
-    def selected_elements(self):
-        """The element keys of the n-1 element filter."""
-        return tuple(self.settings_overrides().get('contingency_elements', ()))
-
-    def element_text(self, key):
-        """'name (class, grid)' of an element key, from the choices; the short name when it is no longer offered."""
-        for item in self.element_choices:
-            if item[0] == key:
-                return '{} ({}{})'.format(item[1], item[2], ', ' + item[3] if item[3] else '')
-        return element_label(key) + ' (no longer in a contingency)'
-
-    def set_elements(self, keys):
-        """Select the elements outaged in n-1 at once (no Apply needed; none: every element). A problem or None."""
-        value, problem = parse_elements('contingency_elements', list(keys))
-        if problem:
-            return problem
-        try:
-            current = effective_settings(self.settings_overrides())
-        except OutageAssessmentError:
-            current = default_settings()
-        current['contingency_elements'] = value
-        self.config['settings'] = clean_overrides(current)
-        return None
-
     def grid_choices(self):
         """The grids to choose from: every grid of the model, plus selected ones the project no longer has."""
         chosen = set(self.selected_grids('monitoring_grids')) | set(self.selected_grids('contingency_grids') or ())
@@ -7928,9 +8270,6 @@ class CaseEditor:
             return 'contingencies not read in this window'
         text = contingency_scope_text(self.contingencies, self.selected_grids('contingency_grids'),
                                       self.selected_grids('monitoring_grids'))
-        elements = self.selected_elements()
-        if elements:
-            text += ' Outaged elements only: {}.'.format(', '.join(self.element_text(key) for key in elements))
         return text
 
     def filter_note(self):
@@ -7963,11 +8302,12 @@ class CaseEditor:
         """The requested assessments; a problem as text, else None."""
         if not n0 and not n1 and not n1_prime:
             return 'Select at least one assessment.'
-        if not n0:
-            return 'n-0 is always calculated: the report is built on it.'
+        if not n0 and not n1:
+            return 'Select n-0 (quasi-dynamic simulation), n-1 or both.'
         if n1_prime and not n1:
             return "(n-1)' is compared with n-1, so it needs n-1."
-        self.config['assessments'] = ['n-0'] + ([N1_REFERENCE] if n1 else []) + ([N1_PRIME] if n1_prime else [])
+        self.config['assessments'] = (['n-0'] if n0 else []) + ([N1_REFERENCE] if n1 else []) + (
+            [N1_PRIME] if n1_prime else [])
         return None
 
     def request(self):
@@ -8153,314 +8493,947 @@ def column_widths(columns, width, flexible_share=0.6):
     return widths
 
 
-class Tooltip:
-    """A short explanation that appears while the mouse rests on a widget."""
-
-    DELAY, WRAP = 450, 380
-    BACKGROUND, BORDER = '#FFFFFF', '#DCE5EC'
-
-    def __init__(self, tk, widget, text):
-        self.tk = tk
-        self.widget = widget
-        self.text = text
-        self.window = None
-        self._after = None
-        widget.bind('<Enter>', self._schedule, add='+')
-        widget.bind('<Leave>', self.hide, add='+')
-        widget.bind('<ButtonPress>', self.hide, add='+')
-        widget.bind('<KeyPress>', self.hide, add='+')
-
-    def _schedule(self, _event=None):
-        self._cancel()
-        self._after = self.widget.after(self.DELAY, self.show)
-
-    def _cancel(self):
-        if self._after is not None:
-            try:
-                self.widget.after_cancel(self._after)
-            except Exception:
-                pass
-            self._after = None
-
-    def show(self):
-        self._after = None
-        if self.window is not None or not self.text:
-            return
-        tk = self.tk
-        window = tk.Toplevel(self.widget)
-        window.wm_overrideredirect(True)
-        tk.Label(window, text=self.text, justify='left', anchor='w', wraplength=self.WRAP, background=self.BACKGROUND,
-                 foreground='#203449', relief='solid', borderwidth=1, highlightbackground=self.BORDER,
-                 font='TkDefaultFont', padx=12, pady=10).pack()
-        window.update_idletasks()
-        # Below the widget, kept on the screen.
-        x = min(self.widget.winfo_rootx() + 12, self.widget.winfo_screenwidth() - window.winfo_reqwidth() - 8)
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
-        if y + window.winfo_reqheight() > self.widget.winfo_screenheight() - 8:
-            y = self.widget.winfo_rooty() - window.winfo_reqheight() - 4
-        window.wm_geometry('+{}+{}'.format(max(x, 0), max(y, 0)))
-        self.window = window
-
-    def hide(self, _event=None):
-        self._cancel()
-        if self.window is not None:
-            try:
-                self.window.destroy()
-            except Exception:
-                pass
-            self.window = None
+# Which PyQt the case manager loads: 'auto' reuses a binding PowerFactory already
+# loaded, otherwise tries PyQt6 and then PyQt5. Two Qt versions never share a process.
+QT_BINDING = 'auto'
+QT_BINDINGS = ('PyQt6', 'PyQt5')
+_QT = None
+_QT_APPLICATION = None
 
 
-class FilterTable:
-    """A table with a header that sorts on click and a filter row directly under it.
+class Theme:
+    """Presentation tokens of the case manager only; no calculation or configuration default lives here.
 
-    The Treeview draws only the rows; header labels and filter inputs sit in
-    two strips above it and are laid out on the same column widths, so a
-    filter always stands under its column. A text column filters by "contains"
-    (any case), a column with choices by an exact value. Filtering and sorting
-    change only what is shown, never the rows.
+    Calm slate surfaces, one deep blue for action and selection, amber only for
+    warnings and red only for problems, so colour always carries the same meaning.
     """
 
-    ALL = 'All'
-    HEADER_HEIGHT, FILTER_HEIGHT = 34, 38
+    BACKGROUND, SURFACE, SUBTLE, ROW_ALT = '#F3F5F9', '#FFFFFF', '#F8FAFC', '#FAFBFD'
+    BORDER, BORDER_STRONG, DIVIDER = '#E2E8F0', '#CBD5E1', '#EEF2F6'
+    TEXT, MUTED, FAINT = '#0F172A', '#64748B', '#94A3B8'
+    PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, SELECTED = '#1E40AF', '#1E3A8A', '#EEF3FF', '#DCE6FD'
+    MASTHEAD, MASTHEAD_TEXT, MASTHEAD_MUTED = '#0B1F3A', '#F8FAFC', '#9FB3CC'
+    SUCCESS, SUCCESS_SOFT = '#047857', '#D1FAE5'
+    WARNING, WARNING_SOFT = '#B45309', '#FEF3C7'
+    DANGER, DANGER_SOFT, DANGER_FIELD = '#B91C1C', '#FEE2E2', '#FFF5F5'
+    NEUTRAL, NEUTRAL_SOFT = '#475569', '#F1F5F9'
+    FIXED, OVERLAP, GAP = '#64748B', '#FEF0C3', '#EEF2F6'
+    # Tone -> (text, background) of a status pill.
+    TONES = {'success': (SUCCESS, SUCCESS_SOFT), 'warning': (WARNING, WARNING_SOFT), 'danger': (DANGER, DANGER_SOFT),
+             'neutral': (NEUTRAL, NEUTRAL_SOFT), 'primary': (PRIMARY, PRIMARY_SOFT)}
+    FONT_FAMILIES = ('Segoe UI', 'SF Pro Text', 'Helvetica Neue', 'Inter', 'DejaVu Sans')
 
-    def __init__(self, dialog, parent, columns, height=8, selectmode='extended', tag_column=None, tips=None):
-        """`columns`: (id, heading, width, stretch, choices); choices None for text, else labels or (label, value) pairs.
 
-        `tips`: hover text per column id, shown on the heading together with how sorting works.
+# The tone of every status text a table shows as a pill.
+STATUS_TONES = {
+    'ready': 'success', 'not calculated': 'warning', 'excluded': 'neutral',
+    'in simulated period': 'success', 'outside simulated period': 'neutral', 'Ignored in PowerFactory': 'warning',
+    'error': 'danger', 'warning': 'warning',
+}
+
+
+def stylesheet(zoom=1.0, family='', images=None):
+    """The Qt style sheet of the case manager at a display zoom; only presentation, never behaviour.
+
+    `images` maps indicator names to image files (indicator_images); without them Qt draws its own.
+    """
+    t = Theme
+    size = lambda points: '{:.1f}pt'.format(points * zoom)
+    pixels = lambda value: '{}px'.format(max(1, round(value * zoom)))
+    font = 'font-family: "{}";'.format(family) if family else ''
+    return '''
+    QDialog#OutageAssessmentCaseManager, QWidget#page, QWidget#scrollBody {{ background: {bg}; }}
+    QWidget {{ color: {text}; font-size: {body}; {font} }}
+    QFrame#masthead {{ background: {mast}; border: none; }}
+    QLabel#brand {{ color: {mast_text}; font-size: {brand}; font-weight: 700; }}
+    QLabel#version {{ color: {mast_muted}; border: 1px solid #23395B; border-radius: {r9}; padding: 1px 8px;
+                      font-size: {small}; }}
+    QLabel#pageTitle {{ color: {mast_text}; font-size: {title}; font-weight: 600; }}
+    QLabel#pageHint {{ color: {mast_muted}; }}
+    QPushButton#navTab {{ background: transparent; color: {mast_muted}; border: none; border-radius: {r8};
+                          padding: {p6} {p16}; font-weight: 600; }}
+    QPushButton#navTab:hover {{ background: #17304F; color: {mast_text}; }}
+    QPushButton#navTab:checked {{ background: {surface}; color: {mast}; }}
+    QFrame#card {{ background: {surface}; border: 1px solid {border}; border-radius: {r10}; }}
+    QFrame#card QLabel, QFrame#card QCheckBox, QFrame#card QRadioButton {{ background: transparent; }}
+    QLabel#cardTitle {{ font-size: {h}; font-weight: 600; }}
+    QLabel#sectionTitle {{ font-weight: 600; }}
+    QLabel#muted, QLabel#hint, QLabel#caption {{ color: {muted}; }}
+    QLabel#caption {{ font-size: {small}; font-weight: 600; }}
+    QLabel#hint {{ font-size: {small}; }}
+    QLabel#problem {{ color: {danger}; font-size: {small}; }}
+    QLabel#counter {{ color: {muted}; font-size: {small}; }}
+    QLabel#counter[full="true"] {{ color: {danger}; font-weight: 600; }}
+    QLabel#pill {{ border-radius: {r9}; padding: 1px 8px; font-size: {small}; font-weight: 600; }}
+    QLabel#pill[tone="neutral"] {{ color: {neutral}; background: {neutral_soft}; }}
+    QLabel#pill[tone="primary"] {{ color: {primary}; background: {primary_soft}; }}
+    QLabel#pill[tone="warning"] {{ color: {warning}; background: {warning_soft}; }}
+    QLabel#pill[tone="danger"] {{ color: {danger}; background: {danger_soft}; }}
+    QLabel#pill[tone="success"] {{ color: {success}; background: {success_soft}; }}
+    QFrame#inset {{ background: {primary_soft}; border: none; border-radius: {r8}; }}
+    QLabel#insetTitle {{ color: {primary}; font-weight: 600; }}
+    QFrame#legendSwatch {{ border: none; border-radius: {r3}; }}
+    QFrame#footer {{ background: {surface}; border: none; border-top: 1px solid {border}; }}
+    QPushButton {{ background: {surface}; border: 1px solid {border_strong}; border-radius: {r6};
+                   padding: {p5} {p12}; }}
+    QPushButton:hover {{ background: {subtle}; border-color: {primary}; color: {primary}; }}
+    QPushButton:pressed {{ background: {selected}; }}
+    QPushButton:focus {{ border-color: {primary}; }}
+    QPushButton:disabled {{ color: {faint}; background: {subtle}; border-color: {border}; }}
+    QPushButton#primary {{ background: {primary}; color: #FFFFFF; border: 1px solid {primary}; font-weight: 600;
+                           padding: {p6} {p20}; }}
+    QPushButton#primary:hover {{ background: {primary_hover}; border-color: {primary_hover}; color: #FFFFFF; }}
+    QPushButton#primary:focus {{ border: 2px solid {mast}; }}
+    QPushButton#ghost, QPushButton#statusLine {{ background: transparent; border: none; color: {primary};
+                                                 padding: {p2} {p4}; }}
+    QPushButton#ghost:hover {{ text-decoration: underline; }}
+    QPushButton#statusLine {{ color: {muted}; text-align: left; font-size: {small}; }}
+    QPushButton#statusLine[problem="true"] {{ color: {danger}; }}
+    QPushButton#statusLine:hover {{ color: {primary}; }}
+    QLineEdit, QComboBox {{ background: {surface}; border: 1px solid {border_strong}; border-radius: {r6};
+                            padding: {p4} {p8}; selection-background-color: {selected}; selection-color: {text}; }}
+    QLineEdit:focus, QComboBox:focus {{ border-color: {primary}; }}
+    QLineEdit:disabled, QComboBox:disabled {{ background: {neutral_soft}; color: {muted}; border-color: {border}; }}
+    QLineEdit[invalid="true"] {{ border-color: {danger}; background: {danger_field}; color: {danger}; }}
+    QLineEdit#filter, QComboBox#filter {{ background: {surface}; border-color: {border}; border-radius: {r5};
+                                          padding: {p2} {p6}; font-size: {small}; }}
+    QLineEdit#description {{ background: transparent; border: 1px dashed transparent; color: {muted};
+                             padding: {p2} {p4}; }}
+    QLineEdit#description:hover {{ border-color: {border_strong}; }}
+    QLineEdit#description:focus {{ background: {surface}; border: 1px solid {primary}; color: {text}; }}
+    QComboBox QAbstractItemView {{ background: {surface}; border: 1px solid {border}; selection-background-color: {selected};
+                                   selection-color: {text}; outline: none; }}
+    QTableView {{ background: {surface}; border: none; gridline-color: transparent; outline: none;
+                  selection-background-color: {selected}; selection-color: {text}; alternate-background-color: {row_alt}; }}
+    QTableView::item {{ border-bottom: 1px solid {divider}; padding: 0 {p6}; }}
+    QTableView::item:selected {{ background: {selected}; color: {text}; }}
+    QHeaderView {{ background: {subtle}; border: none; }}
+    QHeaderView::section {{ background: {subtle}; color: {muted}; border: none; border-bottom: 1px solid {border};
+                            padding: {p4} {p8}; font-size: {small}; font-weight: 600; }}
+    QHeaderView::section:hover {{ color: {text}; }}
+    QScrollBar:vertical {{ background: transparent; width: {p10}; margin: 2px; }}
+    QScrollBar:horizontal {{ background: transparent; height: {p10}; margin: 2px; }}
+    QScrollBar::handle {{ background: {border_strong}; border-radius: {r4}; min-height: 24px; min-width: 24px; }}
+    QScrollBar::handle:hover {{ background: {faint}; }}
+    QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+    QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
+    QSplitter::handle {{ background: transparent; }}
+    QSplitter::handle:hover {{ background: {selected}; border-radius: 2px; }}
+    QCheckBox, QRadioButton {{ spacing: {p8}; padding: {p2} 0; }}
+    QListWidget {{ background: {surface}; border: 1px solid {border}; border-radius: {r8}; padding: {p4}; outline: none; }}
+    QListWidget::item {{ padding: {p4} {p6}; border-radius: {r4}; }}
+    QListWidget::item:hover {{ background: {subtle}; }}
+    QListWidget::item:selected {{ background: {selected}; color: {text}; }}
+    QListWidget:disabled {{ background: {neutral_soft}; color: {muted}; }}
+    QListWidget#settingsNav {{ background: transparent; border: none; padding: 0; }}
+    QListWidget#settingsNav::item {{ padding: {p8} {p12}; margin: 1px 0; border-radius: {r6}; color: {neutral}; }}
+    QListWidget#settingsNav::item:hover {{ background: #E8EDF4; }}
+    QListWidget#settingsNav::item:selected {{ background: {surface}; color: {primary}; border: 1px solid {border}; }}
+    QTextBrowser {{ background: {surface}; border: none; }}
+    QScrollArea {{ background: transparent; border: none; }}
+    QToolTip {{ background: {surface}; color: {text}; border: 1px solid {border}; padding: {p6}; }}
+    '''.format(
+        bg=t.BACKGROUND, surface=t.SURFACE, subtle=t.SUBTLE, row_alt=t.ROW_ALT, border=t.BORDER,
+        border_strong=t.BORDER_STRONG, divider=t.DIVIDER, text=t.TEXT, muted=t.MUTED, faint=t.FAINT,
+        primary=t.PRIMARY, primary_hover=t.PRIMARY_HOVER, primary_soft=t.PRIMARY_SOFT, selected=t.SELECTED,
+        mast=t.MASTHEAD, mast_text=t.MASTHEAD_TEXT, mast_muted=t.MASTHEAD_MUTED, success=t.SUCCESS,
+        success_soft=t.SUCCESS_SOFT, warning=t.WARNING, warning_soft=t.WARNING_SOFT, danger=t.DANGER,
+        danger_soft=t.DANGER_SOFT, danger_field=t.DANGER_FIELD, neutral=t.NEUTRAL, neutral_soft=t.NEUTRAL_SOFT,
+        body=size(10), small=size(9), h=size(11.5), title=size(13), brand=size(17), font=font,
+        r3=pixels(3), r4=pixels(4), r5=pixels(5), r6=pixels(6), r8=pixels(8), r9=pixels(9), r10=pixels(10),
+        p2=pixels(2), p4=pixels(4), p5=pixels(5), p6=pixels(6), p8=pixels(8), p10=pixels(10), p12=pixels(12),
+        p16=pixels(16), p20=pixels(20)) + (_indicator_rules(images, pixels) if images else '')
+
+
+def _indicator_rules(images, pixels):
+    """Check boxes, radio buttons and combo-box arrows drawn from the theme's own images."""
+    url = lambda name: 'url("{}")'.format(images[name].replace('\\', '/'))
+    return '''
+    QComboBox {{ padding-right: {p24}; }}
+    QComboBox#filter {{ padding-right: {p14}; }}
+    QComboBox#filter::drop-down {{ width: {p14}; }}
+    QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right; width: {p20}; border: none;
+                            background: transparent; }}
+    QComboBox::down-arrow {{ image: {chevron}; width: {p10}; height: {p10}; }}
+    QComboBox::down-arrow:disabled {{ image: {chevron_disabled}; }}
+    QCheckBox::indicator, QListWidget::indicator, QRadioButton::indicator {{ width: {p16}; height: {p16}; }}
+    QCheckBox::indicator:unchecked, QListWidget::indicator:unchecked {{ image: {check_off}; }}
+    QCheckBox::indicator:checked, QListWidget::indicator:checked {{ image: {check_on}; }}
+    QCheckBox::indicator:unchecked:disabled, QListWidget::indicator:unchecked:disabled {{ image: {check_off_disabled}; }}
+    QCheckBox::indicator:checked:disabled, QListWidget::indicator:checked:disabled {{ image: {check_on_disabled}; }}
+    QRadioButton::indicator:unchecked {{ image: {radio_off}; }}
+    QRadioButton::indicator:checked {{ image: {radio_on}; }}
+    '''.format(p10=pixels(10), p14=pixels(14), p16=pixels(16), p20=pixels(20), p24=pixels(24),
+               **{name: url(name) for name in images})
+
+
+def indicator_images(qt):
+    """PNG files of the themed check boxes, radio buttons and arrows, drawn once at twice their size.
+
+    A Qt style sheet takes images only from files, so they are written to the
+    temporary folder; nothing is written into the project or the PowerFactory database.
+    """
+    QtCore, QtGui = qt.QtCore, qt.QtGui
+    folder = os.path.join(tempfile.gettempdir(), 'outage_assessment_qt_' + hashlib.sha1(
+        repr(sorted((key, value) for key, value in vars(Theme).items() if not key.startswith('_'))).encode('utf-8')
+    ).hexdigest()[:10])
+    os.makedirs(folder, exist_ok=True)
+    side = 32
+    colour = QtGui.QColor
+    antialias = qt.enum('RenderHint.Antialiasing', QtGui.QPainter)
+    no_pen = qt.enum('PenStyle.NoPen')
+    round_cap = qt.enum('PenCapStyle.RoundCap')
+
+    def check(fill, border, tick):
+        def draw(painter):
+            rect = QtCore.QRectF(2, 2, side - 4, side - 4)
+            painter.setPen(QtGui.QPen(colour(border), 2.4) if border else no_pen)
+            painter.setBrush(colour(fill))
+            painter.drawRoundedRect(rect, 7, 7)
+            if tick:
+                pen = QtGui.QPen(colour(tick), 3.6)
+                pen.setCapStyle(round_cap)
+                pen.setJoinStyle(qt.enum('PenJoinStyle.RoundJoin'))
+                painter.setPen(pen)
+                path = QtGui.QPainterPath()
+                path.moveTo(9, 16.5)
+                path.lineTo(14, 21.5)
+                path.lineTo(23.5, 11)
+                painter.drawPath(path)
+        return draw
+
+    def radio(on):
+        def draw(painter):
+            painter.setPen(QtGui.QPen(colour(Theme.PRIMARY if on else Theme.BORDER_STRONG), 2.4))
+            painter.setBrush(colour(Theme.SURFACE))
+            painter.drawEllipse(QtCore.QRectF(2.5, 2.5, side - 5, side - 5))
+            if on:
+                painter.setPen(no_pen)
+                painter.setBrush(colour(Theme.PRIMARY))
+                painter.drawEllipse(QtCore.QRectF(9.5, 9.5, side - 19, side - 19))
+        return draw
+
+    def chevron(shade):
+        def draw(painter):
+            pen = QtGui.QPen(colour(shade), 3.2)
+            pen.setCapStyle(round_cap)
+            painter.setPen(pen)
+            painter.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(7, 12), QtCore.QPointF(16, 21), QtCore.QPointF(25, 12)]))
+        return draw
+
+    drawings = {
+        'check_off': check(Theme.SURFACE, Theme.BORDER_STRONG, None),
+        'check_on': check(Theme.PRIMARY, None, '#FFFFFF'),
+        'check_off_disabled': check(Theme.NEUTRAL_SOFT, Theme.BORDER, None),
+        'check_on_disabled': check(Theme.FAINT, None, '#FFFFFF'),
+        'radio_off': radio(False), 'radio_on': radio(True),
+        'chevron': chevron(Theme.MUTED), 'chevron_disabled': chevron(Theme.FAINT),
+    }
+    paths = {}
+    for name, draw in drawings.items():
+        path = os.path.join(folder, name + '.png')
+        if not os.path.exists(path):
+            image = QtGui.QImage(side, side, qt.enum('Format.Format_ARGB32_Premultiplied', QtGui.QImage))
+            image.fill(qt.enum('GlobalColor.transparent'))
+            painter = QtGui.QPainter(image)
+            painter.setRenderHint(antialias)
+            draw(painter)
+            painter.end()
+            image.save(path, 'PNG')
+        paths[name] = path
+    return paths
+
+
+def tooltip_html(text):
+    """Rich text so Qt wraps a long hover text instead of drawing one endless line."""
+    import html
+    return '<qt>' + html.escape(text).replace('\n', '<br>') + '</qt>' if text else ''
+
+
+def _qt_enum(owner, path):
+    """A Qt enum member by its scoped name ('AlignmentFlag.AlignLeft'); PyQt5 also knows the short name."""
+    value = owner
+    try:
+        for part in path.split('.'):
+            value = getattr(value, part)
+        return value
+    except AttributeError:
+        return getattr(owner, path.split('.')[-1])
+
+
+def _enum_int(value):
+    """An enum member as int: PyQt6 enums carry .value, PyQt5 enums are ints."""
+    return int(getattr(value, 'value', value))
+
+
+def load_qt():
+    """(binding, QtCore, QtGui, QtWidgets) of one PyQt binding; CaseManagerUnavailable when none can be loaded."""
+    import importlib
+    import sys
+    if QT_BINDING not in ('auto',) + QT_BINDINGS:
+        raise CaseManagerUnavailable("QT_BINDING must be 'auto', 'PyQt6' or 'PyQt5', not {!r}.".format(QT_BINDING))
+    loaded = {name for name in QT_BINDINGS + ('PySide6', 'PySide2')
+              if any(key == name or key.startswith(name + '.') for key in sys.modules)}
+    if loaded & {'PySide6', 'PySide2'} or len(loaded) > 1:
+        raise CaseManagerUnavailable('Qt bindings already loaded in this process: {}. The case manager does not load a '
+                                     'second Qt version.'.format(', '.join(sorted(loaded))))
+    if loaded and QT_BINDING != 'auto' and QT_BINDING not in loaded:
+        raise CaseManagerUnavailable('{} is already loaded; QT_BINDING = {!r} would mix two Qt versions.'.format(
+            next(iter(loaded)), QT_BINDING))
+    candidates = sorted(loaded) if loaded else (list(QT_BINDINGS) if QT_BINDING == 'auto' else [QT_BINDING])
+    for name in candidates:
+        try:
+            importlib.import_module(name)
+        except ModuleNotFoundError as exc:
+            if exc.name != name:
+                raise CaseManagerUnavailable('{} is installed but a dependency is missing: {}'.format(name, exc)) from None
+            continue
+        try:
+            modules = [importlib.import_module(name + '.' + part) for part in ('QtCore', 'QtGui', 'QtWidgets')]
+        except (ImportError, OSError) as exc:
+            raise CaseManagerUnavailable('{} could not be loaded: {}. Check the Python version, the architecture and '
+                                         'the Qt installation.'.format(name, exc)) from None
+        return (name,) + tuple(modules)
+    import platform
+    raise CaseManagerUnavailable('Neither PyQt6 nor PyQt5 is installed in the Python environment of PowerFactory '
+                                 '(Python {}, {}).'.format(platform.python_version(), sys.prefix))
+
+
+def qt_toolkit():
+    """The loaded PyQt binding with the enums and widget classes of the case manager, built once per process."""
+    global _QT
+    if _QT is None:
+        _QT = _build_qt_toolkit(*load_qt())
+    return _QT
+
+
+def _build_qt_toolkit(binding, QtCore, QtGui, QtWidgets):
+    """Qt needs its base classes at class definition, so the small widget classes are defined after loading Qt."""
+    import types
+    Qt = QtCore.Qt
+    enum = lambda path, owner=Qt: _qt_enum(owner, path)
+    view = QtWidgets.QAbstractItemView
+    roles = {name: _enum_int(enum('ItemDataRole.' + name)) for name in
+             ('DisplayRole', 'EditRole', 'ToolTipRole', 'TextAlignmentRole', 'BackgroundRole', 'ForegroundRole',
+              'UserRole')}
+    align_left = enum('AlignmentFlag.AlignLeft') | enum('AlignmentFlag.AlignVCenter')
+    align_centre = enum('AlignmentFlag.AlignCenter')
+    keys = {name: _enum_int(enum('Key.Key_' + name)) for name in
+            ('Delete', 'Backspace', 'Space', 'Return', 'Enter', 'Escape', 'F2')}
+    events = {name: _enum_int(enum('Type.' + name, QtCore.QEvent)) for name in
+              ('KeyPress', 'ToolTip', 'MouseButtonDblClick', 'Resize')}
+    flags = types.SimpleNamespace(enabled=enum('ItemFlag.ItemIsEnabled'), selectable=enum('ItemFlag.ItemIsSelectable'),
+                                  editable=enum('ItemFlag.ItemIsEditable'))
+    antialias = enum('RenderHint.Antialiasing', QtGui.QPainter)
+    no_pen = enum('PenStyle.NoPen')
+    QShortcut = getattr(QtGui, 'QShortcut', None) or QtWidgets.QShortcut
+
+    def colour(value):
+        return QtGui.QColor(value)
+
+    def is_key(event, *names):
+        return _enum_int(event.key()) in {keys[name] for name in names}
+
+    class KeyFilter(QtCore.QObject):
+        """Keys of one widget: {key name: callback}; a callback returning False lets the key through."""
+
+        def __init__(self, widget, mapping, guard=None):
+            super().__init__(widget)
+            self.mapping, self.guard = mapping, guard
+            widget.installEventFilter(self)
+
+        def eventFilter(self, obj, event):
+            if _enum_int(event.type()) != events['KeyPress'] or (self.guard is not None and not self.guard()):
+                return False
+            if event.modifiers() & (enum('KeyboardModifier.ControlModifier') | enum('KeyboardModifier.AltModifier')):
+                return False
+            for name, callback in self.mapping.items():
+                if is_key(event, *name.split('|')):
+                    return callback() is not False
+            return False
+
+    class RowModel(QtCore.QAbstractTableModel):
+        """The shown (key, cells) rows of a FilterTable; filtering and sorting happen before they arrive."""
+
+        def __init__(self, table):
+            super().__init__(table)
+            self.table = table
+            self.rows = []
+
+        def rowCount(self, parent=QtCore.QModelIndex()):
+            return 0 if parent.isValid() else len(self.rows)
+
+        def columnCount(self, parent=QtCore.QModelIndex()):
+            return 0 if parent.isValid() else len(self.table.columns)
+
+        def headerData(self, section, orientation, role=roles['DisplayRole']):
+            if _enum_int(role) == roles['DisplayRole'] and orientation == enum('Orientation.Horizontal'):
+                return self.table.columns[section][1]
+            return None
+
+        def flags(self, index):
+            result = flags.enabled | flags.selectable
+            if index.isValid() and self.table.columns[index.column()][0] in self.table.editable:
+                result |= flags.editable
+            return result
+
+        def data(self, index, role=roles['DisplayRole']):
+            if not index.isValid():
+                return None
+            role = _enum_int(role)
+            key, cells = self.rows[index.row()]
+            value = cells[index.column()]
+            if role in (roles['DisplayRole'], roles['EditRole']):
+                if role == roles['EditRole'] and self.table.edit_text is not None:
+                    return self.table.edit_text(key, index.column())
+                return '' if value is None else str(value)
+            if role == roles['ToolTipRole']:
+                text = '' if value is None else str(value)
+                return tooltip_html(text) if len(text) > 24 else None
+            if role == roles['TextAlignmentRole']:
+                return align_left
+            if role == roles['UserRole']:
+                return key
+            if role == roles['BackgroundRole'] and self.table.tint is not None:
+                tinted = self.table.tint(cells)
+                return QtGui.QBrush(colour(tinted)) if tinted else None
+            if role == roles['ForegroundRole'] and self.table.muted is not None and self.table.muted(cells):
+                return QtGui.QBrush(colour(Theme.MUTED))
+            return None
+
+        def setData(self, index, value, role=roles['EditRole']):
+            if _enum_int(role) != roles['EditRole'] or self.table.on_edit is None:
+                return False
+            key, _ = self.rows[index.row()]
+            self.table.on_edit(key, index.column(), str(value))
+            return True
+
+        def replace(self, rows):
+            self.beginResetModel()
+            self.rows = rows
+            self.endResetModel()
+
+    class PillDelegate(QtWidgets.QStyledItemDelegate):
+        """A status cell as a small rounded pill whose colour says what the status means."""
+
+        def paint(self, painter, option, index):
+            text = index.data()
+            if not text:
+                QtWidgets.QStyledItemDelegate.paint(self, painter, option, index)
+                return
+            self.initStyleOption(option, index)
+            option.text = ''
+            style = option.widget.style() if option.widget is not None else QtWidgets.QApplication.style()
+            style.drawControl(enum('ControlElement.CE_ItemViewItem', QtWidgets.QStyle), option, painter, option.widget)
+            foreground, background = Theme.TONES[STATUS_TONES.get(text, 'neutral')]
+            painter.save()
+            painter.setRenderHint(antialias)
+            metrics = QtGui.QFontMetrics(option.font)
+            label = metrics.elidedText(text, enum('TextElideMode.ElideRight'), max(20, option.rect.width() - 28))
+            width = metrics.horizontalAdvance(label) + 16
+            height = metrics.height() + 4
+            rect = QtCore.QRectF(option.rect.x() + 8, option.rect.center().y() - height / 2.0 + 0.5, width, height)
+            painter.setPen(no_pen)
+            painter.setBrush(colour(background))
+            painter.drawRoundedRect(rect, height / 2.0, height / 2.0)
+            font = QtGui.QFont(option.font)
+            font.setWeight(enum('Weight.DemiBold', QtGui.QFont))
+            painter.setFont(font)
+            painter.setPen(colour(foreground))
+            painter.drawText(rect, align_centre, label)
+            painter.restore()
+
+    class CheckDelegate(QtWidgets.QStyledItemDelegate):
+        """A check box drawn in the theme: ticked (part of it), empty (free) or a 'fixed' pill (cannot be ticked)."""
+
+        CHECKED = (MARK_IN_CASE, '\u2611')
+        FIXED = (MARK_FIXED,)
+
+        def paint(self, painter, option, index):
+            value = index.data()
+            self.initStyleOption(option, index)
+            option.text = ''
+            style = option.widget.style() if option.widget is not None else QtWidgets.QApplication.style()
+            style.drawControl(enum('ControlElement.CE_ItemViewItem', QtWidgets.QStyle), option, painter, option.widget)
+            painter.save()
+            painter.setRenderHint(antialias)
+            if value in self.FIXED:
+                metrics = QtGui.QFontMetrics(option.font)
+                width, height = metrics.horizontalAdvance('fixed') + 14, metrics.height() + 2
+                rect = QtCore.QRectF(option.rect.x() + 8, option.rect.center().y() - height / 2.0 + 0.5, width, height)
+                painter.setPen(no_pen)
+                painter.setBrush(colour(Theme.NEUTRAL_SOFT))
+                painter.drawRoundedRect(rect, height / 2.0, height / 2.0)
+                painter.setPen(colour(Theme.NEUTRAL))
+                painter.drawText(rect, align_centre, 'fixed')
+            else:
+                side = max(12, min(16, option.rect.height() - 12))
+                rect = QtCore.QRectF(option.rect.x() + 10, option.rect.center().y() - side / 2.0 + 0.5, side, side)
+                if value in self.CHECKED:
+                    painter.setPen(no_pen)
+                    painter.setBrush(colour(Theme.PRIMARY))
+                    painter.drawRoundedRect(rect, 3.5, 3.5)
+                    pen = QtGui.QPen(colour('#FFFFFF'), 2.0)
+                    pen.setCapStyle(enum('PenCapStyle.RoundCap'))
+                    pen.setJoinStyle(enum('PenJoinStyle.RoundJoin'))
+                    painter.setPen(pen)
+                    path = QtGui.QPainterPath()
+                    path.moveTo(rect.left() + side * 0.24, rect.top() + side * 0.52)
+                    path.lineTo(rect.left() + side * 0.43, rect.top() + side * 0.70)
+                    path.lineTo(rect.left() + side * 0.77, rect.top() + side * 0.32)
+                    painter.drawPath(path)
+                else:
+                    painter.setPen(QtGui.QPen(colour(Theme.BORDER_STRONG), 1.4))
+                    painter.setBrush(colour(Theme.SURFACE))
+                    painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 3.5, 3.5)
+            painter.restore()
+
+    class FilterHeader(QtWidgets.QHeaderView):
+        """The column headings with a filter input under each one, inside the header itself.
+
+        The heading keeps its click-to-sort behaviour; the inputs follow column
+        widths, resizing and horizontal scrolling, so a filter always stands under its column.
         """
-        tk, ttk = dialog.tk, dialog.ttk
-        self.dialog = dialog
-        self.columns = columns
-        self.rows = []
-        self._rendered = {}
-        self._visible_keys = None
-        self.sort_column, self.descending = None, False
-        self.tag_column = tag_column
-        self._pending = None
-        self.HEADER_HEIGHT = round(34 * dialog.ui_scale)
-        self.FILTER_HEIGHT = round(38 * dialog.ui_scale)
-        self.frame = ttk.Frame(parent, style='Card.TFrame')
-        self.frame.columnconfigure(0, weight=1)
-        self.frame.rowconfigure(2, weight=1)
-        self.header = tk.Frame(self.frame, background=dialog.HEADER, height=self.HEADER_HEIGHT, highlightthickness=0)
-        self.header.grid(row=0, column=0, columnspan=2, sticky='ew')
-        self.filter_bar = tk.Frame(self.frame, background=dialog.FILTER, height=self.FILTER_HEIGHT, highlightthickness=0)
-        self.filter_bar.grid(row=1, column=0, columnspan=2, sticky='ew')
-        self.tree = ttk.Treeview(self.frame, columns=[column[0] for column in columns], show='', height=height,
-                                 selectmode=selectmode)
-        self.tree.grid(row=2, column=0, sticky='nsew')
-        self.scroll = ttk.Scrollbar(self.frame, orient='vertical', command=self.tree.yview)
-        self.tree.configure(yscrollcommand=self._yscroll)
-        self.horizontal = ttk.Scrollbar(self.frame, orient='horizontal', command=self.tree.xview)
-        self.horizontal.grid(row=3, column=0, sticky='ew')
-        self.tree.configure(xscrollcommand=self._xscroll)
-        self.empty = ttk.Label(self.tree, text='No entries', style='Muted.TLabel', anchor='center', wraplength=240)
-        footer = ttk.Frame(self.frame, style='Card.TFrame')
-        footer.grid(row=4, column=0, columnspan=2, sticky='ew', pady=(6, 0))
-        self.count = ttk.Label(footer, text='', style='Muted.TLabel')
-        self.count.grid(row=0, column=0, sticky='w')
-        self.clear = ttk.Button(footer, text='Clear filters', style='Link.TButton', command=self.clear_filters)
-        self.clear.grid(row=0, column=1, sticky='w', padx=(10, 0))
-        self.labels, self.inputs, self.values, self.choice_values = [], [], [], []
-        for index, (_, heading, _, _, choices) in enumerate(columns):
-            label = tk.Label(self.header, text=heading, anchor='w', background=dialog.HEADER, foreground=dialog.TEXT,
-                             font=dialog.bold_font, padx=6, cursor='hand2')
-            label.bind('<Button-1>', lambda _event, column=index: self.toggle_sort(column))
-            variable = tk.StringVar(value=self.ALL if choices else '')
-            if choices:
-                pairs = [item if isinstance(item, tuple) else (item, item) for item in choices]
-                widget = ttk.Combobox(self.filter_bar, textvariable=variable, values=[self.ALL] + [label_ for label_, _ in pairs],
-                                      state='readonly', style='Filter.TCombobox')
-                widget.bind('<<ComboboxSelected>>', lambda _event: self.render())
-                self.choice_values.append(dict(pairs))
+
+        def __init__(self, table):
+            super().__init__(enum('Orientation.Horizontal'), table.view)
+            self.table = table
+            self.inputs = []
+            self.setSectionsClickable(True)
+            self.setHighlightSections(False)
+            self.setDefaultAlignment(align_left)
+            self.sectionResized.connect(lambda *_args: self.place_inputs())
+            self.sectionMoved.connect(lambda *_args: self.place_inputs())
+
+        def label_height(self):
+            return QtGui.QFontMetrics(self.font()).height() + round(12 * self.table.dialog.zoom)
+
+        def input_height(self):
+            return QtGui.QFontMetrics(self.font()).height() + round(14 * self.table.dialog.zoom)
+
+        def sizeHint(self):
+            hint = super().sizeHint()
+            hint.setHeight(self.label_height() + self.input_height() + round(6 * self.table.dialog.zoom))
+            return hint
+
+        def paintSection(self, painter, rect, logical):
+            painter.save()
+            super().paintSection(painter, QtCore.QRect(rect.x(), rect.y(), rect.width(), self.label_height()), logical)
+            painter.restore()
+
+        def updateGeometries(self):
+            super().updateGeometries()
+            self.place_inputs()
+
+        def viewportEvent(self, event):
+            if _enum_int(event.type()) == events['ToolTip']:
+                logical = self.logicalIndexAt(event.pos())
+                if logical >= 0 and event.pos().y() <= self.label_height():
+                    QtWidgets.QToolTip.showText(event.globalPos(), tooltip_html(self.table.heading_tip(logical)), self)
+                    return True
+            return super().viewportEvent(event)
+
+        def place_inputs(self):
+            top, height = self.label_height() + 1, self.input_height()
+            for logical, widget in enumerate(self.inputs):
+                x = self.sectionViewportPosition(logical)
+                widget.setGeometry(x + 3, top, max(24, self.sectionSize(logical) - 6), height)
+                widget.setVisible(not self.isSectionHidden(logical))
+
+    class FilterTable(QtWidgets.QWidget):
+        """A table whose header sorts on click and filters per column directly under it.
+
+        `columns`: (id, heading, width, stretch, choices); choices None for text,
+        else labels or (label, value) pairs. A text column filters by "contains"
+        (any case), a column with choices by an exact value. Filtering and
+        sorting change only what is shown, never the rows.
+        """
+
+        ALL = 'All'
+
+        def __init__(self, dialog, columns, selection='extended', tips=None, empty_text='No entries',
+                     check_column=None, pill_columns=(), editable=(), tint=None, muted=None):
+            super().__init__()
+            self.dialog = dialog
+            self.columns = columns
+            self.rows = []
+            self.shown = None
+            self.sort_column, self.descending = None, False
+            self.empty_text = empty_text
+            self.editable = set(editable)
+            self.tint, self.muted = tint, muted
+            self.on_edit = self.edit_text = None
+            layout = QtWidgets.QVBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(round(6 * dialog.zoom))
+            self.frame = QtWidgets.QFrame()
+            self.frame.setObjectName('tableFrame')
+            self.frame.setStyleSheet('QFrame#tableFrame {{ border: 1px solid {}; border-radius: 8px; background: {}; }}'
+                                     .format(Theme.BORDER, Theme.SURFACE))
+            inner = QtWidgets.QVBoxLayout(self.frame)
+            inner.setContentsMargins(1, 1, 1, 1)
+            self.view = QtWidgets.QTableView()
+            self.view.setFrameShape(enum('Shape.NoFrame', QtWidgets.QFrame))
+            self.model = RowModel(self)
+            self.header = FilterHeader(self)
+            self.view.setHorizontalHeader(self.header)
+            self.view.setModel(self.model)
+            self.view.verticalHeader().hide()
+            self.view.setShowGrid(False)
+            self.view.setWordWrap(False)
+            self.view.setAlternatingRowColors(True)
+            self.view.setTextElideMode(enum('TextElideMode.ElideRight'))
+            self.view.setSelectionBehavior(enum('SelectionBehavior.SelectRows', view))
+            self.view.setSelectionMode(enum('SelectionMode.ExtendedSelection' if selection == 'extended'
+                                            else 'SelectionMode.SingleSelection', view))
+            self.view.setEditTriggers(enum('EditTrigger.DoubleClicked', view) | enum('EditTrigger.EditKeyPressed', view)
+                                      if self.editable else enum('EditTrigger.NoEditTriggers', view))
+            self.view.setHorizontalScrollMode(enum('ScrollMode.ScrollPerPixel', view))
+            self.view.setVerticalScrollMode(enum('ScrollMode.ScrollPerPixel', view))
+            self.view.horizontalScrollBar().valueChanged.connect(lambda *_args: self.header.place_inputs())
+            inner.addWidget(self.view)
+            layout.addWidget(self.frame, 1)
+            self.header.sectionClicked.connect(self.toggle_sort)
+            self.delegates = []
+            for index, column in enumerate(columns):
+                delegate = None
+                if index == check_column:
+                    delegate = CheckDelegate(self.view)
+                elif column[0] in pill_columns:
+                    delegate = PillDelegate(self.view)
+                if delegate is not None:
+                    self.view.setItemDelegateForColumn(index, delegate)
+                    self.delegates.append(delegate)
+            self.choice_values = []
+            for index, (name, heading, _, _, choices) in enumerate(columns):
+                if choices:
+                    pairs = [item if isinstance(item, tuple) else (item, item) for item in choices]
+                    widget = QtWidgets.QComboBox(self.header)
+                    widget.addItems([self.ALL] + [label for label, _ in pairs])
+                    widget.currentIndexChanged.connect(dialog.safe(self.render))
+                    self.choice_values.append(dict(pairs))
+                    hint = 'Shows only rows with this {}.'.format(heading)
+                else:
+                    widget = QtWidgets.QLineEdit(self.header)
+                    widget.setPlaceholderText('Filter')
+                    widget.setClearButtonEnabled(True)
+                    widget.textChanged.connect(lambda *_args: self.timer.start())
+                    KeyFilter(widget, {'Escape': lambda edit=widget: edit.clear() if edit.text() else False})
+                    self.choice_values.append(None)
+                    hint = 'Shows only rows whose {} contains this text (any case).'.format(heading)
+                widget.setObjectName('filter')
+                widget.setToolTip(tooltip_html(hint))
+                self.header.inputs.append(widget)
+            self.tips = tips or {}
+            # Filter after a short pause so that typing stays responsive with many rows.
+            self.timer = QtCore.QTimer(self)
+            self.timer.setSingleShot(True)
+            self.timer.setInterval(120)
+            self.timer.timeout.connect(dialog.safe(self.render))
+            footer = QtWidgets.QHBoxLayout()
+            footer.setContentsMargins(2, 0, 0, 0)
+            self.count = QtWidgets.QLabel('')
+            self.count.setObjectName('counter')
+            footer.addWidget(self.count)
+            self.clear = QtWidgets.QPushButton('Clear filters')
+            self.clear.setObjectName('ghost')
+            self.clear.setCursor(enum('CursorShape.PointingHandCursor'))
+            self.clear.clicked.connect(dialog.safe(self.clear_filters))
+            self.clear.hide()
+            footer.addWidget(self.clear)
+            footer.addStretch(1)
+            layout.addLayout(footer)
+            self.empty = QtWidgets.QLabel(self.view.viewport())
+            self.empty.setObjectName('muted')
+            self.empty.setAlignment(align_centre)
+            self.empty.setWordWrap(True)
+            self.view.viewport().installEventFilter(self)
+            self._widths = None
+            self.apply_zoom()
+
+        def apply_zoom(self):
+            zoom = self.dialog.zoom
+            self.view.verticalHeader().setDefaultSectionSize(round(32 * zoom))
+            self.header.setMinimumHeight(self.header.sizeHint().height())
+            self.header.setMaximumHeight(self.header.sizeHint().height())
+            self.header.setMinimumSectionSize(round(40 * zoom))
+            self._widths = None
+            self.layout_columns()
+
+        def layout_columns(self):
+            """Stretching columns share the spare width; narrow panes scroll instead of squeezing every field."""
+            width = self.view.viewport().width()
+            if width <= 1:
+                return
+            zoom = self.dialog.zoom
+            minimum = [round(max(50, min(base, 120 if stretch else 140)) * zoom) for _, _, base, stretch, _ in self.columns]
+            widths = column_widths([(round(base * zoom), stretch) for _, _, base, stretch, _ in self.columns],
+                                   max(width, sum(minimum)))
+            widths = [max(value, least) for value, least in zip(widths, minimum)]
+            if widths != self._widths:
+                self._widths = widths
+                for index, value in enumerate(widths):
+                    self.header.resizeSection(index, value)
+            self.header.place_inputs()
+
+        def eventFilter(self, obj, event):
+            if _enum_int(event.type()) == events['Resize']:
+                self.empty.setGeometry(obj.rect().adjusted(12, 0, -12, 0))
+                self.layout_columns()
+            return False
+
+        def heading_tip(self, logical):
+            tip = self.tips.get(self.columns[logical][0])
+            return (tip + '\n\n' if tip else '') + 'Click the heading to sort, click again to reverse.'
+
+        def active_filters(self):
+            filters = {}
+            for index, widget in enumerate(self.header.inputs):
+                choices = self.choice_values[index]
+                if choices is None and widget.text().strip():
+                    filters[index] = ('contains', widget.text().strip())
+                elif choices is not None and widget.currentIndex() > 0:
+                    text = widget.currentText()
+                    filters[index] = ('equals', choices.get(text, text))
+            return filters
+
+        def set_rows(self, rows):
+            rows = list(rows)
+            if rows == self.rows and self.shown is not None:
+                return  # nothing changed: keep the selection and the scroll position
+            self.rows = rows
+            self.render()
+
+        def render(self):
+            self.timer.stop()
+            filters = self.active_filters()
+            rows = filter_rows(self.rows, filters)
+            if self.sort_column is not None:
+                rows = sort_rows(rows, self.sort_column, self.descending)
+            if rows != self.shown:
+                keep, current = self.selection(), self.current()
+                scroll = self.view.verticalScrollBar().value()
+                self.model.replace(rows)
+                self.shown = rows
+                self.select(keep, current)
+                self.view.verticalScrollBar().setValue(scroll)
+            self.count.setText('{} of {} shown'.format(len(rows), len(self.rows)) if filters else
+                               '{} {}'.format(len(rows), 'entry' if len(rows) == 1 else 'entries'))
+            self.clear.setVisible(bool(filters))
+            self.empty.setText('No matching entries' if filters else self.empty_text)
+            self.empty.setVisible(not rows)
+            self.empty.setGeometry(self.view.viewport().rect().adjusted(12, 0, -12, 0))
+            if self.sort_column is None:
+                self.header.setSortIndicatorShown(False)
             else:
-                widget = ttk.Entry(self.filter_bar, textvariable=variable, style='Filter.TEntry')
-                variable.trace_add('write', lambda *_args: self._schedule())
-                self.choice_values.append(None)
-            tip = (tips or {}).get(columns[index][0])
-            dialog.tip(label, (tip + '\n\n' if tip else '') + 'Click the heading to sort, click again to reverse.')
-            dialog.tip(widget, 'Shows only rows with this {}.'.format(heading) if choices else
-                       'Shows only rows whose {} contains this text (any case).'.format(heading))
-            self.labels.append(label)
-            self.inputs.append(widget)
-            self.values.append(variable)
-        self.tree.bind('<Configure>', lambda _event: self.layout())
+                self.header.setSortIndicatorShown(True)
+                self.header.setSortIndicator(self.sort_column, enum('SortOrder.DescendingOrder' if self.descending
+                                                                    else 'SortOrder.AscendingOrder'))
 
-    def grid(self, **options):
-        self.frame.grid(**options)
+        def row_of(self, key):
+            for row, (item, _) in enumerate(self.model.rows):
+                if str(item) == str(key):
+                    return row
+            return None
 
-    def layout(self):
-        """Give the columns their widths and put each header label and filter exactly above its column."""
-        width = self.tree.winfo_width()
-        if width <= 1:
-            return
-        # Keep dates, flags and filters readable. Narrow panes scroll horizontally
-        # instead of squeezing every field down to a few characters.
-        scale = self.dialog.ui_scale
-        minimum = [round(max(50, min(base, 140))*scale) for _, _, base, _, _ in self.columns]
-        widths = column_widths([(round(base*scale), stretch) for _, _, base, stretch, _ in self.columns],
-                               max(width, sum(minimum)))
-        widths = [max(value, least) for value, least in zip(widths, minimum)]
-        self._column_sizes = widths
-        for index, (name, _, _, _, _) in enumerate(self.columns):
-            column_width = widths[index]
-            self.tree.column(name, width=column_width, minwidth=20, stretch=False)
-        self._place_headers()
+        def select(self, keys, current=None):
+            model = self.view.selectionModel()
+            model.clearSelection()
+            command = enum('SelectionFlag.Select', QtCore.QItemSelectionModel) | \
+                enum('SelectionFlag.Rows', QtCore.QItemSelectionModel)
+            for key in keys:
+                row = self.row_of(key)
+                if row is not None:
+                    model.select(self.model.index(row, 0), command)
+            row = self.row_of(current) if current is not None else None
+            if row is not None:
+                model.setCurrentIndex(self.model.index(row, 0), enum('SelectionFlag.NoUpdate', QtCore.QItemSelectionModel))
+                self.view.scrollTo(self.model.index(row, 0))
 
-    def _place_headers(self):
-        widths = getattr(self, '_column_sizes', [])
-        first = self.tree.xview()[0]
-        icon_width = int(self.tree.column('#0', 'width')) if 'tree' in self.tree.cget('show') else 0
-        x = icon_width - round(first * (sum(widths) + icon_width))
-        for index, column_width in enumerate(widths):
-            self.labels[index].place(x=x, y=0, width=column_width, height=self.HEADER_HEIGHT)
-            self.inputs[index].place(x=x + 2, y=3, width=max(26, column_width - 4), height=self.FILTER_HEIGHT - 6)
-            x += column_width
+        def selection(self):
+            rows = sorted({index.row() for index in self.view.selectionModel().selectedRows()})
+            return tuple(str(self.model.rows[row][0]) for row in rows if row < len(self.model.rows))
 
-    def _xscroll(self, first, last):
-        self.horizontal.set(first, last)
-        if float(first) <= 0 and float(last) >= 1:
-            self.horizontal.grid_remove()
-        else:
-            self.horizontal.grid()
-        self._place_headers()
+        def current(self):
+            index = self.view.currentIndex()
+            return str(self.model.rows[index.row()][0]) if index.isValid() and index.row() < len(self.model.rows) else None
 
-    def _yscroll(self, first, last):
-        self.scroll.set(first, last)
-        if float(first) <= 0 and float(last) >= 1:
-            self.scroll.grid_remove()
-        else:
-            self.scroll.grid(row=2, column=1, sticky='ns')
+        def key_at(self, index):
+            return str(self.model.rows[index.row()][0]) if index.isValid() and index.row() < len(self.model.rows) else None
 
-    def _schedule(self):
-        # Filter after a short pause so that typing stays responsive with many rows.
-        if self._pending is not None:
-            try:
-                self.dialog.root.after_cancel(self._pending)
-            except Exception:
-                pass
-        self._pending = self.dialog.root.after(120, self.render)
-
-    def active_filters(self):
-        filters = {}
-        for index, variable in enumerate(self.values):
-            text = variable.get()
-            choices = self.choice_values[index]
-            if choices is None and text.strip():
-                filters[index] = ('contains', text.strip())
-            elif choices is not None and text and text != self.ALL:
-                filters[index] = ('equals', choices.get(text, text))
-        return filters
-
-    def set_rows(self, rows):
-        rows = list(rows)
-        if rows == self.rows and self._visible_keys is not None:
-            return  # nothing changed: keep the rows, the selection and the scroll position
-        self.rows = rows
-        self.render()
-
-    def render(self):
-        if self._pending is not None:
-            # A direct render makes the debounced one pending from typing unnecessary.
-            try:
-                self.dialog.root.after_cancel(self._pending)
-            except Exception:
-                pass
-            self._pending = None
-        filters = self.active_filters()
-        rows = filter_rows(self.rows, filters)
-        if self.sort_column is not None:
-            rows = sort_rows(rows, self.sort_column, self.descending)
-        keep = self.tree.selection()
-        # Keep native rows alive across case changes and filtering. With
-        # thousands of outages, deleting/reinserting the entire table for one
-        # changed checkbox blocks Tk and also resets the scroll position.
-        data_keys = {str(key) for key, _ in self.rows}
-        removed = self._rendered.keys() - data_keys
-        if removed:
-            self.tree.delete(*removed)
-            for key in removed:
-                del self._rendered[key]
-        visible = []
-        for key, cells in rows:
-            key = str(key)
-            visible.append(key)
-            tag = cells[self.tag_column] if self.tag_column is not None and cells[self.tag_column] else None
-            tags = (tag,) if tag else ()
-            state = (tuple(cells), tags)
-            if key not in self._rendered:
-                self.tree.insert('', 'end', iid=key, values=cells, tags=tags)
-            elif self._rendered[key] != state:
-                self.tree.item(key, values=cells, tags=tags)
-            self._rendered[key] = state
-        visible = tuple(visible)
-        if visible != self._visible_keys:
-            # One call orders the visible rows and detaches filtered rows;
-            # clearing a filter can reattach them without rebuilding them.
-            self.tree.set_children('', *visible)
-            self._visible_keys = visible
-        visible_keys = set(visible)
-        still = tuple(key for key in keep if key in visible_keys)
-        if still != self.tree.selection():
-            self.tree.selection_set(still)
-        if self.tree.focus() not in visible_keys:
-            self.tree.focus('')  # Space must never toggle an outage hidden by a filter.
-        self.count.configure(text='{} of {} shown'.format(len(rows), len(self.rows)) if filters else '{} shown'.format(len(rows)))
-        if rows:
-            self.empty.place_forget()
-        else:
-            if filters:
-                text = 'No matching entries'
+        def toggle_sort(self, column):
+            if self.sort_column == column:
+                self.descending = not self.descending
             else:
-                text = getattr(self, 'empty_text', 'No entries')
-            self.empty.configure(text=text)
-            self.empty.place(relx=0.5, rely=0.5, anchor='center', relwidth=0.95)
-        if filters:
-            self.clear.grid()
-        else:
-            self.clear.grid_remove()
-        for index, label in enumerate(self.labels):
-            arrow = '' if index != self.sort_column else (' ▼' if self.descending else ' ▲')
-            label.configure(text=self.columns[index][1] + arrow)
+                self.sort_column, self.descending = column, False
+            self.render()
 
-    def toggle_sort(self, column):
-        if self.sort_column == column:
-            self.descending = not self.descending
-        else:
-            self.sort_column, self.descending = column, False
-        self.render()
+        def clear_filters(self):
+            for index, widget in enumerate(self.header.inputs):
+                widget.blockSignals(True)
+                if self.choice_values[index] is None:
+                    widget.clear()
+                else:
+                    widget.setCurrentIndex(0)
+                widget.blockSignals(False)
+            self.render()
 
-    def clear_filters(self):
-        for index, variable in enumerate(self.values):
-            variable.set(self.ALL if self.choice_values[index] is not None else '')
-        self.render()
+        def focus_filter(self, column):
+            widget = self.header.inputs[column]
+            widget.setFocus()
+            if hasattr(widget, 'selectAll'):
+                widget.selectAll()
 
-    def selection(self):
-        return self.tree.selection()
+    class Timeline(QtWidgets.QWidget):
+        """The case's planned outages as bars on one axis; long empty gaps are drawn short and hatched."""
+
+        def __init__(self, dialog):
+            super().__init__()
+            self.dialog = dialog
+            self.items, self.overlaps, self.bars = [], [], []
+            self.setMouseTracking(True)
+
+        def set_items(self, items, overlaps):
+            self.items, self.overlaps = items, overlaps
+            self.setMinimumHeight(self.wanted_height())
+            self.update()
+
+        def wanted_height(self):
+            zoom = self.dialog.zoom
+            if not self.items:
+                return round(44 * zoom)
+            return round((14 + 28 * len(self.items) + 30) * zoom)
+
+        def sizeHint(self):
+            return QtCore.QSize(480, self.wanted_height())
+
+        def paintEvent(self, _event):
+            zoom = self.dialog.zoom
+            painter = QtGui.QPainter(self)
+            painter.setRenderHint(antialias)
+            painter.fillRect(self.rect(), colour(Theme.SURFACE))
+            metrics = QtGui.QFontMetrics(self.font())
+            self.bars = []
+            if not self.items:
+                painter.setPen(colour(Theme.MUTED))
+                painter.drawText(self.rect().adjusted(4, 0, 0, 0), align_left,
+                                 'No planned outage with a readable window in this case.')
+                return
+            width = max(self.width(), 320)
+            label_width = round(min(190 * zoom, max(96 * zoom, width * 0.3)))
+            row_height, top, right_pad = round(28 * zoom), round(8 * zoom), round(14 * zoom)
+            position, breaks = timeline_scale([(start, end) for _, start, end, _ in self.items],
+                                              width - label_width - right_pad)
+            x = lambda moment: label_width + position(moment)
+            bottom = top + row_height * len(self.items)
+            for left, right in breaks:
+                band = QtCore.QRectF(label_width + left, top - 4, right - left, bottom - top + 4)
+                painter.fillRect(band, colour(Theme.GAP))
+                painter.fillRect(band, QtGui.QBrush(colour(Theme.BORDER_STRONG), enum('BrushStyle.BDiagPattern')))
+            for start, end in self.overlaps:
+                painter.fillRect(QtCore.QRectF(x(start), top - 4, max(x(end) - x(start), 2), bottom - top + 4),
+                                 colour(Theme.OVERLAP))
+            for index, (name, start, end, kind) in enumerate(self.items):
+                y = top + index * row_height
+                if index:
+                    painter.setPen(QtGui.QPen(colour(Theme.DIVIDER), 1))
+                    painter.drawLine(0, y, width, y)
+                painter.setPen(colour(Theme.TEXT))
+                text = metrics.elidedText(name, enum('TextElideMode.ElideRight'), label_width - 16)
+                painter.drawText(QtCore.QRectF(4, y, label_width - 12, row_height), align_left, text)
+                left = x(start)
+                bar = QtCore.QRectF(left, y + 6 * zoom, max(x(end) - left, 4), row_height - 12 * zoom)
+                painter.setPen(no_pen)
+                painter.setBrush(colour(Theme.PRIMARY if kind == 'case' else Theme.FIXED))
+                painter.drawRoundedRect(bar, 4, 4)
+                self.bars.append((bar.adjusted(-2, -4, 2, 4), name, start, end, kind))
+            painter.setPen(QtGui.QPen(colour(Theme.BORDER_STRONG), 1))
+            painter.drawLine(label_width, bottom + 3, width - right_pad, bottom + 3)
+            painter.setPen(colour(Theme.MUTED))
+            first = min(item[1] for item in self.items)
+            last = max(item[2] for item in self.items)
+            caption = QtCore.QRectF(label_width, bottom + 6, width - label_width - right_pad, metrics.height() + 4)
+            painter.drawText(caption, enum('AlignmentFlag.AlignLeft') | enum('AlignmentFlag.AlignTop'),
+                             _format_pf_time(first))
+            painter.drawText(caption, enum('AlignmentFlag.AlignRight') | enum('AlignmentFlag.AlignTop'),
+                             _format_pf_time(last))
+
+        def event(self, event):
+            if _enum_int(event.type()) == events['ToolTip']:
+                point = event.pos()
+                for rect, name, start, end, kind in self.bars:
+                    if rect.contains(QtCore.QPointF(point)):
+                        QtWidgets.QToolTip.showText(event.globalPos(), tooltip_html('{}\n{} to {}\n{}'.format(
+                            name, _format_pf_time(start), _format_pf_time(end),
+                            'Case outage' if kind == 'case' else 'Fixed background outage')), self)
+                        return True
+                QtWidgets.QToolTip.showText(event.globalPos(), tooltip_html(
+                    'Planning windows only. Hatched bands compress long gaps; bar lengths across those gaps are not '
+                    'to scale.'), self)
+                return True
+            return super().event(event)
+
+    class Window(QtWidgets.QDialog):
+        """The dialog window; closing and Escape go through the case manager's own cancel."""
+
+        def __init__(self):
+            super().__init__()
+            self.on_reject = None
+
+        def reject(self):
+            if self.on_reject is not None:
+                self.on_reject()
+            else:
+                super().reject()
+
+        def done_now(self, code):
+            QtWidgets.QDialog.done(self, code)
+
+    return types.SimpleNamespace(
+        binding=binding, QtCore=QtCore, QtGui=QtGui, QtWidgets=QtWidgets, Qt=Qt, enum=enum, roles=roles, keys=keys,
+        QShortcut=QShortcut, KeyFilter=KeyFilter, FilterTable=FilterTable, Timeline=Timeline, Window=Window,
+        colour=colour, align_left=align_left)
+
+
+def qt_application(qt):
+    """The QApplication of this process: PowerFactory's when it has one, else one created once and kept alive.
+
+    The case manager never quits, restyles or replaces the host application.
+    """
+    import threading
+    global _QT_APPLICATION
+    app = qt.QtWidgets.QApplication.instance()
+    if app is None:
+        if threading.current_thread() is not threading.main_thread():
+            raise CaseManagerUnavailable('Qt needs the GUI main thread. Start the ComPython directly from PowerFactory.')
+        if qt.binding == 'PyQt5':
+            for name in ('AA_EnableHighDpiScaling', 'AA_UseHighDpiPixmaps'):
+                attribute = getattr(qt.Qt, name, None)
+                if attribute is not None:
+                    qt.QtCore.QCoreApplication.setAttribute(attribute, True)
+        app = qt.QtWidgets.QApplication(['Outage Assessment'])
+    if not isinstance(app, qt.QtWidgets.QApplication):
+        raise CaseManagerUnavailable('The Qt application of this process has no widget support.')
+    if qt.QtCore.QThread.currentThread() != app.thread():
+        raise CaseManagerUnavailable('The ComPython runs outside the Qt GUI thread. Start it directly from PowerFactory.')
+    _QT_APPLICATION = app
+    return app
 
 
 class CaseManagerDialog:
-    """The tkinter window of the case manager; all state lives in a CaseEditor.
+    """The PyQt window of the case manager; all state lives in a CaseEditor.
 
-    Exactly two tabs. "Case Manager": left to right every available planned
-    outage, the planned outages of the selected case and the planning cases;
-    below them the calculation choice (n-0, n-1, (n-1)'), the problems and a
-    collapsible calculation preview. "Settings": limits, classification,
-    contingency analysis (read only), the QDS time base (read only) and the
-    fixed background outages and rules. A status line and the action bar stay
-    visible on both tabs. Every table filters per column. The window only
-    configures the calculation; there is no results tab, results are the
-    PowerFactory result objects and the report.
+    Two pages, chosen in the masthead. "Case Manager": left to right every
+    available planned outage, the planned outages of the selected case and the
+    planning cases; below them the timeline, the calculation choice (n-0, n-1,
+    (n-1)'), the problems and a collapsible calculation preview. "Settings":
+    network scope, limits, classification, report and run, contingency
+    analysis (read only), the QDS time base (read only) and the fixed background
+    outages and rules. A status line and the action bar stay visible on both
+    pages. Every table sorts and filters per column. The window only configures
+    the calculation; results are the PowerFactory result objects and the report.
     """
 
-    # Presentation tokens only; no calculation or configuration defaults live here.
-    BACKGROUND, CARD, TEXT, MUTED = '#F3F7FA', '#FFFFFF', '#203449', '#64788B'
-    ACCENT, ACCENT_ACTIVE, SELECTED, PROBLEM = '#087F9C', '#06677F', '#E5F3FA', '#DC3545'
-    HEADER, FILTER, BORDER = '#EDF3F7', '#F7FAFC', '#DCE5EC'
-    MASTHEAD, MASTHEAD_MUTED, INSET = '#16384F', '#C5DCE8', '#EFF7FA'
-    FIXED, OVERLAP, GAP = '#64788B', '#DCEEF4', '#EDF1F5'
-    WARNING, SUCCESS = '#D97706', '#16835D'
     TAB_CASES, TAB_SETTINGS = 'Case Manager', 'Settings'
     SETTINGS_PAGES = (('Network scope', ('Network scope',)), ('Limits', ('Thermal limits', 'Voltage limits')),
                       ('Classification', ('Classification',)), ('Report and run', ('Report', 'Run')),
@@ -8468,32 +9441,125 @@ class CaseManagerDialog:
     PAGE_TIME, PAGE_FIXED = 'QDS time base', 'Fixed background & rules'
     ZOOM_LEVELS = (75, 90, 100, 110, 125, 150, 175, 200)
 
-    def __init__(self, root, editor, config_path, user, tk_modules):
-        self.root = root
+    def __init__(self, qt, editor, config_path, user):
+        self.qt = qt
         self.editor = editor
         self.config_path = config_path
         self.user = user
-        self.tk, self.ttk, self.messagebox, self.simpledialog = tk_modules
         self.selected = None
         self.outcome = None
-        self._preview_labels = []
-        self.inline_edit = None
-        self.tooltips = []
-        self.bold_font = 'TkDefaultFont'
-        # Settings tab: entry variable, entry, source label and message label per setting.
-        self.setting_vars, self.setting_inputs, self.setting_sources, self.setting_messages = {}, {}, {}, {}
+        self.zoom = 1.0
+        self.family = ''
         self.preview_visible = False
-        self.ui_zoom = 1.0
-        self._flow_layouts = []
+        self.images = None
+        # Settings page: input, source pill and message label per setting.
+        self.setting_inputs, self.setting_sources, self.setting_messages = {}, {}, {}
+        self._preview_rows = []
+        self._case_preview_text = None
+        self._filling = False
+
+    # --- small helpers ------------------------------------------------------------
+    def safe(self, callback):
+        """A slot that shows an exception instead of letting PyQt end the host process."""
+        def slot(*_args):
+            try:
+                return callback()
+            except Exception as exc:
+                self.report_error(type(exc), exc, None)
+        return slot
+
+    def report_error(self, kind, value, _trace):
+        try:
+            self.qt.QtWidgets.QMessageBox.critical(self.window, 'Outage Assessment Case Manager',
+                                                   '{}: {}'.format(kind.__name__, value))
+        except Exception:
+            pass
 
     def tip(self, widget, text):
-        """Explain `widget` on hover; returns the Tooltip."""
-        tooltip = Tooltip(self.tk, widget, text)
-        self.tooltips.append(tooltip)
-        return tooltip
+        widget.setToolTip(tooltip_html(text))
+        return widget
 
-    def tip_text(self, widget):
-        return '\n'.join(tooltip.text for tooltip in self.tooltips if tooltip.widget is widget)
+    def info(self, title, text, parent=None):
+        self.qt.QtWidgets.QMessageBox.information(parent or self.window, title, text)
+
+    def error(self, title, text, parent=None):
+        self.qt.QtWidgets.QMessageBox.critical(parent or self.window, title, text)
+
+    def ask(self, title, text):
+        box = self.qt.QtWidgets.QMessageBox
+        yes, no = self.qt.enum('StandardButton.Yes', box), self.qt.enum('StandardButton.No', box)
+        return box.question(self.window, title, text, yes | no, no) == yes
+
+    def label(self, text='', name=None, wrap=False, selectable=False):
+        widget = self.qt.QtWidgets.QLabel(text)
+        if name:
+            widget.setObjectName(name)
+        widget.setWordWrap(wrap)
+        if selectable:
+            widget.setTextInteractionFlags(self.qt.enum('TextInteractionFlag.TextSelectableByMouse'))
+        return widget
+
+    def button(self, text, callback, name=None, tip=None):
+        widget = self.qt.QtWidgets.QPushButton(text)
+        if name:
+            widget.setObjectName(name)
+        widget.setAutoDefault(False)
+        widget.setCursor(self.qt.enum('CursorShape.PointingHandCursor'))
+        widget.clicked.connect(self.safe(callback))
+        if tip:
+            self.tip(widget, tip)
+        return widget
+
+    def pill(self, text, tone='neutral'):
+        widget = self.label(text, 'pill')
+        widget.setProperty('tone', tone)
+        return widget
+
+    def set_property(self, widget, name, value):
+        """Change a dynamic property and let the style sheet see it."""
+        if widget.property(name) != value:
+            widget.setProperty(name, value)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+
+    def card(self, spacing=8, margins=16):
+        frame = self.qt.QtWidgets.QFrame()
+        frame.setObjectName('card')
+        layout = self.qt.QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(margins, margins - 2, margins, margins)
+        layout.setSpacing(spacing)
+        return frame, layout
+
+    def card_title(self, layout, text, tip=None, trailing=None):
+        row = self.qt.QtWidgets.QHBoxLayout()
+        row.setSpacing(8)
+        title = self.label(text, 'cardTitle')
+        if tip:
+            self.tip(title, tip)
+        row.addWidget(title)
+        row.addStretch(1)
+        if trailing is not None:
+            row.addWidget(trailing)
+        layout.addLayout(row)
+        return title
+
+    def row(self, *widgets, stretch=True, spacing=6):
+        layout = self.qt.QtWidgets.QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(spacing)
+        for widget in widgets:
+            layout.addWidget(widget)
+        if stretch:
+            layout.addStretch(1)
+        return layout
+
+    def scrolled(self, widget):
+        area = self.qt.QtWidgets.QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(self.qt.enum('Shape.NoFrame', self.qt.QtWidgets.QFrame))
+        widget.setObjectName('scrollBody')
+        area.setWidget(widget)
+        return area
 
     # --- window -----------------------------------------------------------------
     def build(self):
@@ -8501,1001 +9567,623 @@ class CaseManagerDialog:
             self._build()
 
     def _build(self):
-        ttk, root = self.ttk, self.root
-        self._style()
-        root.title('Outage Assessment - Case Manager')
-        root.geometry(window_geometry(root.winfo_screenwidth(), root.winfo_screenheight(), share=0.82, largest=(1200, 760)))
-        root.minsize(*minimum_window_size(root.winfo_screenwidth(), root.winfo_screenheight()))
-        root.configure(background=self.BACKGROUND)
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(1, weight=1)
-        masthead = ttk.Frame(root, style='Masthead.TFrame', padding=(24, 16))
-        masthead.grid(row=0, column=0, sticky='ew')
-        masthead.columnconfigure(1, weight=1)
-        ttk.Label(masthead, text='Outage Assessment', style='Brand.TLabel').grid(row=0, column=0, sticky='w', padx=(0, 32))
-        self.page_title = ttk.Label(masthead, text='Planning case manager', style='MastheadTitle.TLabel', wraplength=300)
-        self.page_title.grid(row=0, column=1, sticky='w')
-        self.page_hint = ttk.Label(masthead, text='Build independent cases. Check the settings. Start the calculation.',
-                                   style='MastheadHint.TLabel', wraplength=440)
-        self.page_hint.grid(row=1, column=1, sticky='w', pady=(4, 0))
-        def fit_header(event):
-            width = max(120, event.width - 250*self.ui_zoom)
-            self.page_title.configure(wraplength=width)
-            self.page_hint.configure(wraplength=width)
-        masthead.bind('<Configure>', fit_header, add='+')
-        self._bind_zoom_keys()
-        self.notebook = ttk.Notebook(root)
-        self.notebook.enable_traversal()
-        self.notebook.grid(row=1, column=0, sticky='nsew', padx=20, pady=(14, 0))
-        self.cases_tab = ttk.Frame(self.notebook, padding=(0, 8, 0, 0))
-        self.settings_tab = ttk.Frame(self.notebook, padding=(0, 8, 0, 0))
-        self.notebook.add(self.cases_tab, text=self.TAB_CASES)
-        self.notebook.add(self.settings_tab, text=self.TAB_SETTINGS)
-        self.notebook.bind('<<NotebookTabChanged>>', self._on_page_change)
-        self._build_case_manager(self.cases_tab)
-        self._build_settings(self.settings_tab)
-        bottom = ttk.Frame(root, padding=(20, 8, 20, 16))
-        bottom.grid(row=2, column=0, sticky='ew')
-        bottom.columnconfigure(0, weight=1)
-        ttk.Separator(bottom).grid(row=0, column=0, sticky='ew', pady=(0, 8))
-        self.status_line = self._wrapped_label(bottom, '', style='Status.TLabel', row=1, column=0, pady=(0, 10))
-        self.status_line.configure(cursor='hand2')
-        self.status_line.bind('<Button-1>', lambda _event: self.notebook.select(self.cases_tab))
-        self.tip(self.status_line, HELP_TEXTS['status_line'])
-        left_actions, right_actions = ttk.Frame(bottom), ttk.Frame(bottom)
-        left_actions.grid(row=2, column=0, sticky='w')
-        right_actions.grid(row=2, column=0, sticky='e')
-        for parent, actions in ((left_actions, (('Save configuration', self.save, 'save', 'TButton'),
-                                               ('Load saved configuration', self.load_saved, 'load', 'TButton'))),
-                                (right_actions, (('Cancel', self.cancel, 'cancel', 'TButton'),
-                                                 ('Start calculation', self.start, 'start', 'Accent.TButton')))):
-            for column, (text, command, key, style) in enumerate(actions):
-                button = ttk.Button(parent, text=text, style=style, command=command)
-                button.grid(row=0, column=column, padx=(0, 8) if column == 0 else 0)
-                self.tip(button, HELP_TEXTS[key])
-        def fit_actions(event):
-            stacked = left_actions.winfo_reqwidth() + right_actions.winfo_reqwidth() + 32 > event.width
-            right_actions.grid(row=3 if stacked else 2, column=0, sticky='e', pady=(8, 0) if stacked else 0)
-        bottom.bind('<Configure>', fit_actions, add='+')
-        root.protocol('WM_DELETE_WINDOW', self.cancel)
-        root.bind('<Escape>', self.on_escape)
+        qt = self.qt
+        widgets = qt.QtWidgets
+        self.window = window = qt.Window()
+        window.setObjectName('OutageAssessmentCaseManager')
+        window.on_reject = self.safe(self.on_escape)
+        window.setWindowTitle('Outage Assessment - Case Manager')
+        window.setAttribute(qt.enum('WidgetAttribute.WA_QuitOnClose'), False)
+        window.setWindowFlags(window.windowFlags() | qt.enum('WindowType.WindowMaximizeButtonHint')
+                              | qt.enum('WindowType.WindowMinimizeButtonHint'))
+        try:
+            families = set(qt.QtGui.QFontDatabase.families())  # PyQt6: static
+        except TypeError:
+            families = set(qt.QtGui.QFontDatabase().families())  # PyQt5: needs an instance
+        self.family = next((name for name in Theme.FONT_FAMILIES if name in families), '')
+        self.apply_style()
+        screen = qt.QtWidgets.QApplication.primaryScreen()
+        area = screen.availableGeometry() if screen is not None else qt.QtCore.QRect(0, 0, 1366, 768)
+        size, _, _ = window_geometry(area.width(), area.height(), share=0.86, largest=(1440, 900)).partition('+')
+        width, height = (int(value) for value in size.split('x'))
+        window.resize(width, height)
+        window.setMinimumSize(*minimum_window_size(area.width(), area.height()))
+        outer = widgets.QVBoxLayout(window)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self._build_masthead())
+        self.pages = widgets.QStackedWidget()
+        cases_page, settings_page = widgets.QWidget(), widgets.QWidget()
+        for page in (cases_page, settings_page):
+            page.setObjectName('page')
+            self.pages.addWidget(page)
+        outer.addWidget(self.pages, 1)
+        self._build_case_manager(cases_page)
+        self._build_settings(settings_page)
+        outer.addWidget(self._build_footer())
         self._bind_window_keys()
+        self.show_page(0)
         ids = self.editor.case_ids()
         self.refresh_all(ids[0] if ids else None)
-        self.root.update_idletasks()
-        self.place_dividers()
+        qt.QtCore.QTimer.singleShot(0, self.safe(self.place_dividers))
 
-    def _on_page_change(self, _event=None):
-        settings = self.notebook.select() == str(self.settings_tab)
-        self.page_title.configure(text='Settings' if settings else 'Planning case manager')
-        self.page_hint.configure(text='Configure network scope, evaluation limits and calculation settings.' if settings else
-                                 'Build independent cases. Check the settings. Start the calculation.')
+    def apply_style(self):
+        if self.images is None:
+            try:
+                self.images = indicator_images(self.qt)
+            except Exception:
+                self.images = {}  # Qt then draws its own indicators
+        self.window.setStyleSheet(stylesheet(self.zoom, self.family, self.images))
 
-    def _bind_zoom_keys(self):
-        modifiers = ['Control']
-        if self.root.tk.call('tk', 'windowingsystem') == 'aqua':
-            modifiers.append('Command')
-        for modifier in modifiers:
-            for key in ('plus', 'equal', 'KP_Add'):
-                self.root.bind('<{}-{}>'.format(modifier, key), lambda _event: self.step_zoom(1), add='+')
-            for key in ('minus', 'KP_Subtract'):
-                self.root.bind('<{}-{}>'.format(modifier, key), lambda _event: self.step_zoom(-1), add='+')
-            self.root.bind('<{}-0>'.format(modifier), lambda _event: self.set_zoom(100), add='+')
+    def _build_masthead(self):
+        widgets, qt = self.qt.QtWidgets, self.qt
+        masthead = widgets.QFrame()
+        masthead.setObjectName('masthead')
+        layout = widgets.QHBoxLayout(masthead)
+        layout.setContentsMargins(24, 14, 20, 14)
+        layout.setSpacing(16)
+        brand = widgets.QVBoxLayout()
+        brand.setSpacing(2)
+        brand.addWidget(self.label('Outage Assessment', 'brand'))
+        layout.addLayout(brand)
+        divider = widgets.QFrame()
+        divider.setFixedWidth(1)
+        divider.setStyleSheet('background: #23395B;')
+        layout.addWidget(divider)
+        titles = widgets.QVBoxLayout()
+        titles.setSpacing(2)
+        self.page_title = self.label('Planning case manager', 'pageTitle')
+        self.page_hint = self.label('Build independent cases. Check the settings. Start the calculation.', 'pageHint',
+                                    wrap=True)
+        titles.addWidget(self.page_title)
+        titles.addWidget(self.page_hint)
+        layout.addLayout(titles, 1)
+        self.nav = []
+        tabs = widgets.QHBoxLayout()
+        tabs.setSpacing(4)
+        group = widgets.QButtonGroup(masthead)
+        group.setExclusive(True)
+        for index, text in enumerate((self.TAB_CASES, self.TAB_SETTINGS)):
+            button = widgets.QPushButton(text)
+            button.setObjectName('navTab')
+            button.setCheckable(True)
+            button.setAutoDefault(False)
+            button.setCursor(qt.enum('CursorShape.PointingHandCursor'))
+            button.clicked.connect(self.safe(lambda index=index: self.show_page(index)))
+            group.addButton(button)
+            tabs.addWidget(button)
+            self.nav.append(button)
+        self.nav_group = group
+        layout.addLayout(tabs)
+        return masthead
+
+    def show_page(self, index):
+        self.pages.setCurrentIndex(index)
+        self.nav[index].setChecked(True)
+        settings = index == 1
+        self.page_title.setText('Settings' if settings else 'Planning case manager')
+        self.page_hint.setText('Configure network scope, evaluation limits and calculation settings.' if settings else
+                               'Build independent cases. Check the settings. Start the calculation.')
+
+    def _build_footer(self):
+        widgets = self.qt.QtWidgets
+        footer = widgets.QFrame()
+        footer.setObjectName('footer')
+        layout = widgets.QHBoxLayout(footer)
+        layout.setContentsMargins(20, 10, 20, 12)
+        layout.setSpacing(8)
+        layout.addWidget(self.button('Save configuration', self.save, tip=HELP_TEXTS['save']))
+        layout.addWidget(self.button('Load saved configuration', self.load_saved, tip=HELP_TEXTS['load']))
+        self.status_line = self.button('', lambda: self.show_page(0), 'statusLine', HELP_TEXTS['status_line'])
+        self.status_line.setSizePolicy(self.qt.enum('Policy.Ignored', widgets.QSizePolicy),
+                                       self.qt.enum('Policy.Preferred', widgets.QSizePolicy))
+        layout.addWidget(self.status_line, 1)
+        layout.addWidget(self.button('Cancel', self.cancel, tip=HELP_TEXTS['cancel']))
+        start = self.button('Start calculation', self.start, 'primary', HELP_TEXTS['start'])
+        layout.addWidget(start)
+        return footer
+
+    def place_dividers(self):
+        """Start with available outages : case outages : cases = 40 : 33 : 27; the engineer can drag them."""
+        width = max(self.panes.width(), 300)
+        self.panes.setSizes([int(width * 0.40), int(width * 0.33), int(width * 0.27)])
+        height = max(self.case_split.height(), 300)
+        self.case_split.setSizes([int(height * 0.66), int(height * 0.34)])
+        height = max(self.centre_split.height(), 200)
+        self.centre_split.setSizes([int(height * 0.55), int(height * 0.45)])
+
+    def _bind_window_keys(self):
+        """Window shortcuts; Qt maps Ctrl to Command on macOS. See KEYBOARD_SHORTCUTS."""
+        qt = self.qt
+        sequence = qt.QtGui.QKeySequence
+        for keys, command in ((('Ctrl+N',), self.new_case), (('Ctrl+S',), self.save), (('Ctrl+O',), self.load_saved),
+                              (('Ctrl+Return', 'Ctrl+Enter'), self.start), (('Ctrl+F',), self.focus_search),
+                              (('Ctrl++', 'Ctrl+='), lambda: self.step_zoom(1)), (('Ctrl+-',), lambda: self.step_zoom(-1)),
+                              (('Ctrl+0',), lambda: self.set_zoom(100))):
+            for key in keys:
+                shortcut = qt.QShortcut(sequence(key), self.window)
+                shortcut.activated.connect(self.safe(command))
 
     def step_zoom(self, direction):
-        current = round(self.ui_zoom * 100)
+        current = round(self.zoom * 100)
         choices = [value for value in self.ZOOM_LEVELS if (value > current if direction > 0 else value < current)]
-        return self.set_zoom((min(choices) if direction > 0 else max(choices)) if choices else current)
+        self.set_zoom((min(choices) if direction > 0 else max(choices)) if choices else current)
 
     def set_zoom(self, percent):
         """Session-only display scaling, independent of OS DPI and saved settings."""
         percent = max(75, min(200, int(str(percent).rstrip('%'))))
-        self.ui_zoom = percent / 100.0
-        for font, points in self.ui_fonts.values():
-            font.configure(size=round(points * self.ui_zoom))
-        self.device_scale = max(1.0, float(self.root.tk.call('tk', 'scaling')) / (96.0 / 72.0))
-        self.ui_scale = self.device_scale * self.ui_zoom
-        style = self.ttk.Style(self.root)
-        style.configure('Treeview', rowheight=round(32 * self.ui_scale))
-        style.configure('TButton', padding=(round(12*self.ui_zoom), round(8*self.ui_zoom)))
-        style.configure('Accent.TButton', padding=(round(20*self.ui_zoom), round(9*self.ui_zoom)))
-        for name in ('case_table', 'member_table', 'available_table', 'problem_table', 'fixed_table', 'rule_table'):
-            table = getattr(self, name)
-            table.HEADER_HEIGHT = round(34*self.ui_scale)
-            table.FILTER_HEIGHT = round(38*self.ui_scale)
-            table.header.configure(height=table.HEADER_HEIGHT)
-            table.filter_bar.configure(height=table.FILTER_HEIGHT)
-            table.layout()
-        self._size_settings_tabs()
-        for layout in self._flow_layouts:
-            layout()
-        self.draw_timeline()
-        return 'break'
+        self.zoom = percent / 100.0
+        self.apply_style()
 
-    def place_dividers(self):
-        """Start with available outages : case outages : cases = 40 : 38 : 22; the engineer can drag them."""
-        width = self.panes.winfo_width()
-        if width > 100:
-            self.panes.sashpos(0, int(width * 0.40))
-            self.panes.sashpos(1, int(width * 0.78))
+        def resize():
+            # After the style sheet has re-polished the fonts, so the metrics are current.
+            for table in self.tables():
+                table.apply_zoom()
+            self.timeline.set_items(self.timeline.items, self.timeline.overlaps)
+        self.qt.QtCore.QTimer.singleShot(0, self.safe(resize))
 
-    def report_error(self, kind, value, _trace):
-        # Tk swallows exceptions of button callbacks; show them instead, the
-        # window stays open and nothing has been calculated.
-        try:
-            self.messagebox.showerror('Outage Assessment Case Manager', '{}: {}'.format(kind.__name__, value), parent=self.root)
-        except Exception:
-            pass
+    def tables(self):
+        return (self.case_table, self.member_table, self.available_table, self.problem_table, self.fixed_table,
+                self.rule_table)
 
-    def _style(self):
-        """One ttk theme, with point-sized fonts and DPI-scaled widget metrics."""
-        style = self.ttk.Style(self.root)
-        if 'clam' in style.theme_names():
-            style.theme_use('clam')
-        families = set(self.tk.font.families(self.root))
-        default = self.tk.font.nametofont('TkDefaultFont').actual()['family']
-        family = next((name for name in ('Segoe UI', 'SF Pro Text', 'Helvetica Neue', 'DejaVu Sans') if name in families), default)
-        sizes = {'body': (11, 'normal'), 'bold': (11, 'bold'), 'small': (10, 'normal'),
-                 'brand': (23, 'bold'), 'page': (15, 'bold'), 'title': (12, 'bold'), 'user': (10, 'bold')}
-        self.ui_fonts = {name: (self.tk.font.Font(root=self.root, family=family, size=points, weight=weight), points)
-                         for name, (points, weight) in sizes.items()}
-        self.body_font, self.bold_font, self.small_font = [self.ui_fonts[name][0] for name in ('body', 'bold', 'small')]
-        # Tk scaling is pixels per point. Keep the OS scaling; don't reset it.
-        self.device_scale = max(1.0, float(self.root.tk.call('tk', 'scaling')) / (96.0 / 72.0))
-        self.ui_scale = self.device_scale
-        self.tk.font.nametofont('TkDefaultFont').configure(family=family, size=11)
-        self.tk.font.nametofont('TkTextFont').configure(family=family, size=11)
-        style.configure('.', background=self.BACKGROUND, foreground=self.TEXT, font=self.body_font)
-        for name, color in (('TFrame', self.BACKGROUND), ('Card.TFrame', self.CARD),
-                            ('Inset.TFrame', self.INSET), ('Masthead.TFrame', self.MASTHEAD)):
-            style.configure(name, background=color)
-        style.configure('Panel.TFrame', background=self.CARD, borderwidth=1, relief='solid', bordercolor=self.BORDER)
-        for name, background, foreground, font in (
-                ('TLabel', self.CARD, self.TEXT, self.body_font),
-                ('Brand.TLabel', self.MASTHEAD, self.CARD, self.ui_fonts['brand'][0]),
-                ('MastheadTitle.TLabel', self.MASTHEAD, self.CARD, self.ui_fonts['page'][0]),
-                ('MastheadHint.TLabel', self.MASTHEAD, self.MASTHEAD_MUTED, self.small_font),
-                ('Inset.TLabel', self.INSET, self.TEXT, self.body_font),
-                ('InsetTitle.TLabel', self.INSET, self.ACCENT, self.bold_font),
-                ('Optional.TLabel', self.INSET, self.MUTED, self.small_font),
-                ('Muted.TLabel', self.CARD, self.MUTED, self.small_font),
-                ('Link.TLabel', self.CARD, self.ACCENT, self.body_font),
-                ('Status.TLabel', self.BACKGROUND, self.MUTED, self.small_font),
-                ('Title.TLabel', self.CARD, self.TEXT, self.ui_fonts['title'][0]),
-                ('Section.TLabel', self.CARD, self.TEXT, self.bold_font),
-                ('Problem.TLabel', self.CARD, self.PROBLEM, self.small_font),
-                ('Source.TLabel', self.CARD, self.MUTED, self.small_font),
-                ('User.TLabel', self.CARD, self.ACCENT, self.ui_fonts['user'][0]),
-                ('Success.TLabel', self.CARD, self.SUCCESS, self.small_font)):
-            style.configure(name, background=background, foreground=foreground, font=font)
-        style.configure('Optional.TLabel', padding=(8, 3))
-        style.configure('TLabelframe', background=self.CARD, bordercolor=self.BORDER, relief='solid', borderwidth=1)
-        style.configure('TLabelframe.Label', background=self.CARD, foreground=self.TEXT, font=self.bold_font)
-        for name in ('TCheckbutton', 'TRadiobutton'):
-            style.configure(name, background=self.CARD, foreground=self.TEXT, padding=(0, 4), focuscolor=self.ACCENT)
-            style.map(name, background=[('active', self.INSET)], foreground=[('disabled', self.MUTED)],
-                      indicatorbackground=[('disabled', self.HEADER), ('selected', self.ACCENT)],
-                      indicatorforeground=[('selected', self.CARD)])
-        style.configure('TButton', padding=(12, 8), background=self.CARD, foreground=self.TEXT,
-                        borderwidth=1, bordercolor=self.BORDER, lightcolor=self.CARD, darkcolor=self.CARD,
-                        focuscolor=self.ACCENT, focusthickness=1)
-        style.map('TButton', background=[('disabled', self.FILTER), ('pressed', self.SELECTED), ('active', self.INSET)],
-                  foreground=[('disabled', self.MUTED)], bordercolor=[('focus', self.ACCENT), ('active', self.ACCENT)])
-        style.configure('Accent.TButton', background=self.ACCENT, foreground=self.CARD, bordercolor=self.ACCENT,
-                        lightcolor=self.ACCENT, darkcolor=self.ACCENT, padding=(20, 9), font=self.bold_font)
-        style.map('Accent.TButton', background=[('disabled', self.BORDER), ('pressed', self.ACCENT_ACTIVE), ('active', self.ACCENT_ACTIVE)],
-                  foreground=[('disabled', self.MUTED), ('!disabled', self.CARD)],
-                  bordercolor=[('focus', self.MASTHEAD), ('!disabled', self.ACCENT)])
-        style.configure('Link.TButton', padding=(4, 0), foreground=self.ACCENT, borderwidth=0)
-        style.configure('TNotebook', background=self.BACKGROUND, borderwidth=0, tabmargins=(0, 0, 0, 0))
-        style.configure('TNotebook.Tab', padding=(22, 10), font=self.bold_font, background=self.BACKGROUND,
-                        foreground=self.MUTED, bordercolor=self.BORDER)
-        style.map('TNotebook.Tab', background=[('selected', self.CARD), ('active', self.INSET)],
-                  foreground=[('selected', self.ACCENT)])
-        style.configure('Settings.TNotebook.Tab', padding=(12, 10), font=self.small_font)
-        style.configure('Settings.TNotebook', tabposition='wn')
-        for name in ('TEntry', 'TCombobox'):
-            style.configure(name, fieldbackground=self.CARD, background=self.FILTER, foreground=self.TEXT,
-                            padding=(8, 6), bordercolor=self.BORDER, lightcolor=self.BORDER, darkcolor=self.BORDER,
-                            arrowcolor=self.MUTED, selectbackground=self.SELECTED, selectforeground=self.TEXT)
-            style.map(name, bordercolor=[('focus', self.ACCENT)],
-                      fieldbackground=[('disabled', self.HEADER), ('readonly', self.CARD)],
-                      foreground=[('disabled', self.MUTED)], background=[('active', self.SELECTED)])
-        style.configure('Filter.TEntry', padding=(5, 4), font=self.small_font)
-        style.configure('Filter.TCombobox', padding=(5, 4), font=self.small_font)
-        style.configure('Invalid.TEntry', fieldbackground='#FFF0F1', foreground=self.PROBLEM, bordercolor=self.PROBLEM)
-        style.configure('Treeview', rowheight=round(32 * self.ui_scale), font=self.body_font,
-                        background=self.CARD, fieldbackground=self.CARD, borderwidth=0,
-                        lightcolor=self.CARD, darkcolor=self.CARD)
-        style.map('Treeview', background=[('selected', self.SELECTED)], foreground=[('selected', self.TEXT)])
-        for orient in ('Vertical', 'Horizontal'):
-            name = orient + '.TScrollbar'
-            style.configure(name, arrowsize=12, background=self.BORDER, troughcolor=self.FILTER,
-                            borderwidth=0, gripcount=0, lightcolor=self.BORDER, darkcolor=self.BORDER)
-            style.map(name, background=[('pressed', self.ACCENT), ('active', self.MUTED)])
-        style.configure('TPanedwindow', background=self.BACKGROUND)
-        style.configure('Sash', sashthickness=10)
-        style.configure('TSeparator', background=self.BORDER)
-        self.root.option_add('*TCombobox*Listbox.font', self.body_font)
-        self.root.option_add('*TCombobox*Listbox.background', self.CARD)
-        self.root.option_add('*TCombobox*Listbox.foreground', self.TEXT)
-        self.root.option_add('*TCombobox*Listbox.selectBackground', self.SELECTED)
-        self.root.option_add('*TCombobox*Listbox.selectForeground', self.TEXT)
-
-
-    def _card(self, parent, **grid):
-        frame = self.ttk.Frame(parent, style='Panel.TFrame', padding=16)
-        frame.grid(**grid)
-        return frame
-
-    def _wrapped_label(self, parent, text, style='Muted.TLabel', **grid):
-        """Wrap help to its panel width, only when that width changes."""
-        label = self.ttk.Label(parent, text=text, style=style, wraplength=320)
-        label.grid(sticky='ew', **grid)
-        previous = [None]
-
-        def resize(event):
-            width = max(100, event.width - 32)
-            if width != previous[0]:
-                previous[0] = width
-                label.configure(wraplength=width)
-        parent.bind('<Configure>', resize, add='+')
-        return label
-
-    def _flow(self, parent, widgets, gap=6):
-        """Wrap a small action/legend row without changing its widgets or callbacks."""
-        def layout(_event=None):
-            available = max(1, parent.winfo_width())
-            row, column, used = 0, 0, 0
-            for widget in widgets:
-                width = widget.winfo_reqwidth() + gap
-                if column and used + width > available:
-                    row, column, used = row + 1, 0, 0
-                widget.grid(row=row, column=column, sticky='w', padx=(0, gap), pady=(0, 4))
-                column, used = column + 1, used + width
-            ancestor = parent
-            while ancestor is not None and not hasattr(ancestor, '_fit_viewport'):
-                ancestor = getattr(ancestor, 'master', None)
-            if ancestor is not None:
-                self.root.after_idle(ancestor._fit_viewport)
-        parent.bind('<Configure>', layout, add='+')
-        self._flow_layouts.append(layout)
-
-    # --- tab "Case Manager" ------------------------------------------------------
-    def _build_case_manager(self, tab):
-        """A scrolling workspace; the root's status and action bar never scroll."""
-        content = self._scrolled(tab)
-        self.case_content = content
-        content.columnconfigure(0, weight=1)
-        content.rowconfigure(0, weight=3)
-        workspace = self.ttk.Frame(content)
-        workspace.grid(row=0, column=0, sticky='nsew')
-        self._build_workspace(workspace)
-        self._build_timeline(content)
-        strip = self.ttk.Frame(content)
-        strip.grid(row=2, column=0, sticky='nsew', pady=(12, 0))
-        self._build_calculation(strip)
-
-
-    def _build_workspace(self, tab):
-        ttk = self.ttk
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(0, weight=1)
-        self.panes = ttk.Panedwindow(tab, orient='horizontal')
-        self.panes.grid(row=0, column=0, sticky='nsew')
+    # --- page "Case Manager" -----------------------------------------------------
+    def _build_case_manager(self, page):
+        widgets, qt = self.qt.QtWidgets, self.qt
+        layout = widgets.QVBoxLayout(page)
+        layout.setContentsMargins(16, 14, 16, 10)
+        self.case_split = widgets.QSplitter(qt.enum('Orientation.Vertical'))
+        self.case_split.setChildrenCollapsible(False)
+        self.case_split.setHandleWidth(10)
+        self.panes = widgets.QSplitter(qt.enum('Orientation.Horizontal'))
+        self.panes.setChildrenCollapsible(False)
+        self.panes.setHandleWidth(10)
         # Left to right the way an outage travels: available, into the case, the cases.
-        left, centre, right = (ttk.Frame(self.panes, style='Panel.TFrame', padding=14) for _ in range(3))
-        self.panes.add(left, weight=40)
-        self.panes.add(centre, weight=38)
-        self.panes.add(right, weight=22)
-        self._build_available(left)
-        self._build_case_outages(centre)
-        self._build_cases(right)
+        for build in (self._build_available, self._build_case_outages, self._build_cases):
+            frame, card = self.card()
+            build(card)
+            self.panes.addWidget(frame)
+        self.case_split.addWidget(self.panes)
+        self.case_split.addWidget(self._build_calculation())
+        layout.addWidget(self.case_split, 1)
 
-    def _build_cases(self, pane):
-        ttk = self.ttk
-        pane.columnconfigure(0, weight=1)
-        pane.rowconfigure(1, weight=1, minsize=140)
-        title = ttk.Frame(pane, style='Card.TFrame')
-        title.grid(row=0, column=0, sticky='ew', pady=(0, 6))
-        title.columnconfigure(0, weight=1)
-        ttk.Label(title, text='Planning cases', style='Title.TLabel').grid(row=0, column=0, sticky='w')
-        self.case_limit_label = ttk.Label(title, text='', style='Muted.TLabel')
-        self.case_limit_label.grid(row=0, column=1, sticky='e')
-        self.tip(self.case_limit_label, HELP_TEXTS['case_limit'])
-        self.case_table = FilterTable(self, pane, (
-            ('enabled', 'Run', 42, False, (('included', '\u2611'), ('excluded', '\u2610'))),
-            ('name', 'Planning case', 150, True, None), ('count', 'Outages', 56, False, None),
-            ('status', 'Status', 100, False, ('ready', 'not calculated', 'excluded'))), height=4, selectmode='browse',
-            tips={'enabled': HELP_TEXTS['enabled'], 'name': COLUMN_HELP['case_name'], 'count': COLUMN_HELP['case_count'], 'status': COLUMN_HELP['case_status']})
-        self.case_table.grid(row=1, column=0, sticky='nsew')
-        self.case_table.empty_text = 'Create your first planning case with "New"'
-        self.case_tree = self.case_table.tree
-        self.case_tree.bind('<<TreeviewSelect>>', self.on_case_select)
-        self.case_tree.bind('<Button-1>', self.on_case_flag_click)
-        self.case_tree.bind('<space>', lambda _event: self.toggle_case_enabled(self.case_tree.focus()) or 'break')
-        self.case_tree.bind('<Double-1>', self.on_case_double_click)
-        self.case_tree.bind('<F2>', lambda _event: self.rename_in_place())
-        self.case_tree.bind('<Return>', lambda _event: self.rename_in_place())
-        self._bind_delete(self.case_tree, self.delete_case)
-        buttons = ttk.Frame(pane, style='Card.TFrame')
-        buttons.grid(row=2, column=0, sticky='ew', pady=(6, 0))
-        self.case_buttons = {}
-        for column, (label, command) in enumerate((('New', self.new_case), ('Copy', self.copy_case),
-                                                   ('Delete', self.delete_case))):
-            buttons.columnconfigure(column, weight=1)
-            self.case_buttons[label] = ttk.Button(buttons, text=label, command=command, width=6)
-            self.case_buttons[label].grid(row=0, column=column, sticky='ew', padx=(0, 4) if column < 2 else 0)
-            self.tip(self.case_buttons[label], HELP_TEXTS[label])
-        self._flow(buttons, list(self.case_buttons.values()))
-        per_outage = ttk.Button(pane, text='One case per planned outage', command=self.one_case_per_outage)
-        per_outage.grid(row=3, column=0, sticky='ew', pady=(4, 8))
-        self.tip(per_outage, HELP_TEXTS['one_per_outage'])
-        self._wrapped_label(pane, 'Run: ☑ included · ☐ excluded. Click the flag or press Space. '
-                            'Excluded cases stay saved but are omitted from calculation and report.',
-                            row=4, column=0, pady=(2, 0))
-
-    def _build_case_outages(self, pane):
-        ttk = self.ttk
-        pane.columnconfigure(0, weight=1)
-        pane.rowconfigure(2, weight=1)
-        heading = ttk.Frame(pane, style='Card.TFrame')
-        heading.grid(row=0, column=0, sticky='ew')
-        heading.columnconfigure(0, weight=1)
-        self.case_title = ttk.Label(heading, text='', style='Title.TLabel', wraplength=280)
-        self.case_title.grid(row=0, column=0, sticky='ew')
-        heading.bind('<Configure>', lambda event: self.case_title.configure(wraplength=max(120, event.width)), add='+')
-        self.case_heading = heading
-        self.case_description = self._wrapped_label(heading, '', row=1, column=0, pady=(4, 0))
-        self.case_description.configure(cursor='xterm')
-        self.case_description.bind('<Double-1>', lambda _event: self.describe_in_place())
-        self.tip(self.case_description, HELP_TEXTS['description'])
-        self.counts_label = self._wrapped_label(pane, '', row=1, column=0, pady=(4, 12))
-        self.member_table = FilterTable(self, pane, (
-            ('fs', 'Planned outage', 170, True, None), ('equipment', 'Equipment', 160, True, None),
-            ('start', 'Start', 128, False, None), ('end', 'End', 128, False, None), ('prio', 'Priority', 70, False, None)), height=4,
-            tips={'prio': COLUMN_HELP['prio']})
-        self.member_table.empty_text = 'No planned outages assigned to this case'
-        self.member_table.grid(row=2, column=0, sticky='nsew')
-        self.member_tree = self.member_table.tree
-        self.member_tree.bind('<Double-1>', lambda _event: self.show_details(self.member_tree))
-        self._bind_delete(self.member_tree, self.remove_selected)
-        buttons = ttk.Frame(pane, style='Card.TFrame')
-        buttons.grid(row=3, column=0, sticky='ew', pady=(10, 0))
-        for column, (text, command, key) in enumerate((
-                ('Remove from case', self.remove_selected, 'remove'),
-                ('Details', lambda: self.show_details(self.member_tree), 'details'))):
-            button = ttk.Button(buttons, text=text, command=command)
-            button.grid(row=0, column=column, padx=(0, 6))
-            self.tip(button, HELP_TEXTS[key])
-        self._flow(buttons, buttons.winfo_children())
-        self._wrapped_label(pane, 'Removes only the assignment.', row=4, column=0, pady=(8, 0))
-
-    def _build_timeline(self, parent):
-        timeline = self._card(parent, row=1, column=0, sticky='nsew', pady=(12, 0))
-        timeline.columnconfigure(0, weight=1)
-        timeline.rowconfigure(2, weight=1)
-        title = self.ttk.Label(timeline, text='Timeline of the case', style='Title.TLabel')
-        title.grid(row=0, column=0, sticky='w')
-        self.tip(title, HELP_TEXTS['timeline'])
-        legend = self.ttk.Frame(timeline, style='Card.TFrame')
-        legend.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(8, 6))
-        for column, (color, text) in enumerate(((self.ACCENT, 'Case outage'), (self.FIXED, 'Shared outage'),
-                                               (self.OVERLAP, 'Overlapping windows'), (self.GAP, 'Shortened gap'))):
-            item = self.ttk.Frame(legend, style='Card.TFrame')
-            self.tk.Label(item, text='  ', background=color).grid(row=0, column=0, padx=(0, 6))
-            self.ttk.Label(item, text=text, style='Muted.TLabel').grid(row=0, column=1, padx=(0, 12))
-        self._flow(legend, legend.winfo_children())
-        self.canvas = self.tk.Canvas(timeline, height=78, background=self.CARD, highlightthickness=0)
-        scroll = self.ttk.Scrollbar(timeline, orient='vertical', command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=lambda first, last: self._scrollbar(scroll, first, last))
-        self.canvas.grid(row=2, column=0, sticky='nsew')
-        scroll.grid(row=2, column=1, sticky='ns')
-        self.canvas.bind('<Configure>', lambda _event: self.draw_timeline())
-        self._timeline_axis = self.ttk.Frame(timeline, style='Card.TFrame')
-        self._timeline_axis.grid(row=3, column=0, sticky='ew', pady=(4, 0))
-        self._timeline_axis.columnconfigure(1, weight=1)
-        self.timeline_start = self.ttk.Label(self._timeline_axis, style='Muted.TLabel')
-        self.timeline_start.grid(row=0, column=0, sticky='w')
-        self.timeline_end = self.ttk.Label(self._timeline_axis, style='Muted.TLabel')
-        self.timeline_end.grid(row=0, column=2, sticky='e')
-        self.tip(self._timeline_axis, 'Planning windows only. Light bands compress long gaps; bar lengths across those gaps are not to scale.')
-
-
-    def _build_available(self, pane):
-        ttk = self.ttk
-        pane.columnconfigure(0, weight=1)
-        pane.rowconfigure(1, weight=1)
-        title = ttk.Label(pane, text='Available planned outages', style='Title.TLabel')
-        title.grid(row=0, column=0, sticky='w', pady=(0, 6))
-        self.tip(title, HELP_TEXTS['planned_outages'])
-        self.available_table = FilterTable(self, pane, (
+    def _build_available(self, card):
+        self.card_title(card, 'Available planned outages', HELP_TEXTS['planned_outages'])
+        self.available_table = self.qt.FilterTable(self, (
             ('mark', 'In case', 78, False, (('in case', MARK_IN_CASE), ('free', MARK_FREE), ('fixed', MARK_FIXED))),
             ('fs', 'Planned outage', 140, True, None), ('equipment', 'Equipment', 110, True, None),
-            ('start', 'Start', 106, False, None), ('end', 'End', 106, False, None),
-            ('status', 'Status', 132, False, ('in simulated period', 'outside simulated period', 'Ignored in PowerFactory'))),
-            height=4, tag_column=0, tips={'mark': COLUMN_HELP['mark'], 'status': COLUMN_HELP['outage_status']})
-        self.available_table.empty_text = 'No planned outages available'
-        self.available_table.grid(row=1, column=0, sticky='nsew')
-        self.available_tree = self.available_table.tree
-        self.available_tree.tag_configure(MARK_IN_CASE, background=self.INSET)
-        self.available_tree.tag_configure(MARK_FIXED, background=self.HEADER)
-        self.available_tree.bind('<Button-1>', self.on_available_click)
-        self.available_tree.bind('<space>', lambda _event: self.toggle_outage(self.available_tree.focus()) or 'break')
-        self.available_tree.bind('<Double-1>', self.on_available_double_click)
-        self.available_tree.bind('<Return>', lambda _event: self.add_selected())
-        buttons = ttk.Frame(pane, style='Card.TFrame')
-        buttons.grid(row=2, column=0, sticky='ew', pady=(6, 0))
-        for column, (text, command, key) in enumerate((
-                ('Add to case', self.add_selected, 'add'), ('Set as fixed background', self.fix_selected, 'fix'),
-                ('Details', lambda: self.show_details(self.available_tree), 'details'))):
-            button = ttk.Button(buttons, text=text, command=command)
-            button.grid(row=0, column=column, padx=(0, 6))
-            self.tip(button, HELP_TEXTS[key])
-        self._flow(buttons, buttons.winfo_children())
-        self._wrapped_label(pane, 'Tick to add an outage to the selected case; untick to remove it. '
-                            '"Add to case" or Enter adds all selected rows.', row=3, column=0, pady=(6, 0))
+            ('start', 'Start', 128, False, None), ('end', 'End', 128, False, None),
+            ('status', 'Status', 150, False, ('in simulated period', 'outside simulated period', 'Ignored in PowerFactory'))),
+            tips={'mark': COLUMN_HELP['mark'], 'status': COLUMN_HELP['outage_status']},
+            empty_text='No planned outages available', check_column=0, pill_columns=('status',),
+            tint=lambda cells: Theme.PRIMARY_SOFT if cells[0] == MARK_IN_CASE else None,
+            muted=lambda cells: cells[0] == MARK_FIXED)
+        card.addWidget(self.available_table, 1)
+        view = self.available_table.view
+        view.clicked.connect(lambda index: self.safe(lambda: self.on_available_click(index))())
+        view.doubleClicked.connect(lambda index: self.safe(lambda: self.on_available_double_click(index))())
+        self.qt.KeyFilter(view, {'Space': lambda: self.toggle_outage(self.available_table.current()),
+                                 'Return|Enter': self.add_selected})
+        card.addLayout(self.row(self.button('Add to case', self.add_selected, 'primary', HELP_TEXTS['add']),
+                                self.button('Set as fixed background', self.fix_selected, tip=HELP_TEXTS['fix']),
+                                self.button('Details', lambda: self.show_details(self.available_table),
+                                            tip=HELP_TEXTS['details'])))
+        card.addWidget(self.label('Tick to add an outage to the selected case; untick to remove it. '
+                                  '"Add to case" or Enter adds all selected rows.', 'hint', wrap=True))
 
-    # --- tab "Fixed background & rules" -------------------------------------------
-    def _build_fixed_and_rules(self, tab):
-        ttk = self.ttk
-        tab = self._scrolled(tab, horizontal='zoom')
-        tab.columnconfigure(0, weight=1, uniform='overview')
-        tab.columnconfigure(1, weight=1, uniform='overview')
-        tab.rowconfigure(1, weight=1)
-        self._wrapped_label(tab, 'Optional settings: leave both sections empty to compare only the outages you assign to each case.',
-                            style='Status.TLabel', row=0, column=0, columnspan=2, pady=(0, 8))
-        fixed = self._card(tab, row=1, column=0, sticky='nsew', padx=(0, 5))
-        fixed.columnconfigure(0, weight=1)
-        fixed.rowconfigure(3, weight=1)
-        title = ttk.Frame(fixed, style='Card.TFrame')
-        title.grid(row=0, column=0, sticky='ew')
-        title.columnconfigure(0, weight=1)
-        ttk.Label(title, text='Fixed background outages', style='Title.TLabel').grid(row=0, column=0, sticky='w')
-        ttk.Label(title, text='Optional', style='Optional.TLabel').grid(row=0, column=1, sticky='e')
-        self._wrapped_label(fixed, 'Use this for outages that are already planned and should be shared by the reference '
-                            'and every case. Each outage still follows its own time window.',
-                            row=1, column=0, pady=(6, 10))
-        example = ttk.Frame(fixed, style='Inset.TFrame', padding=10)
-        example.grid(row=2, column=0, sticky='ew', pady=(0, 10))
-        example.columnconfigure(0, weight=1)
-        self._wrapped_label(example, 'Example: transformer T1 is already under maintenance',
-                            style='InsetTitle.TLabel', row=0, column=0, pady=(0, 5))
-        self._wrapped_label(example, 'Reference: T1\nCase A: T1 + line North\nCase B: T1 + line South',
-                            style='Inset.TLabel', row=1, column=0)
-        self.fixed_table = FilterTable(self, fixed, (
-            ('fs', 'Planned outage', 170, True, None), ('equipment', 'Equipment', 150, True, None), ('start', 'Start', 118, False, None),
-            ('end', 'End', 118, False, None), ('status', 'Status', 150, False,
-                                               ('in simulated period', 'outside simulated period', 'Ignored in PowerFactory'))), height=6,
-            tips={'status': COLUMN_HELP['outage_status']})
-        self.fixed_table.grid(row=3, column=0, sticky='nsew')
-        self.fixed_tree = self.fixed_table.tree
-        self.fixed_tree.bind('<Double-1>', lambda _event: self.show_details(self.fixed_tree))
-        self._bind_delete(self.fixed_tree, self.unfix_selected)
-        self._wrapped_label(fixed, 'Add a shared outage on the Case Manager tab with "Set as fixed background".',
-                            row=4, column=0, pady=(8, 4))
-        unfix = ttk.Button(fixed, text='Remove from fixed background', command=self.unfix_selected)
-        unfix.grid(row=5, column=0, sticky='w')
-        self.tip(unfix, HELP_TEXTS['unfix'])
+    def _build_case_outages(self, card):
+        widgets = self.qt.QtWidgets
+        self.case_title = self.label('', 'cardTitle', wrap=True)
+        card.addWidget(self.case_title)
+        self.case_description = widgets.QLineEdit()
+        self.case_description.setObjectName('description')
+        self.case_description.setPlaceholderText('Add a description...')
+        self.tip(self.case_description, 'Click to write or change the description of the case: Enter or a click '
+                                        'elsewhere applies, Escape restores it.')
+        self.case_description.editingFinished.connect(self.safe(self.apply_description))
+        self.qt.KeyFilter(self.case_description, {'Escape': self.revert_description})
+        card.addWidget(self.case_description)
+        self.counts_label = self.label('', 'muted', wrap=True)
+        card.addWidget(self.counts_label)
+        self.centre_split = widgets.QSplitter(self.qt.enum('Orientation.Vertical'))
+        self.centre_split.setChildrenCollapsible(False)
+        self.centre_split.setHandleWidth(12)
+        members = widgets.QWidget()
+        member_layout = widgets.QVBoxLayout(members)
+        member_layout.setContentsMargins(0, 0, 0, 0)
+        member_layout.setSpacing(8)
+        self.member_table = self.qt.FilterTable(self, (
+            ('fs', 'Planned outage', 170, True, None), ('equipment', 'Equipment', 160, True, None),
+            ('start', 'Start', 128, False, None), ('end', 'End', 128, False, None), ('prio', 'Priority', 74, False, None)),
+            tips={'prio': COLUMN_HELP['prio']}, empty_text='No planned outages assigned to this case')
+        member_layout.addWidget(self.member_table, 1)
+        self.member_table.view.doubleClicked.connect(lambda _index: self.safe(lambda: self.show_details(self.member_table))())
+        self.qt.KeyFilter(self.member_table.view, {'Delete|Backspace': self.remove_selected})
+        member_layout.addLayout(self.row(self.button('Remove from case', self.remove_selected, tip=HELP_TEXTS['remove']),
+                                         self.button('Details', lambda: self.show_details(self.member_table),
+                                                     tip=HELP_TEXTS['details'])))
+        self.centre_split.addWidget(members)
+        self.centre_split.addWidget(self._build_timeline())
+        card.addWidget(self.centre_split, 1)
 
-        rules = self._card(tab, row=1, column=1, sticky='nsew', padx=(5, 0))
-        rules.columnconfigure(0, weight=1)
-        rules.rowconfigure(3, weight=1)
-        title = ttk.Frame(rules, style='Card.TFrame')
-        title.grid(row=0, column=0, sticky='ew')
-        title.columnconfigure(0, weight=1)
-        ttk.Label(title, text='Rules between planned outages', style='Title.TLabel').grid(row=0, column=0, sticky='w')
-        ttk.Label(title, text='Optional', style='Optional.TLabel').grid(row=0, column=1, sticky='e')
-        self._wrapped_label(rules, 'Use this to check which outage combinations are allowed. A case that breaks a rule '
-                            'is reported but not calculated. Rules never create cases or change outage dates.',
-                            row=1, column=0, pady=(6, 10))
-        guide = ttk.Frame(rules, style='Inset.TFrame', padding=10)
-        guide.grid(row=2, column=0, sticky='ew', pady=(0, 10))
-        guide.columnconfigure(0, weight=1)
-        self._wrapped_label(guide, 'What the checks mean', style='InsetTitle.TLabel', row=0, column=0, pady=(0, 5))
-        self._wrapped_label(guide, 'must not overlap: their time windows must not overlap.\n'
-                            'second only after the first: the second starts after the first ends.\n'
-                            'only together: both belong to the case and their windows overlap.',
-                            style='Inset.TLabel', row=1, column=0)
-        self.rule_table = FilterTable(self, rules, (
-            ('first', 'First outage', 170, True, None), ('rule', 'Rule', 190, False, tuple(label for _, label in RULE_LABELS)),
-            ('second', 'Second outage', 170, True, None)), height=5, tips={'rule': HELP_TEXTS['rule_kind']})
-        self.rule_table.grid(row=3, column=0, sticky='nsew')
-        self.rule_tree = self.rule_table.tree
-        self._bind_delete(self.rule_tree, self.remove_rule)
-        editor_row = ttk.Frame(rules, style='Card.TFrame')
-        editor_row.grid(row=4, column=0, sticky='ew', pady=(8, 0))
-        for column, text in enumerate(('First outage', 'Rule', 'Second outage')):
-            editor_row.columnconfigure(column, weight=1, uniform='rule_fields')
-            ttk.Label(editor_row, text=text, style='Muted.TLabel').grid(row=0, column=column, sticky='w', pady=(0, 3))
-        names = [label for label, _ in self.editor.outage_choices()]
-        self.rule_first = ttk.Combobox(editor_row, values=names, state='readonly', width=8)
-        self.rule_kind = ttk.Combobox(editor_row, values=[label for _, label in RULE_LABELS], state='readonly', width=8)
-        self.rule_second = ttk.Combobox(editor_row, values=names, state='readonly', width=8)
-        for column, widget in enumerate((self.rule_first, self.rule_kind, self.rule_second)):
-            widget.grid(row=1, column=column, sticky='ew', padx=(0, 4) if column < 2 else 0)
-        self.tip(self.rule_first, 'The first planned outage to check. Choose a rule and the second outage, then Add rule.')
-        self.tip(self.rule_kind, HELP_TEXTS['rule_kind'])
-        self.tip(self.rule_second, 'The second planned outage to check. For an order rule, this outage must start after the first ends.')
-        actions = ttk.Frame(rules, style='Card.TFrame')
-        actions.grid(row=5, column=0, sticky='w', pady=(6, 0))
-        ttk.Button(actions, text='Add rule', command=self.add_rule).grid(row=0, column=0, padx=(0, 6))
-        ttk.Button(actions, text='Remove rule', command=self.remove_rule).grid(row=0, column=1)
+    def _build_cases(self, card):
+        self.case_limit_label = self.label('', 'counter')
+        self.tip(self.case_limit_label, HELP_TEXTS['case_limit'])
+        self.card_title(card, 'Planning cases', trailing=self.case_limit_label)
+        self.case_table = self.qt.FilterTable(self, (
+            ('enabled', 'Run', 60, False, (('included', '\u2611'), ('excluded', '\u2610'))),
+            ('name', 'Planning case', 150, True, None), ('count', 'Outages', 70, False, None),
+            ('status', 'Status', 118, False, ('ready', 'not calculated', 'excluded'))), selection='single',
+            tips={'enabled': HELP_TEXTS['enabled'], 'name': COLUMN_HELP['case_name'], 'count': COLUMN_HELP['case_count'],
+                  'status': COLUMN_HELP['case_status']},
+            empty_text='Create your first planning case with "New"', check_column=0, pill_columns=('status',),
+            editable=('name',), muted=lambda cells: cells[0] == '\u2610')
+        self.case_table.on_edit = lambda key, _column, value: self.rename_case(key, value)
+        self.case_table.edit_text = lambda key, _column: (self.editor.case(key) or {}).get('name', '')
+        card.addWidget(self.case_table, 1)
+        view = self.case_table.view
+        view.selectionModel().selectionChanged.connect(lambda *_args: self.safe(self.on_case_select)())
+        view.clicked.connect(lambda index: self.safe(lambda: self.on_case_flag_click(index))())
+        view.doubleClicked.connect(lambda index: self.safe(lambda: self.on_case_flag_click(index))())
+        self.qt.KeyFilter(view, {'Space': lambda: self.toggle_case_enabled(self.case_table.current()),
+                                 'Return|Enter|F2': self.rename_in_place, 'Delete|Backspace': self.delete_case},
+                          guard=lambda: view.state() != self.qt.enum('State.EditingState', self.qt.QtWidgets.QAbstractItemView))
+        self.case_buttons = {label: self.button(label, command, tip=HELP_TEXTS[label])
+                             for label, command in (('New', self.new_case), ('Copy', self.copy_case),
+                                                    ('Delete', self.delete_case))}
+        self.case_buttons['New'].setObjectName('primary')
+        card.addLayout(self.row(*self.case_buttons.values()))
+        card.addWidget(self.button('One case per planned outage', self.one_case_per_outage,
+                                   tip=HELP_TEXTS['one_per_outage']))
+        card.addWidget(self.label('Run: ticked = included, empty = excluded. Click the box or press Space. Excluded '
+                                  'cases stay saved but are omitted from calculation and report.', 'hint', wrap=True))
 
-    def _build_calculation(self, strip):
-        """Calculation choice, problems and the collapsible preview, below the three panes."""
-        tk, ttk = self.tk, self.ttk
-        strip.columnconfigure(0, weight=1, uniform='calculation')
-        strip.columnconfigure(1, weight=1, uniform='calculation')
-        options = self._card(strip, row=0, column=0, sticky='nsew', padx=(0, 4))
-        options.columnconfigure(0, weight=1)
-        ttk.Label(options, text='Calculation', style='Title.TLabel').grid(row=0, column=0, sticky='w', pady=(0, 4))
-        # n-0 (the QDS of REF and every case) is always calculated, so it has no control here.
-        self.n1_var = tk.BooleanVar(value=N1_REFERENCE in self.editor.config['assessments'])
-        self.n1_prime_var = tk.BooleanVar(value=N1_PRIME in self.editor.config['assessments'])
-        check_style = dict(background=self.CARD, foreground=self.TEXT, activebackground=self.INSET,
-                           activeforeground=self.TEXT, selectcolor=self.CARD, font=self.body_font,
-                           borderwidth=0, highlightthickness=1, highlightbackground=self.CARD,
-                           highlightcolor=self.ACCENT, anchor='w', justify='left', padx=0, pady=4)
-        n1 = tk.Checkbutton(options, text='n-1 - reference contingency analysis', variable=self.n1_var,
-                            command=self.apply_assessments, **check_style)
-        n1.grid(row=2, column=0, sticky='w')
-        self.tip(n1, HELP_TEXTS['n1'])
-        prime = tk.Checkbutton(options, text="(n-1)' - contingency analysis with planned-outage scenarios",
-                               variable=self.n1_prime_var, command=self.apply_assessments, **check_style)
-        prime.grid(row=3, column=0, sticky='w')
-        options.bind('<Configure>', lambda event: [widget.configure(wraplength=max(180, event.width - 58))
-                                                   for widget in (n1, prime)], add='+')
-        self.tip(prime, HELP_TEXTS['n1_prime'])
-        note = self._wrapped_label(options, "n-1 and (n-1)': results in the log and reports",
-                                   row=4, column=0, padx=(22, 0))
+    def _build_timeline(self):
+        widgets = self.qt.QtWidgets
+        frame = widgets.QWidget()
+        card = widgets.QVBoxLayout(frame)
+        card.setContentsMargins(0, 4, 0, 0)
+        card.setSpacing(6)
+        title = self.label('Timeline of the case', 'sectionTitle')
+        self.tip(title, HELP_TEXTS['timeline'])
+        card.addWidget(title)
+        legend = widgets.QHBoxLayout()
+        legend.setSpacing(5)
+        for color, text in ((Theme.PRIMARY, 'Case outage'), (Theme.FIXED, 'Shared'),
+                            (Theme.OVERLAP, 'Overlap'), (Theme.BORDER_STRONG, 'Shortened gap')):
+            swatch = widgets.QFrame()
+            swatch.setObjectName('legendSwatch')
+            swatch.setFixedSize(10, 10)
+            swatch.setStyleSheet('QFrame#legendSwatch {{ background: {}; }}'.format(color))
+            legend.addWidget(swatch)
+            legend.addWidget(self.label(text, 'hint'))
+            legend.addSpacing(8)
+        legend.addStretch(1)
+        card.addLayout(legend)
+        self.timeline = self.qt.Timeline(self)
+        area = self.scrolled(self.timeline)
+        area.setMinimumHeight(56)
+        area.setStyleSheet('QScrollArea {{ border: 1px solid {}; border-radius: 8px; }}'.format(Theme.BORDER))
+        card.addWidget(area, 1)
+        return frame
+
+    def _build_calculation(self):
+        """Calculation choice, problems and the collapsible preview, below the timeline."""
+        widgets, qt = self.qt.QtWidgets, self.qt
+        holder = widgets.QWidget()
+        outer = widgets.QVBoxLayout(holder)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(10)
+        strip = widgets.QHBoxLayout()
+        strip.setSpacing(10)
+        options, card = self.card(spacing=6)
+        self.card_title(card, 'Calculation')
+        # n-0 is the quasi-dynamic simulation; unticked, the run is n-1 only (no QDS, own n-1 time sweep).
+        self.n0_check = widgets.QCheckBox('n-0 - quasi-dynamic simulation (reference and one run per case)')
+        self.n1_check = widgets.QCheckBox('n-1 - reference contingency analysis')
+        self.n1_prime_check = widgets.QCheckBox("(n-1)' - contingency analysis with planned-outage scenarios")
+        for check, key, assessment in ((self.n0_check, 'n0', 'n-0'), (self.n1_check, 'n1', N1_REFERENCE),
+                                       (self.n1_prime_check, 'n1_prime', N1_PRIME)):
+            check.setChecked(assessment in self.editor.config['assessments'])
+            check.toggled.connect(lambda _checked, which=key: self.safe(lambda: self.apply_assessments(which))())
+            self.tip(check, HELP_TEXTS[key])
+            card.addWidget(check)
+        note = self.label("n-1 and (n-1)': results in the log and reports", 'hint')
         self.tip(note, N1_NOTE)
-        results = ttk.Frame(options, style='Card.TFrame')
-        results.grid(row=6, column=0, sticky='ew', pady=(6, 0))
-        results.columnconfigure(1, weight=1)
-        ttk.Label(results, text='Results:').grid(row=0, column=0, sticky='w', padx=(0, 6))
-        choices = self.editor.result_choices()
-        self.results_var = tk.StringVar(value=choices[0][0])
-        self.results_box = ttk.Combobox(results, textvariable=self.results_var, values=[label for label, _ in choices],
-                                        state='readonly' if len(choices) > 1 else 'disabled', width=20)
-        self.results_box.grid(row=0, column=1, sticky='ew')
-        self.results_box.bind('<<ComboboxSelected>>', lambda _event: self.apply_results_choice())
-        self.tip(self.results_box, HELP_TEXTS['results'])
-        ttk.Label(results, text='Log:').grid(row=1, column=0, sticky='w', padx=(0, 6), pady=(6, 0))
-        self.log_var = tk.StringVar(value=LOG_LEVEL_LABELS[self.editor.log_level()])
-        self.log_box = ttk.Combobox(results, textvariable=self.log_var, state='readonly', width=20,
-                                    values=[LOG_LEVEL_LABELS[level] for level in LOG_LEVELS])
-        self.log_box.grid(row=1, column=1, sticky='ew', pady=(6, 0))
-        self.log_box.bind('<<ComboboxSelected>>', lambda _event: self.apply_log_level())
-        self.tip(self.log_box, HELP_TEXTS['log'])
-        footer = ttk.Frame(options, style='Card.TFrame')
-        footer.grid(row=5, column=0, sticky='ew', pady=(6, 0))
-        footer.columnconfigure(0, weight=1)
-        qds = self._wrapped_label(footer, 'QDS: ' + self.editor.qds_text, style='Section.TLabel', row=0, column=0)
+        note.setContentsMargins(26, 0, 0, 0)
+        card.addWidget(note)
+        qds = self.label('QDS  ' + self.editor.qds_text, 'sectionTitle', wrap=True)
         self.tip(qds, HELP_TEXTS['qds'])
-        self.preview_button = ttk.Button(footer, text='Show calculation preview', command=self.toggle_preview)
-        self.preview_button.grid(row=1, column=0, sticky='w', pady=(8, 0))
-        self.tip(self.preview_button, HELP_TEXTS['preview'])
-        problems = self._card(strip, row=0, column=1, sticky='nsew', padx=(4, 0))
-        problems.columnconfigure(0, weight=1)
-        problems.rowconfigure(1, weight=1)
-        ttk.Label(problems, text='Problems and warnings', style='Title.TLabel').grid(row=0, column=0, sticky='w', pady=(0, 4))
-        self.problem_table = FilterTable(self, problems, (('where', 'Where', 130, False, None), ('problem', 'Problem', 600, True, None)),
-                                         height=3)
-        self.problem_table.grid(row=1, column=0, sticky='nsew')
-        self.problem_table.empty_text = 'No problems or warnings'
-        self.problem_table.tree.tag_configure('warning', foreground=self.WARNING)
-        self.problem_table.tree.tag_configure('error', foreground=self.PROBLEM)
-        self.preview_card = self._card(strip, row=1, column=0, columnspan=2, sticky='nsew', pady=(8, 0))
-        self.preview_card.columnconfigure(0, weight=1)
-        self.preview_card.rowconfigure(2, weight=1)
-        ttk.Label(self.preview_card, text='What will be calculated (no results)', style='Title.TLabel').grid(
-            row=0, column=0, columnspan=2, sticky='w', pady=(0, 4))
-        self.preview_frame = ttk.Frame(self.preview_card, style='Card.TFrame')
-        self.preview_frame.grid(row=1, column=0, columnspan=2, sticky='ew')
-        self.preview_frame.columnconfigure(1, weight=1)
-        self.case_preview = tk.Text(self.preview_card, height=6, width=1, wrap='word', relief='flat', borderwidth=0,
-                                    background=self.CARD, foreground=self.TEXT, font=self.body_font,
-                                    padx=4, pady=4, state='disabled', takefocus=True)
-        self.case_preview.grid(row=2, column=0, sticky='nsew', pady=(4, 0))
-        scroll = ttk.Scrollbar(self.preview_card, orient='vertical', command=self.case_preview.yview)
-        scroll.grid(row=2, column=1, sticky='ns', pady=(4, 0))
-        self.case_preview.configure(yscrollcommand=scroll.set)
-        self._case_preview_text = None
-        self.preview_card.grid_remove()
+        card.addWidget(qds)
+        results = widgets.QHBoxLayout()
+        results.addWidget(self.label('Results', 'caption'))
+        choices = self.editor.result_choices()
+        self.results_box = widgets.QComboBox()
+        self.results_box.addItems([label for label, _ in choices])
+        self.results_box.setEnabled(len(choices) > 1)
+        self.results_box.currentIndexChanged.connect(lambda *_args: self.safe(self.apply_results_choice)())
+        self.tip(self.results_box, HELP_TEXTS['results'])
+        results.addWidget(self.results_box, 1)
+        card.addLayout(results)
+        log = widgets.QHBoxLayout()
+        log.addWidget(self.label('Log', 'caption'))
+        self.log_box = widgets.QComboBox()
+        self.log_box.addItems([LOG_LEVEL_LABELS[level] for level in LOG_LEVELS])
+        self.log_box.setCurrentIndex(LOG_LEVELS.index(self.editor.log_level()))
+        self.log_box.currentIndexChanged.connect(lambda *_args: self.safe(self.apply_log_level)())
+        self.tip(self.log_box, HELP_TEXTS['log'])
+        log.addWidget(self.log_box, 1)
+        card.addLayout(log)
+        self.preview_button = self.button('Show calculation preview', self.toggle_preview, 'ghost', HELP_TEXTS['preview'])
+        card.addWidget(self.preview_button, 0, qt.enum('AlignmentFlag.AlignLeft'))
+        card.addStretch(1)
+        strip.addWidget(options, 4)
+        problems, card = self.card(spacing=6)
+        self.problem_count = self.pill('', 'neutral')
+        self.card_title(card, 'Problems and warnings', trailing=self.problem_count)
+        self.problem_table = self.qt.FilterTable(self, (
+            ('level', 'Level', 92, False, ('error', 'warning')), ('where', 'Where', 140, False, None),
+            ('problem', 'Problem', 600, True, None)), empty_text='No problems or warnings', pill_columns=('level',))
+        card.addWidget(self.problem_table, 1)
+        strip.addWidget(problems, 6)
+        outer.addLayout(strip, 1)
+        self.preview_card, card = self.card(spacing=6)
+        self.card_title(card, 'What will be calculated (no results)')
+        grid = widgets.QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(2)
+        self.preview_grid = grid
+        card.addLayout(grid)
+        self.case_preview = widgets.QTextBrowser()
+        self.case_preview.setMinimumHeight(120)
+        card.addWidget(self.case_preview, 1)
+        self.preview_card.hide()
+        outer.addWidget(self.preview_card, 1)
+        return self.scrolled(holder)
 
     def toggle_preview(self, show=None):
         """Show or hide the calculation preview below the problems; it is refreshed either way."""
         self.preview_visible = (not self.preview_visible) if show is None else bool(show)
+        self.preview_card.setVisible(self.preview_visible)
+        self.preview_button.setText('Hide calculation preview' if self.preview_visible else 'Show calculation preview')
         if self.preview_visible:
-            self.preview_card.grid()
-        else:
-            self.preview_card.grid_remove()
-        self.preview_button.configure(text='Hide calculation preview' if self.preview_visible else 'Show calculation preview')
-        self.case_content._stick_bottom = self.preview_visible
-        if self.preview_visible:
-            def reveal():
-                self.root.update_idletasks()
-                canvas = self.case_content._viewport
-                canvas.configure(scrollregion=canvas.bbox('all'))
-                self.case_content._viewport.yview_moveto(1.0)
-            self.root.after_idle(reveal)
+            sizes = self.case_split.sizes()
+            total = sum(sizes)
+            if sizes[1] < total * 0.5:
+                self.case_split.setSizes([int(total * 0.45), int(total * 0.55)])
 
-    # --- tab "Settings" -------------------------------------------------------------
-    def _build_settings(self, tab):
-        ttk = self.ttk
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=1)
-        self.settings_book = ttk.Notebook(tab, style='Settings.TNotebook')
-        self.settings_book.grid(row=1, column=0, sticky='nsew')
+    # --- page "Settings" -------------------------------------------------------------
+    def _build_settings(self, page):
+        widgets, qt = self.qt.QtWidgets, self.qt
+        layout = widgets.QVBoxLayout(page)
+        layout.setContentsMargins(16, 14, 16, 10)
+        layout.setSpacing(10)
+        bar = widgets.QHBoxLayout()
+        bar.setSpacing(6)
+        for text, command, key, name in (('Restore defaults', self.restore_default_settings, 'restore_defaults', None),
+                                         ('Apply settings', self.apply_settings, 'apply_settings', None),
+                                         ('Save settings', self.save_settings, 'save_settings', 'primary')):
+            bar.addWidget(self.button(text, command, name, SETTING_HELP[key]))
+        bar.addSpacing(10)
+        self.settings_state = self.label('', 'muted')
+        bar.addWidget(self.settings_state, 1)
+        layout.addLayout(bar)
+        body = widgets.QHBoxLayout()
+        body.setSpacing(14)
+        self.settings_nav = widgets.QListWidget()
+        self.settings_nav.setObjectName('settingsNav')
+        self.settings_nav.setFixedWidth(220)
+        self.settings_nav.setCursor(qt.enum('CursorShape.PointingHandCursor'))
+        self.settings_stack = widgets.QStackedWidget()
         for title, sections in self.SETTINGS_PAGES:
-            page = ttk.Frame(self.settings_book, padding=(0, 6, 0, 0))
-            self.settings_book.add(page, text=title)
-            self._build_setting_page(page, sections)
-        time_page = ttk.Frame(self.settings_book, padding=(0, 6, 0, 0))
-        self.settings_book.add(time_page, text=self.PAGE_TIME)
-        self._build_time_page(time_page)
-        fixed_page = ttk.Frame(self.settings_book, padding=(0, 6, 0, 0))
-        self.settings_book.add(fixed_page, text=self.PAGE_FIXED)
-        self.fixed_page = fixed_page
-        self._build_fixed_and_rules(fixed_page)
-        self._size_settings_tabs()
-        bar = ttk.Frame(tab, padding=(0, 0, 0, 6))
-        bar.grid(row=0, column=0, sticky='ew')
-        bar.columnconfigure(3, weight=1)
-        for column, (text, command, key) in enumerate((
-                ('Restore defaults', self.restore_default_settings, 'restore_defaults'),
-                ('Apply settings', self.apply_settings, 'apply_settings'),
-                ('Save settings', self.save_settings, 'save_settings'))):
-            button = ttk.Button(bar, text=text, command=command)
-            button.grid(row=0, column=column, padx=(0, 6))
-            self.tip(button, SETTING_HELP[key])
-        self.settings_state = self._wrapped_label(bar, '', style='Status.TLabel', row=1, column=0,
-                                                  columnspan=4, pady=(8, 6))
+            self._add_settings_page(title, self._build_setting_page(sections))
+        self._add_settings_page(self.PAGE_TIME, self._build_time_page())
+        self._add_settings_page(self.PAGE_FIXED, self._build_fixed_and_rules())
+        self.settings_nav.currentRowChanged.connect(self.settings_stack.setCurrentIndex)
+        self.settings_nav.setCurrentRow(0)
+        body.addWidget(self.settings_nav)
+        body.addWidget(self.settings_stack, 1)
+        layout.addLayout(body, 1)
 
-    def _size_settings_tabs(self):
-        font = self.small_font
-        labels = [(page, self.settings_book.tab(page, 'text')) for page in self.settings_book.tabs()]
-        longest = max(font.measure(text) for _, text in labels)
-        for page, text in labels:
-            self.settings_book.tab(page, padding=(14, 12, 14 + longest - font.measure(text), 12))
+    def _add_settings_page(self, title, widget):
+        self.settings_nav.addItem(title)
+        self.settings_stack.addWidget(widget)
 
-    @staticmethod
-    def _scrollbar(scroll, first, last):
-        scroll.set(first, last)
-        if float(first) <= 0 and float(last) >= 1:
-            scroll.grid_remove()
-        else:
-            scroll.grid()
-
-    def _scrolled(self, parent, horizontal=False):
-        """Fill the viewport, scrolling only when the content no longer fits."""
-        canvas = self.tk.Canvas(parent, background=self.BACKGROUND, highlightthickness=0, borderwidth=0)
-        scroll = self.ttk.Scrollbar(parent, orient='vertical', command=canvas.yview)
-        across = self.ttk.Scrollbar(parent, orient='horizontal', command=canvas.xview)
-        across.grid(row=1, column=0, sticky='ew')
-        inner = self.ttk.Frame(canvas)
-        window = canvas.create_window(0, 0, anchor='nw', window=inner)
-        canvas.configure(yscrollcommand=lambda first, last: self._scrollbar(scroll, first, last))
-        canvas.configure(xscrollcommand=lambda first, last: self._scrollbar(across, first, last))
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(0, weight=1)
-        canvas.grid(row=0, column=0, sticky='nsew')
-        scroll.grid(row=0, column=1, sticky='ns')
-        def fit(_event=None):
-            allow_horizontal = horizontal and (horizontal != 'zoom' or self.ui_zoom > 1)
-            natural_height = inner.winfo_reqheight()
-            canvas.itemconfigure(window, width=max(inner.winfo_reqwidth() if allow_horizontal else 1, canvas.winfo_width()),
-                                 height=max(natural_height, canvas.winfo_height()))
-            canvas.configure(scrollregion=canvas.bbox('all'))
-            if getattr(inner, '_stick_bottom', False):
-                canvas.yview_moveto(1.0)
-        inner.bind('<Configure>', fit, add='+')
-        canvas.bind('<Configure>', fit, add='+')
-        def wheel(event):
-            if event.state & 4:  # the root handles Ctrl+wheel as zoom
-                return
-            inner._stick_bottom = False
-            target = event.widget
-            if target.winfo_class() in ('Treeview', 'Listbox', 'Text', 'TCombobox'):
-                return  # keep the native scrolling/selection behaviour
-            if event.num in (4, 5):
-                delta = -1 if event.num == 4 else 1
-            else:
-                delta = -int(event.delta / 120) if abs(event.delta) >= 120 else -int(event.delta)
-            if canvas.yview() != (0.0, 1.0):
-                canvas.yview_scroll(delta, 'units')
-        def bind_wheel(widget):
-            for sequence in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
-                widget.bind(sequence, wheel, add='+')
-            for child in widget.winfo_children():
-                bind_wheel(child)
-        self.root.after_idle(lambda: bind_wheel(inner) if inner.winfo_exists() else None)
-        inner._viewport = canvas
-        inner._fit_viewport = fit
-        return inner
-
-
-    def _build_setting_page(self, page, sections):
-        ttk = self.ttk
-        inner = self._scrolled(page, horizontal=True)
-        inner.columnconfigure(0, weight=1)
-        if sections == ('Network scope',):
-            inner.rowconfigure(1, weight=1)
-        self._wrapped_label(inner, SETTINGS_INTRO, style='Status.TLabel', row=0, column=0, pady=(0, 6))
-        for row, section in enumerate(sections, 1):
-            frame = ttk.Frame(inner) if section == 'Network scope' else ttk.Labelframe(inner, text=section, padding=16)
-            frame.grid(row=row, column=0, sticky='nsew', pady=(0, 12), padx=(0, 4))
+    def _build_setting_page(self, sections):
+        widgets = self.qt.QtWidgets
+        body = widgets.QWidget()
+        layout = widgets.QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 6, 0)
+        layout.setSpacing(12)
+        layout.addWidget(self.label(SETTINGS_INTRO, 'hint', wrap=True))
+        for section in sections:
             if section == 'Network scope':
-                self._build_scope_section(frame)
+                layout.addLayout(self._build_scope_section(), 1)
                 continue
-            frame.columnconfigure(0, weight=2)
-            frame.columnconfigure(5, weight=1)
-            for column, text in enumerate(('Setting', 'Value', 'Unit', 'Source', 'Category')):
-                header = ttk.Label(frame, text=text, style='Muted.TLabel')
-                header.grid(row=0, column=column, sticky='w', padx=(0, 10), pady=(0, 4))
+            frame, card = self.card(spacing=4)
+            title = self.card_title(card, section)
+            self.tip(title, SETTING_HELP['classification'] if section == 'Classification' else
+                     SETTING_HELP['calculation_parameters'] if section == 'Contingency analysis' else SETTING_HELP['limits'])
+            grid = widgets.QGridLayout()
+            grid.setHorizontalSpacing(14)
+            grid.setVerticalSpacing(6)
+            grid.setColumnStretch(0, 3)
+            grid.setColumnStretch(5, 2)
+            for column, text in enumerate(('Setting', 'Value', 'Unit', 'Source', 'Category', '')):
+                caption = self.label(text, 'caption')
                 if text == 'Source':
-                    self.tip(header, SETTING_HELP['source'])
-            if section == 'Classification':
-                self.tip(frame, SETTING_HELP['classification'])
-            elif section == 'Contingency analysis':
-                self.tip(frame, SETTING_HELP['calculation_parameters'])
-            else:
-                self.tip(frame, SETTING_HELP['limits'])
+                    self.tip(caption, SETTING_HELP['source'])
+                grid.addWidget(caption, 0, column)
             keys = [setting['key'] for setting in SETTINGS if setting['section'] == section]
             for line, key in enumerate(keys, 1):
-                self._build_setting_row(frame, line, key)
+                self._build_setting_row(grid, line, key)
+            card.addLayout(grid)
+            layout.addWidget(frame)
+        if sections != ('Network scope',):
+            layout.addStretch(1)
+        return self.scrolled(body)
 
-    def _build_setting_row(self, frame, row, key):
-        ttk, tk = self.ttk, self.tk
+    def _build_setting_row(self, grid, row, key):
+        widgets = self.qt.QtWidgets
         setting = SETTINGS_BY_KEY[key]
         help_text = setting_help(key)
-        label = ttk.Label(frame, text=setting['label'], wraplength=260)
-        label.grid(row=row, column=0, sticky='w', padx=(0, 14), pady=8)
-        self.tip(label, help_text)
-        variable = tk.StringVar(value='')
+        caption = self.label(setting['label'], wrap=True)
+        self.tip(caption, help_text)
+        grid.addWidget(caption, row, 0)
         if setting['kind'] == 'choice':
-            widget = ttk.Combobox(frame, textvariable=variable, values=[text for _, text in setting['choices']],
-                                  state='readonly', width=18)
+            widget = widgets.QComboBox()
+            widget.addItems([text for _, text in setting['choices']])
+            widget.currentIndexChanged.connect(lambda *_args, name=key: self.safe(lambda: self.on_setting_edit(name))())
         else:
-            widget = ttk.Entry(frame, textvariable=variable, width=12 if setting['editable'] else 18)
-        widget.grid(row=row, column=1, sticky='w', padx=(0, 10), pady=1)
+            widget = widgets.QLineEdit()
+            widget.setFixedWidth(130 if setting['editable'] else 170)
+            widget.textEdited.connect(lambda *_args, name=key: self.safe(lambda: self.on_setting_edit(name))())
         self.tip(widget, help_text)
-        ttk.Label(frame, text=setting['unit'], style='Muted.TLabel').grid(row=row, column=2, sticky='w', padx=(0, 10))
-        source = ttk.Label(frame, text='', style='Source.TLabel')
-        source.grid(row=row, column=3, sticky='w', padx=(0, 10))
+        widget.setEnabled(bool(setting['editable']))
+        grid.addWidget(widget, row, 1)
+        grid.addWidget(self.label(setting['unit'], 'muted'), row, 2)
+        source = self.pill('', 'neutral')
         self.tip(source, SETTING_HELP['source'])
-        category = ttk.Label(frame, text='A · evaluation' if setting['category'] == CATEGORY_EVALUATION else 'B · calculation',
-                             style='Source.TLabel')
-        category.grid(row=row, column=4, sticky='w', padx=(0, 10))
-        self.tip(category, SETTING_HELP['limits'] if setting['category'] == CATEGORY_EVALUATION
-                 else SETTING_HELP['calculation_parameters'])
-        message = ttk.Label(frame, text='', style='Problem.TLabel', wraplength=180)
-        message.grid(row=row, column=5, sticky='w')
-        self.setting_vars[key], self.setting_inputs[key] = variable, widget
-        self.setting_sources[key], self.setting_messages[key] = source, message
+        grid.addWidget(source, row, 3, self.qt.enum('AlignmentFlag.AlignLeft'))
+        evaluation = setting['category'] == CATEGORY_EVALUATION
+        category = self.label('A · evaluation' if evaluation else 'B · calculation', 'muted')
+        self.tip(category, SETTING_HELP['limits'] if evaluation else SETTING_HELP['calculation_parameters'])
+        grid.addWidget(category, row, 4)
+        message = self.label('', 'problem', wrap=True)
+        grid.addWidget(message, row, 5)
+        self.setting_inputs[key], self.setting_sources[key], self.setting_messages[key] = widget, source, message
         self.fill_setting(key)
-        if setting['editable']:
-            variable.trace_add('write', lambda *_args, name=key: self.on_setting_edit(name))
-        else:
-            widget.state(['disabled'])
 
-    def _build_scope_section(self, frame):
-        """Searchable grid lists; filtering never changes a saved selection."""
-        tk, ttk = self.tk, self.ttk
-        frame.columnconfigure(0, weight=1, uniform='scope')
-        frame.columnconfigure(1, weight=1, uniform='scope')
-        frame.rowconfigure(0, weight=1)
-        self.grid_lists, self.grid_search, self.grid_visible, self.grid_empty = {}, {}, {}, {}
-        left = self._card(frame, row=0, column=0, sticky='nsew', padx=(0, 6))
-        right = self._card(frame, row=0, column=1, sticky='nsew', padx=(6, 0))
-        for parent in (left, right):
-            parent.columnconfigure(0, weight=1)
-            parent.rowconfigure(1, minsize=70)
-            parent.rowconfigure(4, weight=1)
-            parent.rowconfigure(5, minsize=60)
-            parent.rowconfigure(6, minsize=40)
-        title = ttk.Label(left, text='Report filter: assessed equipment', style='Title.TLabel')
-        title.grid(row=0, column=0, columnspan=2, sticky='w')
+    def _build_scope_section(self):
+        """Searchable grid lists with check boxes; filtering never changes a saved selection."""
+        widgets = self.qt.QtWidgets
+        layout = widgets.QHBoxLayout()
+        layout.setSpacing(12)
+        self.grid_lists, self.grid_search = {}, {}
+        left, card = self.card()
+        title = self.card_title(card, 'Report filter: assessed equipment')
         self.tip(title, setting_help('monitoring_grids'))
-        self._wrapped_label(left, 'Choose the grids whose equipment is assessed in the report. No effect on the '
-                            'calculation; also applies when a kept run is re-evaluated.', row=1, column=0, columnspan=2,
-                            pady=(6, 10))
-        self._grid_search_field(left, 'monitoring_grids', row=3)
-        self._grid_listbox(left, 'monitoring_grids', row=4)
-        self.monitoring_note = self._wrapped_label(left, '', row=5, column=0, columnspan=2, pady=(10, 0))
-        buttons = ttk.Frame(left, style='Card.TFrame')
-        buttons.grid(row=6, column=0, columnspan=2, sticky='ew', pady=(10, 0))
-        for column, (text, command) in enumerate((('Select all grids', lambda: self.select_grids('monitoring_grids', True)),
-                                               ('Clear selection', lambda: self.select_grids('monitoring_grids', False)))):
-            button = ttk.Button(buttons, text=text, command=command)
-            button.grid(row=0, column=column, sticky='w', padx=(0, 6))
-            self.tip(button, SETTING_HELP['grid_buttons'])
-        self._flow(buttons, buttons.winfo_children())
-        title = ttk.Label(right, text='n-1 filter: contingencies by grid', style='Title.TLabel')
-        title.grid(row=0, column=0, columnspan=2, sticky='w')
+        card.addWidget(self.label('Choose the grids whose equipment is assessed in the report. No effect on the '
+                                  'calculation; also applies when a kept run is re-evaluated.', 'hint', wrap=True))
+        self._grid_list(card, 'monitoring_grids')
+        self.monitoring_note = self.label('', 'muted', wrap=True)
+        card.addWidget(self.monitoring_note)
+        card.addLayout(self.row(*(self.button(text, command, tip=SETTING_HELP['grid_buttons']) for text, command in (
+            ('Select all grids', lambda: self.select_grids('monitoring_grids', True)),
+            ('Clear selection', lambda: self.select_grids('monitoring_grids', False))))))
+        layout.addWidget(left, 1)
+        right, card = self.card()
+        title = self.card_title(card, 'n-1 filter: contingencies by grid')
         self.tip(title, setting_help('contingency_grids'))
-        self.contingency_mode = tk.StringVar(value='same')
-        choices = ttk.Frame(right, style='Card.TFrame')
-        choices.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(6, 10))
-        for row, (value, text) in enumerate((('same', 'Every grid (no filter)'), ('own', 'Own selection'))):
-            radio = ttk.Radiobutton(choices, text=text, value=value, variable=self.contingency_mode,
-                                    command=self.on_contingency_mode)
-            radio.grid(row=row, column=0, sticky='w')
+        self.contingency_same = widgets.QRadioButton('Every grid (no filter)')
+        self.contingency_own = widgets.QRadioButton('Own selection')
+        group = widgets.QButtonGroup(right)
+        for radio in (self.contingency_same, self.contingency_own):
+            group.addButton(radio)
             self.tip(radio, setting_help('contingency_grids'))
-        self._grid_search_field(right, 'contingency_grids', row=3)
-        self._grid_listbox(right, 'contingency_grids', row=4)
-        self.contingency_note = self._wrapped_label(right, '', row=5, column=0, columnspan=2, pady=(10, 0))
+            radio.clicked.connect(self.safe(self.on_contingency_mode))
+        card.addLayout(self.row(self.contingency_same, self.contingency_own, spacing=16))
+        self._grid_list(card, 'contingency_grids')
+        self.contingency_note = self.label('', 'muted', wrap=True)
         self.tip(self.contingency_note, SETTING_HELP['contingency_preview'])
-        self._build_element_filter(right, first_row=7)
+        card.addWidget(self.contingency_note)
+        layout.addWidget(right, 1)
         self.refresh_scope()
+        return layout
 
-    def _build_element_filter(self, card, first_row):
-        """The n-1 element filter below the grid filter of the same card: a searchable list of the elements the
-        contingencies outage. Its list shares the flexible height with the grid list, so the page still fits."""
-        tk, ttk = self.tk, self.ttk
-        row = lambda offset: first_row + offset
-        card.rowconfigure(row(4), weight=1)
-        title = ttk.Label(card, text='n-1 filter: outaged elements', style='Title.TLabel')
-        title.grid(row=row(0), column=0, columnspan=2, sticky='w', pady=(16, 0))
-        self.tip(title, setting_help('contingency_elements'))
-        self._wrapped_label(card, 'Select the elements that are outaged in n-1 and (n-1)\'. Only contingencies that '
-                            'outage a selected element are calculated. None selected: every element.', row=row(1),
-                            column=0, columnspan=2, pady=(6, 10))
-        self.element_search = tk.StringVar()
-        ttk.Label(card, text='Search elements', style='Muted.TLabel').grid(row=row(2), column=0, sticky='w', pady=(0, 4))
-        entry = ttk.Entry(card, textvariable=self.element_search, width=12)
-        entry.grid(row=row(3), column=0, columnspan=2, sticky='ew', pady=(0, 6))
-        self.element_search.trace_add('write', lambda *_args: self.refresh_elements())
-        self.tip(entry, 'Filter the visible elements by name, class or grid. Selected elements remain selected when '
-                        'hidden by the search.')
-        box = tk.Listbox(card, selectmode='multiple', exportselection=False, height=4, width=12, activestyle='dotbox',
-                         background=self.CARD, foreground=self.TEXT, selectbackground=self.SELECTED,
-                         selectforeground=self.TEXT, highlightthickness=1, highlightcolor=self.ACCENT,
-                         highlightbackground=self.BORDER, relief='flat', font=self.body_font, borderwidth=0)
-        box.grid(row=row(4), column=0, sticky='nsew')
-        scroll = ttk.Scrollbar(card, orient='vertical', command=box.yview)
-        scroll.grid(row=row(4), column=1, sticky='ns')
-        box.configure(yscrollcommand=lambda first, last: self._scrollbar(scroll, first, last))
-        box.bind('<<ListboxSelect>>', lambda _event: self.on_element_select(), add='+')
-        self.tip(box, setting_help('contingency_elements'))
-        self.element_list, self.element_visible = box, []
-        self.element_note = self._wrapped_label(card, '', row=row(5), column=0, columnspan=2, pady=(10, 0))
-        button = ttk.Button(card, text='Clear selection', command=lambda: self.select_elements([]))
-        button.grid(row=row(6), column=0, sticky='w', pady=(10, 0))
-        self.tip(button, 'No element selected: every element is outaged in n-1 again. Takes effect at once.')
+    def _search_field(self, card, placeholder, tip, refresh):
+        field = self.qt.QtWidgets.QLineEdit()
+        field.setPlaceholderText(placeholder)
+        field.setClearButtonEnabled(True)
+        self.tip(field, tip)
+        field.textChanged.connect(lambda *_args: self.safe(refresh)())
+        self.qt.KeyFilter(field, {'Escape': lambda: field.clear() if field.text() else False})
+        card.addWidget(field)
+        return field
 
-    def refresh_elements(self):
-        """Render the element list without changing the selection."""
-        box = getattr(self, 'element_list', None)
-        if box is None:
-            return
-        query = self.element_search.get().strip().casefold()
-        selected = set(self.editor.selected_elements())
-        choices = [item[0] for item in self.editor.element_choices]
-        visible = [key for key in choices + sorted(selected - set(choices)) if query in self.editor.element_text(key).casefold()]
-        self.element_visible = visible
-        scroll = box.yview()
-        box.delete(0, 'end')
-        for key in visible:
-            box.insert('end', self.editor.element_text(key))
-            if key in selected:
-                box.selection_set('end')
-        if scroll:
-            box.yview_moveto(scroll[0])
-        count = len(selected)
-        self.element_note.configure(text='Only {} selected element(s) are outaged. {}'.format(count, self.editor.filter_note())
-                                    if count else 'No selection: every element is outaged. ' + self.editor.filter_note())
-
-    def on_element_select(self):
-        visible = self.element_visible
-        selected = [key for key in self.editor.selected_elements() if key not in visible]
-        selected += [visible[index] for index in self.element_list.curselection()]
-        self.select_elements(selected)
-
-    def select_elements(self, keys):
-        problem = self.editor.set_elements(keys)
-        if problem:
-            self.messagebox.showerror('Network scope', problem, parent=self.root)
-        self.after_scope_change()
-
-    def _grid_search_field(self, parent, key, row):
-        self.grid_search[key] = self.tk.StringVar()
-        field = self.ttk.Frame(parent, style='Card.TFrame')
-        field.grid(row=row, column=0, columnspan=2, sticky='ew', pady=(0, 6))
-        field.columnconfigure(0, weight=1)
-        self.ttk.Label(field, text='Search grids', style='Muted.TLabel').grid(row=0, column=0, sticky='w', pady=(0, 4))
-        entry = self.ttk.Entry(field, textvariable=self.grid_search[key], width=12)
-        entry.grid(row=1, column=0, sticky='ew')
-        self.grid_search[key].trace_add('write', lambda *_args: self.refresh_scope())
-        self.tip(entry, 'Filter the visible grid names. Selected grids remain selected when hidden by the search.')
-
-
-    def _grid_listbox(self, parent, key, row):
-        tk, ttk = self.tk, self.ttk
-        box = tk.Listbox(parent, selectmode='multiple', exportselection=False, height=10, width=12, activestyle='dotbox',
-                         background=self.CARD, foreground=self.TEXT, selectbackground=self.SELECTED,
-                         selectforeground=self.TEXT, disabledforeground=self.MUTED,
-                         highlightthickness=1, highlightcolor=self.ACCENT,
-                         highlightbackground=self.BORDER, relief='flat', font=self.body_font,
-                         borderwidth=0)
-        box.grid(row=row, column=0, sticky='nsew', pady=(4, 0))
-        scroll = ttk.Scrollbar(parent, orient='vertical', command=box.yview)
-        scroll.grid(row=row, column=1, sticky='ns', pady=(4, 0))
-        box.configure(yscrollcommand=lambda first, last: self._scrollbar(scroll, first, last))
-        box.bind('<<ListboxSelect>>', lambda _event, name=key: self.on_grid_select(name), add='+')
+    def _grid_list(self, card, key):
+        self.grid_search[key] = self._search_field(card, 'Search grids', 'Filter the visible grid names. Selected grids '
+                                                   'remain selected when hidden by the search.', self.refresh_scope)
+        box = self.qt.QtWidgets.QListWidget()
+        box.setMinimumHeight(120)
         self.tip(box, setting_help(key))
+        box.itemChanged.connect(lambda _item, name=key: self.safe(lambda: self.on_grid_check(name))())
+        card.addWidget(box, 1)
         self.grid_lists[key] = box
-        empty = ttk.Label(parent, text='No grids available', style='Muted.TLabel', anchor='center', wraplength=220)
-        self.grid_empty[key] = (empty, row)
 
+    def _fill_checklist(self, box, entries):
+        """(key, text, checked, enabled) entries into a check-box list without firing its change signal."""
+        qt = self.qt
+        checked, unchecked = qt.enum('CheckState.Checked'), qt.enum('CheckState.Unchecked')
+        user_checkable = qt.enum('ItemFlag.ItemIsUserCheckable')
+        enabled_flag = qt.enum('ItemFlag.ItemIsEnabled')
+        scroll = box.verticalScrollBar().value()
+        box.blockSignals(True)
+        box.clear()
+        for key, text, ticked, enabled in entries:
+            item = qt.QtWidgets.QListWidgetItem(text)
+            item.setData(qt.roles['UserRole'], key)
+            item.setFlags((user_checkable | enabled_flag) if enabled else user_checkable)
+            item.setCheckState(checked if ticked else unchecked)
+            box.addItem(item)
+        box.blockSignals(False)
+        box.verticalScrollBar().setValue(scroll)
+
+    def _ticked(self, box):
+        checked = _enum_int(self.qt.enum('CheckState.Checked'))
+        return [box.item(row).data(self.qt.roles['UserRole']) for row in range(box.count())
+                if _enum_int(box.item(row).checkState()) == checked]
+
+    def _shown(self, box):
+        return [box.item(row).data(self.qt.roles['UserRole']) for row in range(box.count())]
 
     def refresh_scope(self):
         """Render the view without changing the editor's complete grid selection."""
-        if not getattr(self, 'grid_lists', None):
+        if not getattr(self, 'grid_lists', None) or len(self.grid_lists) < 2:
             return
         choices = self.editor.grid_choices()
         contingency = self.editor.selected_grids('contingency_grids')
-        self.contingency_mode.set('same' if contingency is None else 'own')
+        (self.contingency_same if contingency is None else self.contingency_own).setChecked(True)
         for key, box in self.grid_lists.items():
-            query = self.grid_search[key].get().strip().casefold()
+            query = self.grid_search[key].text().strip().casefold()
             visible = [name for name in choices if query in name.casefold()]
-            self.grid_visible[key] = visible
             selected = set(self.editor.selected_grids(key) or ())
-            if key == 'contingency_grids' and contingency is None:
-                selected = set()
-            scroll = box.yview()
-            box.configure(state='normal', background=self.CARD)
-            box.delete(0, 'end')
+            own = not (key == 'contingency_grids' and contingency is None)
+            entries = []
             for name in visible:
                 missing = self.editor.grids is not None and name not in self.editor.grids
-                box.insert('end', name + ('  (not in the project)' if missing else
-                                          '  (inactive)' if name in self.editor.inactive_grids else ''))
-                if name in selected:
-                    box.selection_set('end')
-            if scroll:
-                box.yview_moveto(scroll[0])
-            if key == 'contingency_grids' and contingency is None:
-                box.configure(state='disabled', background=self.FILTER)
-            empty, row = self.grid_empty[key]
-            if visible:
-                empty.grid_remove()
-            else:
-                empty.configure(text='No matching grids' if choices else 'No grids available in this model')
-                empty.grid(row=row, column=0, sticky='ew', padx=10)
+                text = name + ('  (not in the project)' if missing else '  (inactive)' if name in self.editor.inactive_grids else '')
+                entries.append((name, text, own and name in selected, own))
+            self._fill_checklist(box, entries)
+            box.setEnabled(own)
+            if not visible:
+                box.addItem('No matching grids' if choices else 'No grids available in this model')
         if not choices:
-            self.monitoring_note.configure(text='No grid could be read from the model; every element is assessed.')
+            self.monitoring_note.setText('No grid could be read from the model; every element is assessed.')
         else:
-            self.monitoring_note.configure(text='Assessed: ' + self.editor.monitoring_text() +
-                                           '. No grid selected: every grid is assessed.')
-        self.contingency_note.configure(text=self.editor.contingency_preview())
-        self.refresh_elements()
+            self.monitoring_note.setText('Assessed: ' + self.editor.monitoring_text() + '. No grid selected: every grid '
+                                         'is assessed.')
+        self.contingency_note.setText(self.editor.contingency_preview())
 
-
-    def on_grid_select(self, key):
+    def on_grid_check(self, key):
         box = self.grid_lists[key]
-        if str(box.cget('state')) == 'disabled':
+        if not box.isEnabled():
             return
-        visible = self.grid_visible[key]
-        selected = [name for name in self.editor.selected_grids(key) or () if name not in visible]
-        selected += [visible[index] for index in box.curselection()]
+        shown = set(self._shown(box))
+        selected = [name for name in self.editor.selected_grids(key) or () if name not in shown] + \
+            [name for name in self._ticked(box) if name is not None]
         problem = self.editor.set_grids(key, selected)
         if problem:
-            self.messagebox.showerror('Network scope', problem, parent=self.root)
+            self.error('Network scope', problem)
         self.after_scope_change()
-
 
     def select_grids(self, key, everything):
         problem = self.editor.set_grids(key, self.editor.grid_choices() if everything else [])
         if problem:
-            self.messagebox.showerror('Network scope', problem, parent=self.root)
+            self.error('Network scope', problem)
         self.after_scope_change()
 
     def on_contingency_mode(self):
-        if self.contingency_mode.get() == 'same':
-            self.editor.set_grids('contingency_grids', None)
-        else:
-            self.editor.set_grids('contingency_grids', [])
+        self.editor.set_grids('contingency_grids', None if self.contingency_same.isChecked() else [])
         self.after_scope_change()
 
     def after_scope_change(self):
@@ -9503,29 +10191,113 @@ class CaseManagerDialog:
         self.refresh_cases(self.selected)
         self.refresh_overview()
 
-    def _build_time_page(self, page):
-        ttk = self.ttk
-        page.columnconfigure(0, weight=1)
-        inner = self._scrolled(page)
-        inner.columnconfigure(0, weight=1)
-        card = self._card(inner, row=0, column=0, sticky='new')
-        card.columnconfigure(1, weight=1)
-        title = ttk.Label(card, text='QDS time base (read only)', style='Title.TLabel')
-        title.grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 6))
+    def _build_time_page(self):
+        widgets = self.qt.QtWidgets
+        body = widgets.QWidget()
+        layout = widgets.QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 6, 0)
+        frame, card = self.card()
+        title = self.card_title(card, 'QDS time base', trailing=self.pill('read only', 'neutral'))
         self.tip(title, HELP_TEXTS['qds'])
-        for row, (label, value) in enumerate(self.editor.qds_info, 1):
-            caption = ttk.Label(card, text=label, style='Muted.TLabel')
-            caption.grid(row=row, column=0, sticky='nw', padx=(0, 14), pady=8)
-            shown = ttk.Label(card, text=value, wraplength=520)
-            shown.grid(row=row, column=1, sticky='w', pady=1)
+        grid = widgets.QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
+        for row, (label, value) in enumerate(self.editor.qds_info):
+            grid.addWidget(self.label(label, 'caption'), row, 0, self.qt.enum('AlignmentFlag.AlignTop'))
+            shown = self.label(value, wrap=True, selectable=True)
             self.tip(shown, HELP_TEXTS['qds'])
-        self._wrapped_label(card, 'Change the period and the time step in PowerFactory (ComStatsim). n-1 and (n-1)\' will '
-                            'use the same points in time once they are available.', row=len(self.editor.qds_info) + 1,
-                            column=0, columnspan=2, pady=(8, 0))
+            grid.addWidget(shown, row, 1)
+        card.addLayout(grid)
+        card.addWidget(self.label("Change the period and the time step in PowerFactory (ComStatsim). n-1 and (n-1)' will "
+                                  "use the same points in time once they are available.", 'hint', wrap=True))
+        layout.addWidget(frame)
+        layout.addStretch(1)
+        return self.scrolled(body)
+
+    def _build_fixed_and_rules(self):
+        widgets = self.qt.QtWidgets
+        body = widgets.QWidget()
+        layout = widgets.QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 6, 0)
+        layout.setSpacing(10)
+        layout.addWidget(self.label('Optional settings: leave both sections empty to compare only the outages you assign '
+                                    'to each case.', 'hint', wrap=True))
+        columns = widgets.QHBoxLayout()
+        columns.setSpacing(12)
+        fixed, card = self.card()
+        self.card_title(card, 'Fixed background outages', trailing=self.pill('Optional', 'neutral'))
+        card.addWidget(self.label('Use this for outages that are already planned and should be shared by the reference '
+                                  'and every case. Each outage still follows its own time window.', 'muted', wrap=True))
+        card.addWidget(self._inset('Example: transformer T1 is already under maintenance',
+                                   'Reference: T1\nCase A: T1 + line North\nCase B: T1 + line South'))
+        self.fixed_table = self.qt.FilterTable(self, (
+            ('fs', 'Planned outage', 170, True, None), ('equipment', 'Equipment', 150, True, None),
+            ('start', 'Start', 128, False, None), ('end', 'End', 128, False, None),
+            ('status', 'Status', 150, False, ('in simulated period', 'outside simulated period', 'Ignored in PowerFactory'))),
+            tips={'status': COLUMN_HELP['outage_status']}, empty_text='No fixed background outage',
+            pill_columns=('status',))
+        self.fixed_table.setMinimumHeight(220)
+        card.addWidget(self.fixed_table, 1)
+        self.fixed_table.view.doubleClicked.connect(lambda _index: self.safe(lambda: self.show_details(self.fixed_table))())
+        self.qt.KeyFilter(self.fixed_table.view, {'Delete|Backspace': self.unfix_selected})
+        card.addWidget(self.label('Add a shared outage on the Case Manager page with "Set as fixed background".', 'hint',
+                                  wrap=True))
+        card.addLayout(self.row(self.button('Remove from fixed background', self.unfix_selected, tip=HELP_TEXTS['unfix'])))
+        columns.addWidget(fixed, 1)
+        rules, card = self.card()
+        self.card_title(card, 'Rules between planned outages', trailing=self.pill('Optional', 'neutral'))
+        card.addWidget(self.label('Use this to check which outage combinations are allowed. A case that breaks a rule is '
+                                  'reported but not calculated. Rules never create cases or change outage dates.', 'muted',
+                                  wrap=True))
+        card.addWidget(self._inset('What the checks mean', 'must not overlap: their time windows must not overlap.\n'
+                                   'second only after the first: the second starts after the first ends.\n'
+                                   'only together: both belong to the case and their windows overlap.'))
+        self.rule_table = self.qt.FilterTable(self, (
+            ('first', 'First outage', 170, True, None), ('rule', 'Rule', 200, False, tuple(label for _, label in RULE_LABELS)),
+            ('second', 'Second outage', 170, True, None)), tips={'rule': HELP_TEXTS['rule_kind']},
+            empty_text='No rule defined')
+        self.rule_table.setMinimumHeight(200)
+        card.addWidget(self.rule_table, 1)
+        self.qt.KeyFilter(self.rule_table.view, {'Delete|Backspace': self.remove_rule})
+        editor = widgets.QGridLayout()
+        editor.setHorizontalSpacing(6)
+        names = [label for label, _ in self.editor.outage_choices()]
+        self.rule_first, self.rule_kind, self.rule_second = widgets.QComboBox(), widgets.QComboBox(), widgets.QComboBox()
+        for column, (text, box, values, tip) in enumerate((
+                ('First outage', self.rule_first, names, 'The first planned outage to check. Choose a rule and the second '
+                                                         'outage, then Add rule.'),
+                ('Rule', self.rule_kind, [label for _, label in RULE_LABELS], HELP_TEXTS['rule_kind']),
+                ('Second outage', self.rule_second, names, 'The second planned outage to check. For an order rule, this '
+                                                           'outage must start after the first ends.'))):
+            box.addItems(values)
+            box.setCurrentIndex(-1)
+            box.setMinimumContentsLength(8)
+            box.setSizeAdjustPolicy(self.qt.enum('SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon', widgets.QComboBox))
+            self.tip(box, tip)
+            editor.addWidget(self.label(text, 'caption'), 0, column)
+            editor.addWidget(box, 1, column)
+            editor.setColumnStretch(column, 1)
+        card.addLayout(editor)
+        card.addLayout(self.row(self.button('Add rule', self.add_rule, 'primary'), self.button('Remove rule', self.remove_rule)))
+        columns.addWidget(rules, 1)
+        layout.addLayout(columns, 1)
+        return self.scrolled(body)
+
+    def _inset(self, title, text):
+        widgets = self.qt.QtWidgets
+        frame = widgets.QFrame()
+        frame.setObjectName('inset')
+        layout = widgets.QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
+        layout.addWidget(self.label(title, 'insetTitle', wrap=True))
+        layout.addWidget(self.label(text, wrap=True))
+        return frame
 
     # --- settings -------------------------------------------------------------------
     def setting_entry_text(self, key):
-        """The applied value of a setting as the entry shows it."""
+        """The applied value of a setting as the input shows it."""
         setting = SETTINGS_BY_KEY[key]
         if not setting['editable']:
             return NOT_VERIFIED
@@ -9534,74 +10306,93 @@ class CaseManagerDialog:
             return dict(setting['choices']).get(value, str(value))
         return format_limit(value)
 
+    def setting_input_text(self, key):
+        widget = self.setting_inputs[key]
+        return widget.currentText() if SETTINGS_BY_KEY[key]['kind'] == 'choice' else widget.text()
+
     def fill_setting(self, key):
-        self.setting_vars[key].set(self.setting_entry_text(key))
+        widget, text = self.setting_inputs[key], self.setting_entry_text(key)
+        widget.blockSignals(True)
+        if SETTINGS_BY_KEY[key]['kind'] == 'choice':
+            index = widget.findText(text)
+            if index < 0:
+                widget.addItem(text)
+                index = widget.findText(text)
+            widget.setCurrentIndex(index)
+        else:
+            widget.setText(text)
+        widget.blockSignals(False)
         self.on_setting_edit(key)
 
     def setting_value(self, key):
-        """What the entry holds, as parse_setting expects it."""
-        text = self.setting_vars[key].get()
+        """What the input holds, as parse_setting expects it."""
+        text = self.setting_input_text(key)
         if SETTINGS_BY_KEY[key]['kind'] == 'choice':
             return {label: value for value, label in SETTINGS_BY_KEY[key]['choices']}.get(text, text)
         return text
 
+    def show_setting_problem(self, key, problem):
+        self.setting_messages[key].setText(problem or '')
+        if SETTINGS_BY_KEY[key]['kind'] != 'choice':
+            self.set_property(self.setting_inputs[key], 'invalid', bool(problem))
+
     def on_setting_edit(self, key):
         """Check one field while it is typed: red when invalid, 'edited, not applied' when it differs."""
         setting = SETTINGS_BY_KEY[key]
-        widget, message, source = self.setting_inputs[key], self.setting_messages[key], self.setting_sources[key]
+        source = self.setting_sources[key]
         problem = None
         if setting['editable']:
             _, problem = parse_setting(key, self.setting_value(key))
-            if setting['kind'] != 'choice':
-                widget.configure(style='Invalid.TEntry' if problem else 'TEntry')
-        message.configure(text=problem or '')
+        self.show_setting_problem(key, problem)
         if not setting['editable']:
-            source.configure(text=setting['source'] + ' · ' + NOT_VERIFIED, style='Source.TLabel')
-        elif self.setting_vars[key].get() != self.setting_entry_text(key):
-            source.configure(text='edited, not applied', style='User.TLabel')
+            source.setText(setting['source'] + ' · ' + NOT_VERIFIED)
+            self.set_property(source, 'tone', 'neutral')
+        elif self.setting_input_text(key) != self.setting_entry_text(key):
+            source.setText('edited, not applied')
+            self.set_property(source, 'tone', 'warning')
         else:
             origin = setting_source(key, self.editor.settings_overrides())
-            source.configure(text=origin, style='User.TLabel' if origin == SOURCE_USER else 'Source.TLabel')
+            source.setText(origin)
+            self.set_property(source, 'tone', 'primary' if origin == SOURCE_USER else 'neutral')
         self.refresh_settings_state()
 
     def pending_settings(self):
-        """Keys whose entry differs from the applied value."""
-        return [key for key in self.setting_vars if SETTINGS_BY_KEY[key]['editable']
-                and self.setting_vars[key].get() != self.setting_entry_text(key)]
+        """Keys whose input differs from the applied value."""
+        return [key for key in self.setting_inputs if SETTINGS_BY_KEY[key]['editable']
+                and self.setting_input_text(key) != self.setting_entry_text(key)]
+
+    def invalid_settings(self):
+        return [key for key in self.setting_messages if self.setting_messages[key].text()]
 
     def refresh_settings_state(self):
-        if not hasattr(self, 'settings_state'):
+        if not hasattr(self, 'settings_state') or not hasattr(self, 'nav'):
             return
-        invalid = [key for key in self.setting_vars if self.setting_messages[key].cget('text')]
-        pending = self.pending_settings()
+        invalid, pending = self.invalid_settings(), self.pending_settings()
         overrides = self.editor.settings_overrides()
         parts = ['{} user override(s)'.format(len(overrides)) if overrides else 'Outage Assessment defaults']
         if pending:
             parts.append('{} edited, not applied'.format(len(pending)))
         if invalid:
             parts.append('{} invalid'.format(len(invalid)))
-        self.settings_state.configure(text='Settings: ' + ', '.join(parts),
-                                      foreground=self.PROBLEM if invalid else self.MUTED)
-        self.notebook.tab(self.settings_tab, text=self.TAB_SETTINGS + (' (!)' if invalid else ' *' if pending else ''))
+        self.settings_state.setText('Settings: ' + ', '.join(parts))
+        self.settings_state.setStyleSheet('color: {};'.format(Theme.DANGER if invalid else Theme.MUTED))
+        self.nav[1].setText(self.TAB_SETTINGS + (' (!)' if invalid else ' *' if pending else ''))
 
     def apply_settings(self, quiet=False):
-        """Validate every entry and take them for the next calculation; False when one is invalid."""
-        values = {key: self.setting_value(key) for key in self.setting_vars if SETTINGS_BY_KEY[key]['editable']}
+        """Validate every input and take them for the next calculation; False when one is invalid."""
+        values = {key: self.setting_value(key) for key in self.setting_inputs if SETTINGS_BY_KEY[key]['editable']}
         problems = self.editor.set_settings(values)
-        for key in self.setting_vars:
-            self.setting_messages[key].configure(text='')
+        for key in self.setting_inputs:
+            self.show_setting_problem(key, None)
         for key, problem in problems:
             if key in self.setting_messages:
-                self.setting_messages[key].configure(text=problem)
-                if SETTINGS_BY_KEY[key]['kind'] != 'choice':
-                    self.setting_inputs[key].configure(style='Invalid.TEntry')
+                self.show_setting_problem(key, problem)
         if problems:
             self.refresh_settings_state()
             if not quiet:
-                self.messagebox.showerror('Settings', 'The settings were not applied:\n' + '\n'.join(
-                    problem for _, problem in problems), parent=self.root)
+                self.error('Settings', 'The settings were not applied:\n' + '\n'.join(problem for _, problem in problems))
             return False
-        for key in self.setting_vars:
+        for key in self.setting_inputs:
             self.fill_setting(key)
         self.refresh_cases(self.selected)
         self.refresh_overview()
@@ -9609,7 +10400,7 @@ class CaseManagerDialog:
 
     def restore_default_settings(self):
         self.editor.restore_default_settings()
-        for key in self.setting_vars:
+        for key in self.setting_inputs:
             self.fill_setting(key)
         self.refresh_scope()
         self.refresh_cases(self.selected)
@@ -9626,158 +10417,122 @@ class CaseManagerDialog:
 
     def refresh_cases(self, select=None):
         statuses = self.editor.case_statuses()
-        self.case_table.set_rows([(case_id, ('\u2611' if enabled else '\u2610', self.editor.case_label(case_id), count, statuses.get(case_id, '')))
+        self.case_table.set_rows([(case_id, ('\u2611' if enabled else '\u2610', self.editor.case_label(case_id), count,
+                                             statuses.get(case_id, '')))
                                   for case_id, enabled, _, count in self.editor.case_rows()])
         full = self.editor.limit_problem() is not None
-        self.case_limit_label.configure(text='{} of {} cases'.format(len(self.editor.case_ids()), case_limit(self.editor.config)),
-                                        style='Problem.TLabel' if full else 'Muted.TLabel')
+        self.case_limit_label.setText('{} of {} cases'.format(len(self.editor.case_ids()), case_limit(self.editor.config)))
+        self.set_property(self.case_limit_label, 'full', full)
         for label in ('New', 'Copy'):
-            self.case_buttons[label].state(['disabled'] if full else ['!disabled'])
+            self.case_buttons[label].setEnabled(not full)
         self.selected = select if self.editor.case(select) is not None else None
-        if self.selected is not None and self.selected in self.case_tree.get_children():
-            self.case_tree.selection_set(self.selected)
-            self.case_tree.focus(self.selected)
-            self.case_tree.see(self.selected)
+        if self.selected is not None and self.case_table.row_of(self.selected) is not None:
+            self._selecting = True
+            try:
+                self.case_table.select([self.selected], self.selected)
+            finally:
+                self._selecting = False
 
     def refresh_selected(self):
-        """Everything that depends on the selected case, then the other tabs."""
+        """Everything that depends on the selected case, then the overview."""
         case = self.editor.case(self.selected)
-        self.case_title.configure(text=self.editor.case_label(self.selected) if case else 'No case selected')
+        self.case_title.setText(self.editor.case_label(self.selected) if case else 'No case selected')
         counts = self.editor.counts_text(self.selected) if case else 'Create a case with "New" or select one on the right.'
         missing = self.editor.unknown_members(self.selected)
         if missing:
             counts += '   ({} assigned outage(s) no longer exist in the project)'.format(len(missing))
-        self.counts_label.configure(text=counts)
-        description = case.get('description', '') if case else ''
-        self.case_description.configure(text=clip_text(description, 90) if description else
-                                        ('(double-click to add a description)' if case else ''))
+        self.counts_label.setText(counts)
+        self.case_description.blockSignals(True)
+        self.case_description.setText(case.get('description', '') if case else '')
+        self.case_description.blockSignals(False)
+        self.case_description.setEnabled(case is not None)
         self.member_table.set_rows(self.editor.member_rows(self.selected))
         self.refresh_available()
-        self.draw_timeline()
+        items, overlaps = self.editor.timeline(self.selected)
+        self.timeline.set_items(items, overlaps)
         self.refresh_overview()
 
     def refresh_available(self):
         self.available_table.set_rows(self.editor.available_rows(self.selected))
 
     def refresh_overview(self):
-        """Fixed background and rules, the calculation preview, the problems, the status line and the tab labels."""
+        """Fixed background and rules, the calculation preview, the problems, the status line and the page labels."""
         with RUN_STATS.measure("case manager: refresh after an edit"):
             self._refresh_overview()
 
     def _refresh_overview(self):
+        widgets = self.qt.QtWidgets
         self.fixed_table.set_rows(self.editor.fixed_rows())
         self.rule_table.set_rows([(str(index), cells) for index, cells in self.editor.rule_rows()])
         lines, _ = self.editor.summary()
-        # Keep the overview compact; outage windows and settings are shown in
-        # the scrollable case preview below, including on a small screen.
         lines = [(label, text) for label, text in lines
                  if label in ('Cases selected', 'Valid cases', 'Reference', 'Calculation runs', 'QDS period')]
-        if len(lines) != len(self._preview_labels):
+        if len(lines) != len(self._preview_rows):
             # The number of lines changes only between a valid and an invalid configuration.
-            for child in self.preview_frame.winfo_children():
-                child.destroy()
-            self._preview_labels = []
+            for caption, value in self._preview_rows:
+                caption.deleteLater()
+                value.deleteLater()
+            self._preview_rows = []
             for row in range(len(lines)):
-                caption = self.ttk.Label(self.preview_frame, style='Muted.TLabel')
-                caption.grid(row=row, column=0, sticky='nw', padx=(0, 14), pady=1)
-                value = self.ttk.Label(self.preview_frame, wraplength=640)
-                value.grid(row=row, column=1, sticky='w', pady=1)
-                self._preview_labels.append((caption, value))
-        for (caption, value), (label, text) in zip(self._preview_labels, lines):
-            caption.configure(text=label)
-            value.configure(text=text)
+                caption, value = self.label('', 'caption'), self.label('', wrap=True, selectable=True)
+                self.preview_grid.addWidget(caption, row, 0, self.qt.enum('AlignmentFlag.AlignTop'))
+                self.preview_grid.addWidget(value, row, 1)
+                self._preview_rows.append((caption, value))
+            self.preview_grid.setColumnStretch(1, 1)
+        for (caption, value), (label, text) in zip(self._preview_rows, lines):
+            caption.setText(label)
+            value.setText(text)
         text = self.editor.calculation_preview()
         if text != self._case_preview_text:
-            scroll = self.case_preview.yview()
-            self.case_preview.configure(state='normal')
-            self.case_preview.delete('1.0', 'end')
-            self.case_preview.insert('1.0', text)
-            self.case_preview.configure(state='disabled')
-            if scroll:
-                self.case_preview.yview_moveto(scroll[0])
+            scroll = self.case_preview.verticalScrollBar().value()
+            self.case_preview.setPlainText(text)
+            self.case_preview.verticalScrollBar().setValue(scroll)
             self._case_preview_text = text
         problems = self.editor.problem_rows()
-        self.problem_table.set_rows([(str(index), cells) for index, cells in enumerate(problems)])
-        self.problem_table.tree.configure(show='tree', displaycolumns=('where', 'problem'))
-        self.problem_table.tree.column('#0', width=28, minwidth=28, stretch=False)
-        for index, (_, message) in enumerate(problems):
-            warning = message.startswith('Warning:')
-            self.problem_table.tree.item(str(index), text='△' if warning else '!', tags=('warning' if warning else 'error',))
-        self.notebook.tab(self.cases_tab, text=self.TAB_CASES + (' ({})'.format(len(problems)) if problems else ''))
+        self.problem_table.set_rows([(str(index), ('warning' if message.startswith('Warning:') else 'error', where, message))
+                                     for index, (where, message) in enumerate(problems)])
+        errors = sum(1 for _, message in problems if not message.startswith('Warning:'))
+        self.problem_count.setText(str(len(problems)) if problems else 'none')
+        self.set_property(self.problem_count, 'tone', 'danger' if errors else 'warning' if problems else 'success')
+        self.nav[0].setText(self.TAB_CASES + (' ({})'.format(len(problems)) if problems else ''))
         statuses = self.editor.case_statuses()
         ready = sum(1 for status in statuses.values() if status == 'ready')
         overrides = self.editor.settings_overrides()
-        self.status_line.configure(
-            text='QDS {}  ·  n-0  ·  {} of {} cases ready  ·  {}  ·  {}'.format(
-                self.editor.qds_text, ready, len(self.editor.config['cases']),
-                _counted(len(problems), 'problem or warning', 'problems or warnings') if problems else 'no problems',
-                _counted(len(overrides), 'settings override', 'settings overrides') if overrides else 'default settings'),
-            foreground=self.PROBLEM if problems else self.MUTED)
+        self.status_line.setText('QDS {}  ·  n-0  ·  {} of {} cases ready  ·  {}  ·  {}'.format(
+            self.editor.qds_text, ready, len(self.editor.config['cases']),
+            _counted(len(problems), 'problem or warning', 'problems or warnings') if problems else 'no problems',
+            _counted(len(overrides), 'settings override', 'settings overrides') if overrides else 'default settings'))
+        self.set_property(self.status_line, 'problem', bool(problems))
         self.refresh_settings_state()
 
     def refresh_preview(self):
         self.refresh_overview()
 
-    def draw_timeline(self):
-        canvas = self.canvas
-        canvas.delete('all')
-        items, overlaps = self.editor.timeline(self.selected)
-        width = max(canvas.winfo_width(), 360)
-        label_width, row_height, top = 180, round(30 * self.ui_scale), 8
-        self.timeline_start.configure(text='')
-        self.timeline_end.configure(text='')
-        if not items:
-            canvas.configure(height=36)
-            canvas.create_text(10, 20, anchor='w', fill=self.MUTED, font=self.body_font, text='No planned outage with a readable window in this case.')
-            canvas.configure(scrollregion=(0, 0, width, 36))
-            return
-        canvas.configure(height=78)
-        self.timeline_start.configure(text='Window start: ' + _format_pf_time(min(item[1] for item in items)))
-        self.timeline_end.configure(text='Window end: ' + _format_pf_time(max(item[2] for item in items)))
-        position, breaks = timeline_scale([(start, end) for _, start, end, _ in items], width - label_width - 14)
-        x = lambda moment: label_width + position(moment)
-        bottom = top + row_height * len(items)
-        for left, right in breaks:
-            canvas.create_rectangle(label_width + left, top - 4, label_width + right, bottom, fill=self.GAP, outline='')
-        for start, end in overlaps:
-            canvas.create_rectangle(x(start), top - 4, x(end), bottom, fill=self.OVERLAP, outline='')
-        for index, (name, start, end, kind) in enumerate(items):
-            y = top + index * row_height
-            canvas.create_text(4, y + row_height / 2, anchor='w', text=clip_text(name, 26), fill=self.TEXT, font=self.body_font)
-            left = x(start)
-            canvas.create_rectangle(left, y + 4, max(x(end), left + 3), y + row_height - 4,
-                                    fill=self.ACCENT if kind == 'case' else self.FIXED, outline='')
-        # The same compressed scale and intervals; endpoint dates sit below the canvas.
-        canvas.create_line(label_width, bottom + 2, width - 14, bottom + 2, fill=self.MUTED)
-        canvas.configure(scrollregion=(0, 0, width, bottom + 8))
-
     # --- cases -------------------------------------------------------------------
-    def on_case_select(self, _event=None):
-        chosen = self.case_tree.selection()
+    def on_case_select(self):
+        if getattr(self, '_selecting', False):
+            return
+        chosen = self.case_table.selection()
         identifier = chosen[0] if chosen else None
         if identifier is not None and identifier != self.selected:
             self.selected = identifier
             self.refresh_selected()
 
-    def on_case_flag_click(self, event):
-        tree = self.case_tree
-        if tree.identify_region(event.x, event.y) != 'cell' or tree.identify_column(event.x) != '#1':
-            return None
-        self.toggle_case_enabled(tree.identify_row(event.y))
-        return 'break'
+    def on_case_flag_click(self, index):
+        if index.column() == 0:
+            self.toggle_case_enabled(self.case_table.key_at(index))
 
     def toggle_case_enabled(self, case_id):
         case = self.editor.case(case_id)
         if case is None:
             return
-        self.finish_editing()
         self.editor.set_enabled(case_id, not case.get('enabled', True))
         self.refresh_all(case_id)
 
     def new_case(self):
         identifier, problem = self.editor.add_case()
         if problem:
-            self.messagebox.showinfo('New case', problem, parent=self.root)
+            self.info('New case', problem)
             return
         self.case_table.clear_filters()
         self.refresh_all(identifier)
@@ -9787,135 +10542,53 @@ class CaseManagerDialog:
             return
         identifier, problem = self.editor.copy_case(self.selected)
         if problem:
-            self.messagebox.showinfo('Copy case', problem, parent=self.root)
+            self.info('Copy case', problem)
             return
         self.case_table.clear_filters()
         self.refresh_all(identifier)
 
-    def on_case_double_click(self, event):
-        if self.on_case_flag_click(event) == 'break':
-            return 'break'
-        row = self.case_tree.identify_row(event.y)
-        if row:
-            self.rename_in_place(row)
-        return 'break'
+    def rename_in_place(self):
+        """Edit the name cell of the selected case; Enter or a click elsewhere applies, Escape cancels."""
+        row = self.case_table.row_of(self.selected) if self.selected else None
+        if row is not None:
+            index = self.case_table.model.index(row, 1)
+            self.case_table.view.setCurrentIndex(index)
+            self.case_table.view.edit(index)
 
-    def rename_in_place(self, case_id=None):
-        """An entry over the name cell of the case; Enter or a click elsewhere applies, Escape cancels."""
-        case_id = case_id or self.selected
-        case = self.editor.case(case_id)
-        if case is None or not self.case_tree.exists(case_id):
-            return None
-        self.case_tree.see(case_id)
-        self.root.update_idletasks()
-        box = self.case_tree.bbox(case_id, 'name')
-        if not box:
-            return None
+    def rename_case(self, case_id, value):
+        if value.strip():
+            self.editor.rename_case(case_id, value)
+        # After the editor has closed: the model is rebuilt with the new label.
+        self.qt.QtCore.QTimer.singleShot(0, self.safe(lambda: (self.refresh_cases(self.selected), self.refresh_selected())))
 
-        def apply(value):
-            if value.strip():
-                self.editor.rename_case(case_id, value)
-            self.refresh_cases(self.selected)
-            self.refresh_selected()
-        return self._edit_in_place(self.case_tree, box, case.get('name', ''), apply, 'name')
+    def apply_description(self):
+        if self.editor.case(self.selected) is None:
+            return
+        text = self.case_description.text()
+        if text.strip() != (self.editor.case(self.selected).get('description') or ''):
+            self.editor.set_description(self.selected, text)
+            self.refresh_overview()
 
-    def describe_in_place(self):
-        """An entry over the description next to the case name in the centre."""
-        case_id = self.selected
-        case = self.editor.case(case_id)
-        if case is None:
-            return None
-        self.root.update_idletasks()
-        heading, label = self.case_heading, self.case_description
-        left = label.winfo_x()
-        box = (left, label.winfo_y(), max(heading.winfo_width() - left, 200), max(label.winfo_height(), 26))
-
-        def apply(value):
-            self.editor.set_description(case_id, value)
-            self.refresh_selected()
-        return self._edit_in_place(heading, box, case.get('description', ''), apply, 'description')
-
-    def _edit_in_place(self, parent, box, text, apply, what):
-        """An entry laid over `box` (x, y, width, height) of `parent`; no extra window."""
-        self.finish_editing()
-        entry = self.ttk.Entry(parent)
-        entry.insert(0, text)
-        x, y, width, height = box
-        entry.place(x=x, y=y, width=width, height=height)
-        entry.focus_set()
-        entry.select_range(0, 'end')
-        state = {'entry': entry, 'what': what}
-
-        def commit(_event=None):
-            if self.inline_edit is not state:
-                return
-            value = entry.get()
-            self.inline_edit = None
-            entry.destroy()
-            apply(value)
-
-        def cancel(_event=None):
-            # 'break' keeps Escape from reaching the window, where it would cancel the run;
-            # the entry goes once this event is handled.
-            if self.inline_edit is state:
-                self.inline_edit = None
-                entry.after_idle(entry.destroy)
-            return 'break'
-        for sequence in ('<Return>', '<KP_Enter>', '<FocusOut>'):
-            entry.bind(sequence, commit)
-        entry.bind('<Escape>', cancel)
-        state.update(commit=commit, cancel=cancel)
-        self.inline_edit = state
-        return entry
-
-    def _bind_delete(self, tree, command):
-        for sequence in ('<Delete>', '<BackSpace>'):
-            tree.bind(sequence, lambda _event: (command(), 'break')[1])
-
-    def _bind_window_keys(self):
-        """Ctrl shortcuts for the whole window (on macOS also Command); see KEYBOARD_SHORTCUTS."""
-        modifiers = ['Control']
-        try:
-            if self.root.tk.call('tk', 'windowingsystem') == 'aqua':
-                modifiers.append('Command')
-        except Exception:
-            pass
-        for key, command in (('n', self.new_case), ('s', self.save), ('o', self.load_saved),
-                             ('Return', self.start), ('f', self.focus_search)):
-            for modifier in modifiers:
-                self.root.bind('<{}-{}>'.format(modifier, key), lambda _event, run=command: (run(), 'break')[1])
-        for table in (self.case_table, self.member_table, self.available_table, self.fixed_table, self.rule_table,
-                      self.problem_table):
-            for modifier in modifiers:
-                table.tree.bind('<{}-a>'.format(modifier), lambda _event, tree=table.tree: (
-                    tree.selection_set(tree.get_children()), 'break')[1])
-
-    def focus_search(self):
-        """Ctrl+F: the name filter of the available planned outages, on the Case Manager tab."""
-        self.notebook.select(self.cases_tab)
-        search = self.available_table.inputs[1]
-        search.focus_set()
-        search.select_range(0, 'end')
-
-    def on_escape(self, _event=None):
-        # Escape first ends an open in-place edit; only without one it cancels the run.
-        if self.inline_edit is not None:
-            self.inline_edit['cancel']()
-            return 'break'
-        self.cancel()
-        return 'break'
+    def revert_description(self):
+        case = self.editor.case(self.selected)
+        self.case_description.setText(case.get('description', '') if case else '')
+        self.case_table.view.setFocus()
 
     def finish_editing(self):
-        """Apply an open in-place edit, e.g. before saving or starting."""
-        if self.inline_edit is not None:
-            self.inline_edit['commit']()
+        """Apply an open edit, e.g. before saving or starting."""
+        focus = self.qt.QtWidgets.QApplication.focusWidget()
+        if focus is self.case_description:
+            self.apply_description()
+        view = self.case_table.view
+        if view.state() == self.qt.enum('State.EditingState', self.qt.QtWidgets.QAbstractItemView):
+            view.setFocus()  # commits the open name editor
 
     def delete_case(self):
         case = self.editor.case(self.selected)
         if case is None:
             return
-        if not self.messagebox.askyesno('Delete case', 'Delete case {}?\nOther cases and the planned outages stay unchanged.'.format(
-                self.editor.case_label(self.selected)), parent=self.root):
+        if not self.ask('Delete case', 'Delete case {}?\nOther cases and the planned outages stay unchanged.'.format(
+                self.editor.case_label(self.selected))):
             return
         ids = self.editor.case_ids()
         position = ids.index(self.selected)
@@ -9924,72 +10597,68 @@ class CaseManagerDialog:
         self.refresh_all(rest[min(position, len(rest) - 1)] if rest else None)
 
     def one_case_per_outage(self):
-        if self.editor.config['cases'] and not self.messagebox.askyesno(
-                'One case per planned outage', 'Replace all cases by one case per planned outage?', parent=self.root):
+        if self.editor.config['cases'] and not self.ask('One case per planned outage',
+                                                        'Replace all cases by one case per planned outage?'):
             return
         note = self.editor.one_case_per_outage()
         ids = self.editor.case_ids()
         self.case_table.clear_filters()
         self.refresh_all(ids[0] if ids else None)
         if note:
-            self.messagebox.showinfo('One case per planned outage', note, parent=self.root)
+            self.info('One case per planned outage', note)
 
     # --- planned outages ---------------------------------------------------------
     def add_selected(self):
         if self.selected is None:
-            self.messagebox.showinfo('Add to case', 'Select a planning case on the right first.', parent=self.root)
+            self.info('Add to case', 'Select a planning case on the right first.')
             return
-        problems = [problem for problem in (self.editor.add_outage(self.selected, key) for key in self.available_tree.selection()) if problem]
+        problems = [problem for problem in (self.editor.add_outage(self.selected, key)
+                                            for key in self.available_table.selection()) if problem]
         self.refresh_cases(self.selected)
         self.refresh_selected()
         if problems:
-            self.messagebox.showinfo('Add to case', '\n'.join(problems), parent=self.root)
+            self.info('Add to case', '\n'.join(problems))
 
-    def on_available_click(self, event):
-        """A click into the check box column ticks or unticks that outage; elsewhere it selects as usual."""
-        tree = self.available_tree
-        if tree.identify_region(event.x, event.y) != 'cell' or tree.identify_column(event.x) != '#1':
-            return None
-        key = tree.identify_row(event.y)
-        if key:
-            self.toggle_outage(key)
-        return 'break'
+    def on_available_click(self, index):
+        """A click into the check-box column ticks or unticks that outage; elsewhere it selects as usual."""
+        if index.column() == 0:
+            self.toggle_outage(self.available_table.key_at(index))
 
-    def on_available_double_click(self, event):
-        # Tk reports a quick second click as a double-click: in the box it ticks
-        # again, elsewhere it opens the details.
-        if self.on_available_click(event) == 'break':
-            return 'break'
-        self.show_details(self.available_tree)
-        return 'break'
+    def on_available_double_click(self, index):
+        # A quick second click in the box ticks again; elsewhere it opens the details.
+        if index.column() == 0:
+            self.toggle_outage(self.available_table.key_at(index))
+        else:
+            self.show_details(self.available_table)
 
     def toggle_outage(self, key):
         if not key:
             return
         if self.selected is None:
-            self.messagebox.showinfo('Add to case', 'Select a planning case on the right first.', parent=self.root)
+            self.info('Add to case', 'Select a planning case on the right first.')
             return
         problem = self.editor.toggle_outage(self.selected, key)
         self.refresh_cases(self.selected)
         self.refresh_selected()
         if problem:
-            self.messagebox.showinfo('Add to case', problem, parent=self.root)
+            self.info('Add to case', problem)
 
     def remove_selected(self):
-        for key in self.member_tree.selection():
+        for key in self.member_table.selection():
             self.editor.remove_outage(self.selected, key)
         self.refresh_cases(self.selected)
         self.refresh_selected()
 
     def fix_selected(self):
-        problems = [problem for problem in (self.editor.set_fixed(key, True) for key in self.available_tree.selection()) if problem]
+        problems = [problem for problem in (self.editor.set_fixed(key, True) for key in self.available_table.selection())
+                    if problem]
         self.refresh_cases(self.selected)
         self.refresh_selected()
         if problems:
-            self.messagebox.showinfo('Fixed background outage', '\n'.join(problems), parent=self.root)
+            self.info('Fixed background outage', '\n'.join(problems))
 
     def unfix_selected(self):
-        for key in self.fixed_tree.selection():
+        for key in self.fixed_table.selection():
             self.editor.set_fixed(key, False)
         self.refresh_cases(self.selected)
         self.refresh_selected()
@@ -9997,96 +10666,124 @@ class CaseManagerDialog:
     def add_rule(self):
         names = dict(self.editor.outage_choices())
         kinds = {label: kind for kind, label in RULE_LABELS}
-        problem = self.editor.add_rule(kinds.get(self.rule_kind.get()), names.get(self.rule_first.get()), names.get(self.rule_second.get()))
+        problem = self.editor.add_rule(kinds.get(self.rule_kind.currentText()), names.get(self.rule_first.currentText()),
+                                       names.get(self.rule_second.currentText()))
         if problem:
-            self.messagebox.showinfo('Rule', problem, parent=self.root)
+            self.info('Rule', problem)
         self.refresh_cases(self.selected)
         self.refresh_overview()
 
     def remove_rule(self):
-        for index in sorted((int(item) for item in self.rule_tree.selection()), reverse=True):
+        for index in sorted((int(item) for item in self.rule_table.selection()), reverse=True):
             self.editor.remove_rule(index)
         self.refresh_cases(self.selected)
         self.refresh_overview()
 
-    def show_details(self, tree):
+    def show_details(self, table):
         """A compact window with what PowerFactory holds for one planned outage, and its own dates in this case."""
-        chosen = tree.selection()
-        if not chosen or chosen[0] not in self.editor.by_key:
+        widgets, qt = self.qt.QtWidgets, self.qt
+        chosen = table.selection()
+        key = table.current() if table.current() in chosen else (chosen[0] if chosen else None)
+        if key not in self.editor.by_key:
             return
-        key = chosen[0]
-        window = self.tk.Toplevel(self.root)
-        window.title('Planned outage')
-        window.configure(background=self.CARD)
-        window.transient(self.root)
-        window.geometry(window_geometry(window.winfo_screenwidth(), window.winfo_screenheight(), share=0.65, largest=(900, 760)))
-        window.minsize(min(560, window.winfo_screenwidth()), min(400, window.winfo_screenheight()))
-        inner = self._scrolled(window, horizontal=True)
-        inner.columnconfigure(0, weight=1)
-        frame = self.ttk.Frame(inner, style='Card.TFrame', padding=20)
-        frame.grid(row=0, column=0, sticky='nsew')
-        frame.columnconfigure(1, weight=1)
+        window = widgets.QDialog(self.window)
+        window.setWindowTitle('Planned outage')
+        window.setObjectName('OutageAssessmentCaseManager')
+        window.setStyleSheet(stylesheet(self.zoom, self.family, self.images))
+        window.setMinimumWidth(560)
+        layout = widgets.QVBoxLayout(window)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+        frame, card = self.card(spacing=6)
         details = self.editor.details(key)
-        for row, (label, value) in enumerate(details):
-            self.ttk.Label(frame, text=label, style='Muted.TLabel').grid(row=row, column=0, sticky='nw', padx=(0, 12), pady=1)
-            self.ttk.Label(frame, text=value, wraplength=460).grid(row=row, column=1, sticky='w', pady=1)
-        row = len(details)
+        self.card_title(card, details[0][1], trailing=self.pill(self.editor.outage_status(self.editor.by_key[key]),
+                                                                STATUS_TONES.get(self.editor.outage_status(
+                                                                    self.editor.by_key[key]), 'neutral')))
+        grid = widgets.QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+        for row, (label, value) in enumerate(details[1:]):
+            grid.addWidget(self.label(label, 'caption'), row, 0, qt.enum('AlignmentFlag.AlignTop'))
+            grid.addWidget(self.label(value, wrap=True, selectable=True), row, 1)
+        card.addLayout(grid)
+        layout.addWidget(frame)
         case = self.editor.case(self.selected)
+        buttons = widgets.QHBoxLayout()
+        buttons.addStretch(1)
         if case is not None and key in (case.get('outages') or ()):
+            dates, card = self.card(spacing=6)
+            self.card_title(card, 'Own dates in {}'.format(self.editor.case_label(case['id'])))
             start, end = self.editor.window_text(case, self.editor.by_key[key])
-            start_var, end_var = self.tk.StringVar(value=start.rstrip(' *')), self.tk.StringVar(value=end.rstrip(' *'))
-            self.ttk.Label(frame, text='Own dates in {}'.format(self.editor.case_label(case['id'])), style='Section.TLabel').grid(
-                row=row, column=0, columnspan=2, sticky='w', pady=(10, 2))
-            self.ttk.Entry(frame, textvariable=start_var, width=18).grid(row=row + 1, column=0, sticky='w')
-            self.ttk.Entry(frame, textvariable=end_var, width=18).grid(row=row + 1, column=1, sticky='w')
-            note = ('Recorded only: this version does not apply own dates, the case is reported NOT EVALUATED. '
-                    'Create a planned outage with these dates for a calculation. An empty start removes them.')
-            self.ttk.Label(frame, text=note, style='Muted.TLabel', wraplength=460).grid(row=row + 2, column=0, columnspan=2, sticky='w')
+            start_edit, end_edit = widgets.QLineEdit(start.rstrip(' *')), widgets.QLineEdit(end.rstrip(' *'))
+            for edit in (start_edit, end_edit):
+                edit.setPlaceholderText('YYYY-MM-DD HH:MM')
+            fields = widgets.QGridLayout()
+            fields.setHorizontalSpacing(10)
+            fields.addWidget(self.label('Start', 'caption'), 0, 0)
+            fields.addWidget(self.label('End', 'caption'), 0, 1)
+            fields.addWidget(start_edit, 1, 0)
+            fields.addWidget(end_edit, 1, 1)
+            card.addLayout(fields)
+            card.addWidget(self.label('Recorded only: this version does not apply own dates, the case is reported NOT '
+                                      'EVALUATED. Create a planned outage with these dates for a calculation. An empty '
+                                      'start removes them.', 'hint', wrap=True))
+            layout.addWidget(dates)
 
             def apply_dates():
-                problem = self.editor.set_own_dates(self.selected, key, start_var.get(), end_var.get())
+                problem = self.editor.set_own_dates(self.selected, key, start_edit.text(), end_edit.text())
                 if problem:
-                    self.messagebox.showerror('Own dates', problem, parent=window)
+                    self.error('Own dates', problem, parent=window)
                     return
                 self.refresh_cases(self.selected)
                 self.refresh_selected()
-                window.destroy()
-            self.ttk.Button(frame, text='Apply own dates', command=apply_dates).grid(row=row + 3, column=0, sticky='w', pady=(6, 0))
-            row += 4
-        self.ttk.Button(frame, text='Close', command=window.destroy).grid(row=row, column=1, sticky='e', pady=(6, 0))
-        window.bind('<Escape>', lambda _event: window.destroy())
+                window.accept()
+            buttons.addWidget(self.button('Apply own dates', apply_dates, 'primary'))
+        close = self.button('Close', window.reject)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        execute = getattr(window, 'exec', None) or window.exec_
+        execute()
+        window.deleteLater()
 
     # --- calculation -----------------------------------------------------------
-    def apply_results_choice(self):
-        self.editor.set_evaluate_stamp(dict(self.editor.result_choices()).get(self.results_var.get()))
-        self.refresh_overview()
-
     def apply_log_level(self):
-        chosen = {label: level for level, label in LOG_LEVEL_LABELS.items()}.get(self.log_var.get())
-        if chosen is not None:
-            self.editor.set_log_level(chosen)
+        index = self.log_box.currentIndex()
+        if 0 <= index < len(LOG_LEVELS):
+            self.editor.set_log_level(LOG_LEVELS[index])
         self.refresh_overview()
 
-    def apply_assessments(self):
-        if self.n1_prime_var.get() and not self.n1_var.get():
-            # (n-1)' is compared with n-1: ticking (n-1)' ticks n-1, unticking n-1 unticks (n-1)'.
-            if self.n1_prime_var.get() and self.editor.config['assessments'].count(N1_PRIME):
-                self.n1_prime_var.set(False)
-            else:
-                self.n1_var.set(True)
-        self.editor.set_assessments(True, self.n1_var.get(), self.n1_prime_var.get())
+    def apply_results_choice(self):
+        choices = self.editor.result_choices()
+        index = self.results_box.currentIndex()
+        self.editor.set_evaluate_stamp(choices[index][1] if 0 <= index < len(choices) else None)
+        self.refresh_overview()
+
+    def apply_assessments(self, changed=None):
+        """(n-1)' is compared with n-1: ticking (n-1)' ticks n-1, unticking n-1 unticks (n-1)'."""
+        n1, prime = self.n1_check.isChecked(), self.n1_prime_check.isChecked()
+        if prime and not n1:
+            target = self.n1_prime_check if changed == 'n1' else self.n1_check
+            target.blockSignals(True)
+            target.setChecked(changed != 'n1')
+            target.blockSignals(False)
+        if not self.n0_check.isChecked() and not self.n1_check.isChecked():
+            # Something must be calculated: without n-1, n-0 stays ticked.
+            self.n0_check.blockSignals(True)
+            self.n0_check.setChecked(True)
+            self.n0_check.blockSignals(False)
+        self.editor.set_assessments(self.n0_check.isChecked(), self.n1_check.isChecked(), self.n1_prime_check.isChecked())
         self.refresh_overview()
 
     def _settings_ready(self, title):
         """Apply edited settings first; False (with the reason shown) when one is invalid."""
-        if not self.pending_settings() and not any(self.setting_messages[key].cget('text') for key in self.setting_messages):
+        if not self.pending_settings() and not self.invalid_settings():
             return True
         if self.apply_settings(quiet=True):
             return True
-        self.notebook.select(self.settings_tab)
-        self.messagebox.showerror(title, 'Invalid settings:\n' + '\n'.join(
-            '{}: {}'.format(SETTINGS_BY_KEY[key]['label'], self.setting_messages[key].cget('text'))
-            for key in self.setting_messages if self.setting_messages[key].cget('text')), parent=self.root)
+        self.show_page(1)
+        self.error(title, 'Invalid settings:\n' + '\n'.join('{}: {}'.format(
+            SETTINGS_BY_KEY[key]['label'], self.setting_messages[key].text()) for key in self.invalid_settings()))
         return False
 
     def save(self):
@@ -10095,34 +10792,36 @@ class CaseManagerDialog:
             return
         problems = validate_case_config(self.editor.config)
         if problems:
-            self.messagebox.showerror('Save configuration', '\n'.join(problems), parent=self.root)
+            self.error('Save configuration', '\n'.join(problems))
             return
         try:
             stored = save_case_config(self.config_path, self.editor.config, self.user)
         except (OSError, OutageAssessmentError) as exc:
-            self.messagebox.showerror('Save configuration', str(exc), parent=self.root)
+            self.error('Save configuration', str(exc))
             return
-        self.messagebox.showinfo('Save configuration', 'Saved revision {} to\n{}'.format(stored['revision'], self.config_path), parent=self.root)
+        self.info('Save configuration', 'Saved revision {} to\n{}'.format(stored['revision'], self.config_path))
 
     def load_saved(self):
         try:
             saved = load_case_config(self.config_path)
         except OutageAssessmentError as exc:
-            self.messagebox.showerror('Load saved configuration', str(exc), parent=self.root)
+            self.error('Load saved configuration', str(exc))
             return
         if saved is None:
-            self.messagebox.showinfo('Load saved configuration', 'No saved configuration exists yet at\n{}'.format(self.config_path), parent=self.root)
+            self.info('Load saved configuration', 'No saved configuration exists yet at\n{}'.format(self.config_path))
             return
-        if not self.messagebox.askyesno('Load saved configuration', 'Replace the cases on screen by the saved revision {}?'.format(
-                saved.get('revision')), parent=self.root):
+        if not self.ask('Load saved configuration', 'Replace the cases on screen by the saved revision {}?'.format(
+                saved.get('revision'))):
             return
         self.editor.load(saved)
-        self.n1_var.set(N1_REFERENCE in self.editor.config['assessments'])
-        self.n1_prime_var.set(N1_PRIME in self.editor.config['assessments'])
-        for key in self.setting_vars:
+        for check, assessment in ((self.n0_check, 'n-0'), (self.n1_check, N1_REFERENCE), (self.n1_prime_check, N1_PRIME)):
+            check.blockSignals(True)
+            check.setChecked(assessment in self.editor.config['assessments'])
+            check.blockSignals(False)
+        for key in self.setting_inputs:
             self.fill_setting(key)
         self.refresh_scope()
-        for table in (self.case_table, self.member_table, self.available_table, self.fixed_table, self.rule_table, self.problem_table):
+        for table in self.tables():
             table.clear_filters()
         ids = self.editor.case_ids()
         self.refresh_all(ids[0] if ids else None)
@@ -10132,67 +10831,86 @@ class CaseManagerDialog:
         self.finish_editing()
         if not self._settings_ready('Start calculation'):
             return
-        problem = self.editor.set_assessments(True, self.n1_var.get(), self.n1_prime_var.get())
+        problem = self.editor.set_assessments(self.n0_check.isChecked(), self.n1_check.isChecked(),
+                                              self.n1_prime_check.isChecked())
         problems = ([problem] if problem else []) + validate_case_config(self.editor.config)
         if problems:
-            self.messagebox.showerror('Start calculation', '\n'.join(problems), parent=self.root)
+            self.error('Start calculation', '\n'.join(problems))
             return
         request = self.editor.request()
         ready = [plan for plan in request['cases'] if plan['status'] == PLAN_READY]
         blocked = [plan for plan in request['cases'] if plan['status'] != PLAN_READY]
-        if not ready and not self.messagebox.askyesno('Start calculation', 'No case can be calculated. Calculate the reference only?',
-                                                      parent=self.root):
+        if not ready and not self.ask('Start calculation', 'No case can be calculated. Calculate the reference only?'):
             return
-        if blocked and ready and not self.messagebox.askyesno(
-                'Start calculation', '{} case(s) cannot be calculated and will be reported with their reason:\n{}\n\nContinue?'.format(
-                    len(blocked), '\n'.join('{}: {}'.format(self.editor.case_label(plan['id']), clip_text(plan['reason'], 140))
-                                             for plan in blocked[:5])),
-                parent=self.root):
+        if blocked and ready and not self.ask(
+                'Start calculation', '{} case(s) cannot be calculated and will be reported with their reason:\n{}\n\n'
+                'Continue?'.format(len(blocked), '\n'.join('{}: {}'.format(self.editor.case_label(plan['id']),
+                                                                         clip_text(plan['reason'], 140))
+                                                         for plan in blocked[:5]))):
             return
         self.outcome = dict(self.editor.config)
         if self.editor.evaluate_stamp:
             # Only for this run, never saved: re-evaluate a kept run instead of calculating.
             self.outcome['evaluate_stamp'] = self.editor.evaluate_stamp
-        self.root.destroy()
+        self.window.done_now(1)
+
+    def focus_search(self):
+        """Ctrl+F: the name filter of the available planned outages, on the Case Manager page."""
+        self.show_page(0)
+        self.available_table.focus_filter(1)
+
+    def on_escape(self):
+        # Escape and the window's close button cancel; an open name editor handles its own Escape first.
+        self.cancel()
 
     def cancel(self):
         self.outcome = None
-        self.root.destroy()
+        self.window.done_now(0)
+
+    def run(self):
+        """Show the window modally; PowerFactory waits until it is closed."""
+        self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()
+        execute = getattr(self.window, 'exec', None) or self.window.exec_
+        execute()
 
 
 def run_case_manager(records, config, period, config_path, user='', qds_text='', qds_info=None, grids=None,
                      contingencies=CONTINGENCIES_NOT_READ, kept=(), elements=()):
     """Show the case manager; the edited configuration on "Start calculation", None on Cancel."""
+    import sys
     try:
-        import tkinter as tk
-        import tkinter.font
-        from tkinter import messagebox, simpledialog, ttk
-        root = tk.Tk()
+        qt = qt_toolkit()
+        qt_application(qt)
+    except CaseManagerUnavailable:
+        raise
     except Exception as exc:
         raise CaseManagerUnavailable('The case manager cannot open a window: {}'.format(_friendly_exception(exc))) from None
-    dialog = CaseManagerDialog(root, CaseEditor(records, config, period, qds_text, qds_info, grids, contingencies, kept, elements),
-                               config_path, user,
-                               (tk, ttk, messagebox, simpledialog))
-    root.report_callback_exception = dialog.report_error
+    dialog = CaseManagerDialog(qt, CaseEditor(records, config, period, qds_text, qds_info, grids, contingencies, kept,
+                                              elements), config_path, user)
+    # PyQt ends the whole process on an exception it cannot hand to a replaced excepthook; inside
+    # PowerFactory that would close PowerFactory. While the window is open, such errors are shown instead.
+    previous_hook = sys.excepthook
+    sys.excepthook = dialog.report_error
     try:
-        dialog.build()
-    except Exception as exc:
-        # Nothing has been shown yet: the same as a missing Tk.
         try:
-            root.destroy()
-        except Exception:
-            pass
-        raise CaseManagerUnavailable('The case manager could not be built: {}'.format(_friendly_exception(exc))) from None
-    try:
-        root.mainloop()
-    except Exception as exc:
-        raise OutageAssessmentError('The case manager stopped with an error: {}. Nothing was calculated.'.format(
-            _friendly_exception(exc))) from None
+            dialog.build()
+        except Exception as exc:
+            # Nothing has been shown yet: the same as a missing Qt.
+            window = getattr(dialog, 'window', None)
+            if window is not None:
+                window.deleteLater()
+            raise CaseManagerUnavailable('The case manager could not be built: {}'.format(_friendly_exception(exc))) from None
+        try:
+            dialog.run()
+        except Exception as exc:
+            raise OutageAssessmentError('The case manager stopped with an error: {}. Nothing was calculated.'.format(
+                _friendly_exception(exc))) from None
+        finally:
+            dialog.window.deleteLater()
     finally:
-        try:
-            root.destroy()
-        except Exception:
-            pass
+        sys.excepthook = previous_hook
     return dialog.outcome
 
 
@@ -11229,12 +11947,6 @@ def _reused_result(source, plan, request):
 # ---------------------------------------------------------------------------
 
 
-def contingency_analysis(study_case):
-    """The ComSimoutage of the study case, read with GetContents (never created); None if there is not exactly one."""
-    commands = [item for item in _contents(study_case, '*.' + N1_COMMAND_CLASS) if class_name(item) == N1_COMMAND_CLASS]
-    return commands[0] if len(commands) == 1 else None
-
-
 def contingency_equipment(command):
     """[(ComOutage, [equipment])] of the contingency analysis, read with ComOutage.GetObject(line)."""
     found = []
@@ -11255,10 +11967,12 @@ def contingency_equipment(command):
     return found
 
 
-# Equipment Outage Assessment defines contingencies for when the study case has no contingency analysis: branches,
-# transformers, reactors, compensation and FACTS. Not: generators, loads, busbars and terminals.
+# Equipment Outage Assessment defines one contingency each for, in the n-1 grids: branches, transformers,
+# reactors, compensation, FACTS, generators and loads (Hadi, 16 Nov 2026: everything in the grid). Not: busbars
+# and terminals, whose outage would take everything connected with it.
 N1_CONTINGENCY_CLASSES = ('ElmLne', 'ElmBranch', 'ElmZpu', 'ElmTr2', 'ElmTr3', 'ElmTr4', 'ElmSind', 'ElmScap',
-                          'ElmShnt', 'ElmSvs', 'ElmVsc', 'ElmVscmono')
+                          'ElmShnt', 'ElmSvs', 'ElmVsc', 'ElmVscmono', 'ElmSym', 'ElmAsm', 'ElmGenstat', 'ElmPvsys',
+                          'ElmLod')
 N1_SWEEP_OPTION = 'iEnableTS'
 
 
@@ -11289,18 +12003,60 @@ def contingency_candidates(app, grids):
     return found
 
 
-def create_contingency_analysis(app, study_case, grids, name):
-    """A new contingency analysis `name` in the study case with one contingency (ComOutage) per candidate.
+def contingency_targets(app, grids=None):
+    """The elements Outage Assessment defines one contingency each for, in the order found: every candidate
+    (contingency_candidates) in the n-1 grids, none selected: every grid."""
+    grids = contingency_grid_selection() if grids is None else tuple(grids)
+    elements = list(contingency_candidates(app, grids))
+    if not elements:
+        raise OutageAssessmentError("no line, branch, transformer, reactor, compensation, FACTS element, generator or "
+                            "load is calculation relevant in {}, so no contingency can be defined".format(
+                                ', '.join(grids) if grids else 'the network'))
+    return elements
+
+
+def own_contingency_analyses(study_case):
+    """The contingency analyses earlier runs defined and kept in the study case (OA_<stamp>_N1), oldest first."""
+    return sorted((item for item in _contents(study_case, '*.' + N1_COMMAND_CLASS)
+                   if class_name(item) == N1_COMMAND_CLASS and object_name(item).startswith(SNAPSHOT_PREFIX)
+                   and object_name(item).endswith('_N1')), key=object_name)
+
+
+def defined_elements(command):
+    """The element keys of a contingency analysis in which every contingency outages exactly one element and is
+    analysed; None when one does not, or when it holds no contingency."""
+    keys = set()
+    for outage, elements in contingency_equipment(command):
+        if len(elements) != 1 or safe_attr(outage, 'outserv', 0) not in (0, False):
+            return None
+        keys.add(object_key(elements[0]))
+    return keys or None
+
+
+DEFINED_CONTINGENCIES = ('one contingency per line, branch, transformer, reactor, compensation, FACTS element, '
+                         'generator and load')
+
+
+def defined_contingencies(app):
+    """The contingencies Outage Assessment would define, in the shape of read_contingencies, for the network scope
+    of the case manager: one per candidate of every grid, read only."""
+    found = []
+    for element in contingency_candidates(app, ()) if app is not None else ():
+        grid = element_grid_name(element)
+        found.append({'name': object_name(element), 'number': None, 'analysed': True,
+                      'elements': [object_name(element)],
+                      'element_items': [(object_key(element), object_name(element), class_name(element), grid)],
+                      'grids': [grid or '(no grid)']})
+    return {'command': DEFINED_CONTINGENCIES, 'contingencies': found, 'defined': True}
+
+
+def create_contingency_analysis(study_case, elements, name):
+    """A new contingency analysis `name` in the study case with one contingency (ComOutage) per element.
 
     It is kept after the run, like the QDS result objects. Every contingency
     holds one element as its interrupted component (ComOutage.SetObjs); the
     time sweep is switched on. Returns (command, contingencies, refused).
     """
-    chosen = set(current_setting('contingency_elements'))
-    elements = [element for element in contingency_candidates(app, grids) if not chosen or object_key(element) in chosen]
-    if not elements:
-        raise OutageAssessmentError("no branch, transformer, reactor, compensation or FACTS element is calculation relevant in "
-                            "{}, so no contingency can be defined".format(', '.join(grids) if grids else 'the network'))
     try:
         command = study_case.CreateObject(N1_COMMAND_CLASS, name)
     except Exception as exc:
@@ -11387,8 +12143,8 @@ def sweep_period(times, step, limit=None):
     count = int(round((last - first) / step)) + 1
     if count > limit:
         raise OutageAssessmentError(
-            "The n-1 time sweep from the first to the last study time of the outage windows covers {} QDS steps, more "
-            "than {}; every one calculates every contingency.".format(count, limit),
+            "The n-1 time sweep from the first to the last study time of the outage windows covers {} {}, more "
+            "than {}; every one calculates every contingency.".format(count, n1_steps_label(), limit),
             details=["Study times inside the windows: " + times_text(times)],
             hint="Split the case into cases whose outage windows lie close together, or raise 'max n-1 study times' "
                  "in Settings.")
@@ -11472,7 +12228,7 @@ def run_n1_sweep(command, times, step, active_keys, records, excluded, label, ke
             raise OutageAssessmentError(
                 "The contingency analysis for {} did not calculate {} of the {} study times inside the outage windows, "
                 "so its results cannot be placed in the windows.".format(label, len(missing), len(times)),
-                details=["Wanted (QDS steps inside the outage windows): " + times_text(times),
+                details=["Wanted ({} inside the outage windows): ".format(n1_steps_label()) + times_text(times),
                          "Missing: " + times_text(missing),
                          "Written period: {} to {} (exclusive), {} step(s)".format(
                              _format_pf_time(period[0]), _format_pf_time(period[-1] + step), len(period)),
@@ -11600,7 +12356,8 @@ def n1_data_text(kind, found, data, qds_steps=None, reference=None):
             "study time: {}; {} value(s), {} inside the recording limits (code 3).".format(
                 kind, object_name(kept) if kept is not None else 'read at once', len(data['times']),
                 data.get('calculated_count', len(data['times'])),
-                ", of {} QDS steps in the period; the others are not calculated".format(qds_steps) if qds_steps else "",
+                ", of {} {} in the period; the others are not calculated".format(qds_steps, n1_steps_label())
+                if qds_steps else "",
                 clip_text("; ".join(per_time), 300) or "none", len(cells), sum(1 for value in cells if value is None)))
     if reference is not None:
         mine = {key[0] for values in data['times'].values() for key in values}
@@ -11628,7 +12385,8 @@ def calculate_n1_case(command, plan, request, records, grid, excluded, prime, re
     label = label or 'case ' + plan['id']
     times = n1_study_times([plan['windows'][record['key']] for record in plan['members']], grid)
     if not times:
-        return {'status': 'NOT EVALUATED', 'reason': 'no QDS time step lies inside the outage windows', 'times': 0}
+        return {'status': 'NOT EVALUATED', 'reason': 'no {} lies inside the outage windows'.format(
+            n1_steps_label()[:-1]), 'times': 0}
     mark = 'Outage Assessment {}; case {} {{}}; fingerprint {}'.format(PUBLISHER_VERSION, plan['id'], plan['fingerprint'])
     background = {record['key'] for record in request['background']}
     key = tuple(times)
@@ -11789,21 +12547,6 @@ def read_contingencies(study_case):
     return {'command': object_name(command), 'contingencies': found}
 
 
-def contingency_element_choices(app, info):
-    """[(key, name, class, grid)] the n-1 element filter offers: the equipment of the contingencies of the study
-    case, else the elements Outage Assessment would define contingencies for; sorted by name."""
-    found = {}
-    if isinstance(info, dict):
-        for contingency in info.get('contingencies') or ():
-            for item in contingency.get('element_items') or ():
-                found.setdefault(item[0], tuple(item))
-    elif app is not None:
-        for element in contingency_candidates(app, ()):
-            found.setdefault(object_key(element), (object_key(element), object_name(element), class_name(element),
-                                                  element_grid_name(element)))
-    return sorted(found.values(), key=lambda item: (item[1].casefold(), item[0]))
-
-
 def contingency_scope(info, contingency_grids, monitoring_grids=()):
     """Which contingencies the grid selection keeps. None or empty for the contingency grids means every grid.
 
@@ -11831,6 +12574,10 @@ def contingency_scope_text(info, contingency_grids, monitoring_grids=()):
         return 'no contingency analysis (ComSimoutage) in the active study case'
     scope = contingency_scope(info, contingency_grids, monitoring_grids)
     total = len(info['contingencies'])
+    if info.get('defined'):
+        return '{} contingencies in scope ({}), {} of {} in the network: Outage Assessment defines {}.'.format(
+            len(scope['in']), ', '.join(scope['grids']) if scope['grids'] else 'every grid', len(scope['in']), total,
+            DEFINED_CONTINGENCIES)
     parts = ['{} of {} contingencies of {!r} in scope ({})'.format(
         len(scope['in']), total, info['command'], ', '.join(scope['grids']) if scope['grids'] else 'every grid')]
     for key, label in (('partly', 'partly outside'), ('outside', 'outside'), ('unknown', 'equipment not readable'),
@@ -12069,7 +12816,7 @@ def _log_findings(logger, payload):
 
 
 def contingency_grid_selection():
-    """The grids whose contingencies are analysed (empty: every grid). Independent of the report filter."""
+    """The grids whose equipment gets a contingency (empty: every grid). Independent of the report filter."""
     return tuple(current_setting('contingency_grids') or ())
 
 
@@ -12078,55 +12825,66 @@ def element_label(key):
     return key.split('\\')[-1].rsplit('.', 1)[0] if key else key
 
 
-def excluded_contingencies(equipment, grids=None, elements=None):
-    """{contingency key: reason} of the contingencies the n-1 filters leave out.
+def excluded_contingencies(equipment, grids=None):
+    """{contingency key: reason} of the contingencies the n-1 grid filter leaves out.
 
     `equipment` is [(ComOutage, [element])]. A contingency is left out when
     none of its equipment lies in the selected grids (no grid selected: every
-    grid) or, with elements selected, when it outages none of them.
-    Contingencies without readable equipment stay in.
+    grid). Contingencies without readable equipment stay in.
     """
     grids = contingency_grid_selection() if grids is None else tuple(grids)
-    elements = set(current_setting('contingency_elements') if elements is None else elements)
     found = {}
     for outage, items in equipment:
-        if not items:
-            continue
-        if elements and not any(object_key(item) in elements for item in items):
-            found[object_key(outage)] = 'outages no selected element'
-        elif grids and not any(element_grid_name(item) in grids for item in items):
+        if items and grids and not any(element_grid_name(item) in grids for item in items):
             found[object_key(outage)] = 'outside the n-1 grids'
     return found
 
 
 def n1_filter_text():
     """The n-1 filters of the current settings, for log, report and the kept result objects."""
-    grids, elements = contingency_grid_selection(), current_setting('contingency_elements')
-    return "n-1 filter: grids {}; outaged elements: {}".format(
-        ', '.join(grids) if grids else 'every grid', ', '.join(element_label(key) for key in elements) or 'every element')
+    grids = contingency_grid_selection()
+    return "n-1 filter: grids {}".format(', '.join(grids) if grids else 'every grid')
 
 
 def _n1_command(app, study_case, grid, logger):
-    """(contingency analysis, reason): the one of the study case, else one Outage Assessment defines and keeps."""
-    command = contingency_analysis(study_case)
-    if command is None and not _contents(study_case, '*.' + N1_COMMAND_CLASS) and grid is not None:
-        # No contingency analysis here (e.g. the QDS study case): Outage Assessment defines one and keeps it.
-        name = "{}{}_N1".format(SNAPSHOT_PREFIX, datetime.now().strftime("%y%m%d-%H%M%S"))
-        try:
-            with RUN_STATS.measure("n-1: define contingencies"):
-                command, made, refused = create_contingency_analysis(app, study_case, contingency_grid_selection(), name)
-            RUN_STATS.count("n1_created")
-            logger.write("CALCULATION", "The study case holds no contingency analysis: Outage Assessment created '{}' with {} "
-                         "contingencies (one per branch, transformer, reactor, compensation and FACTS element in {}; no "
-                         "generators, loads or busbars){}. It stays in the study case.".format(
-                             name, made, ', '.join(contingency_grid_selection()) or 'every grid',
-                             '; {} element(s) refused'.format(refused) if refused else ''), 4)
-        except OutageAssessmentError as exc:
-            return None, str(exc)
-    if command is None:
-        return None, 'the active study case holds more than one contingency analysis (ComSimoutage)'
+    """(contingency analysis, reason): always one with the contingencies of the n-1 filter, defined by Outage Assessment.
+
+    One contingency per line, branch, transformer, reactor, compensation, FACTS
+    element, generator and load in the n-1 grids. A contingency analysis already in the study case is not used:
+    PowerFactory creates one, often empty, as soon as its dialog is opened, and
+    its contingencies need not match the grids. A kept analysis of an earlier
+    run with exactly these contingencies is used again; otherwise a new one is
+    created and kept (OA_<stamp>_N1).
+    """
     if grid is None:
-        return None, 'the ComStatsim time step is not readable'
+        return None, 'the time grid of the n-1 study times is not known'
+    try:
+        elements = contingency_targets(app)
+    except OutageAssessmentError as exc:
+        return None, str(exc)
+    wanted = {object_key(element) for element in elements}
+    scope = ', '.join(contingency_grid_selection()) or 'every grid'
+    for command in reversed(own_contingency_analyses(study_case)):
+        if defined_elements(command) == wanted:
+            logger.write("CALCULATION", "Using the contingency analysis '{}' of an earlier run again: it holds exactly the "
+                         "{} contingencies of the n-1 filter ({} in {}).".format(
+                             object_name(command), len(wanted), DEFINED_CONTINGENCIES, scope), 4)
+            return command, None
+    others = [object_name(item) for item in _contents(study_case, '*.' + N1_COMMAND_CLASS)
+              if class_name(item) == N1_COMMAND_CLASS and not object_name(item).startswith(SNAPSHOT_PREFIX)]
+    name = "{}{}_N1".format(SNAPSHOT_PREFIX, datetime.now().strftime("%y%m%d-%H%M%S"))
+    try:
+        with RUN_STATS.measure("n-1: define contingencies"):
+            command, made, refused = create_contingency_analysis(study_case, elements, name)
+    except OutageAssessmentError as exc:
+        return None, str(exc)
+    RUN_STATS.count("n1_created")
+    logger.write("CALCULATION", "Outage Assessment created '{}' with {} contingencies ({} in {}; no busbars){}. It "
+                 "stays in the study case.{}".format(
+                     name, made, DEFINED_CONTINGENCIES, scope,
+                     '; {} element(s) refused'.format(refused) if refused else '',
+                     " The contingency analysis {} of the study case is not used; its contingencies are left as they "
+                     "are.".format(', '.join("'{}'".format(item) for item in others)) if others else ''), 4)
     return command, None
 
 
@@ -12144,7 +12902,7 @@ def _equipment_map(commands):
 # ---------------------------------------------------------------------------
 
 
-def calculate_n1(app, study_case, qds, request, records, ready, logger, study_time_state, result_objects):
+def calculate_n1(app, study_case, qds, request, records, ready, logger, study_time_state, result_objects, grid='qds'):
     """Phase 1 of n-1 and, if requested, (n-1)' for every ready planning case: {case id: entry}.
 
     Every sweep is kept as a copy (OA_<stamp>_<case>_N1 and _N1P) and
@@ -12154,7 +12912,8 @@ def calculate_n1(app, study_case, qds, request, records, ready, logger, study_ti
     calculation.
     """
     prime = N1_PRIME in (request.get('assessments') or ())
-    grid = qds_grid(qds)
+    # With n-0 the n-1 study times are the QDS steps; without it (n-1 only) the caller passes the n-1 time grid.
+    grid = qds_grid(qds) if grid == 'qds' else grid
     command, reason = _n1_command(app, study_case, grid, logger)
     if reason:
         logger.write("CALCULATION", "n-1 is not evaluated: {}.".format(reason), 4, "WARNING")
@@ -12241,6 +13000,8 @@ def evaluate_runs(runs, request, logger):
                 raise OutageAssessmentError(run['failed'])
             reference = evaluate_qds(run, run.get('description', ''), None, logger)
             set_offline(reference)
+            if reference.get('status') == CONVERGED:
+                reference_episodes(reference)
             reference['run_note'] = run.get('run_note', '')
             results.append(reference)
             check_run_budget(results)
@@ -12288,7 +13049,7 @@ def kept_stamps(study_case):
     return sorted(stamps, reverse=True)
 
 
-def kept_runs(study_case, stamp, request, ready, logger, grid=None):
+def kept_runs(study_case, stamp, request, ready, logger, grid=None, n0=True):
     """Phase 1 without a calculation: the runs and n-1 entries from the result objects of an earlier run.
 
     Every object is found by its name OA_<stamp>_<case>; a case whose
@@ -12300,7 +13061,7 @@ def kept_runs(study_case, stamp, request, ready, logger, grid=None):
     logger.write("CALCULATION", "Re-evaluating the kept results of the run {}: no calculation, PowerFactory is not "
                  "changed.".format(stamp), 4, verbosity=LOG_COMPACT)
     runs = []
-    if setting_value('run_reference'):
+    if setting_value('run_reference') and n0:
         obj = objects.get(prefix + REFERENCE_CASE_ID)
         if obj is None:
             raise OutageAssessmentError("The run {} kept no reference result object '{}'.".format(stamp, prefix + REFERENCE_CASE_ID))
@@ -12321,12 +13082,14 @@ def kept_runs(study_case, stamp, request, ready, logger, grid=None):
     for plan in ready:
         info = _case_info(plan)
         obj = objects.get(prefix + plan['id'])
-        if obj is None and plan['fingerprint'] in found_by_fingerprint:
+        if n0 and obj is None and plan['fingerprint'] in found_by_fingerprint:
             runs.append({'id': plan['id'], 'plan': plan, 'reuse_of': found_by_fingerprint[plan['fingerprint']]})
             n1[plan['id']] = n1.get(found_by_fingerprint[plan['fingerprint']], {'status': 'NOT EVALUATED',
                                                                                 'reason': 'no kept n-1 result', 'times': 0})
             continue
-        if obj is None:
+        if not n0:
+            pass  # n-1 only: no QDS result object is read
+        elif obj is None:
             runs.append(dict(info, failed="the run {} kept no result object '{}'".format(stamp, prefix + plan['id'])))
         elif result_fingerprint(obj) is None:
             runs.append(dict(info, failed='its kept result has no verifiable fingerprint; calculate again',
@@ -12418,7 +13181,7 @@ def _element_name(item, entry):
 # ---------------------------------------------------------------------------
 
 
-def execute_outage_assessment(app, result_consumer=None):
+def execute_outage_assessment(app, result_consumer=None, assessment_consumer=None):
     """Execute one assessment in the active PowerFactory study case.
 
     Resolve and validate the request before calculation. Keep native results,
@@ -12447,19 +13210,21 @@ def execute_outage_assessment(app, result_consumer=None):
     report = script.GetParent()
     if result_consumer is not None:
         report = None
-        logger.write("CONTEXT", "Dashboard mode: native calculations and result handoff; no report evaluation or "
-                     "publication.", 1)
+        logger.write("CONTEXT", "Dashboard mode: native import and original assessment; no report publication.", 1)
     elif report is None or class_name(report) != "IntReport":
         report = None
         logger.write("CONTEXT", "This ComPython is not below an IntReport: Outage Assessment calculates and builds the report "
                      "tables but does not publish them (standalone run). Place it below the IntReport to publish.", 1)
-    qds = app.GetFromStudyCase("ComStatsim")
+    try:
+        qds = app.GetFromStudyCase("ComStatsim")
+    except Exception:
+        qds = None
+    original_result = safe_attr(qds, "results") if qds is not None else None
     if qds is None:
-        raise OutageAssessmentError(
-            "No ComStatsim was found in the active study case. Configure the "
-            "quasi-dynamic simulation before running Outage Assessment.")
-    original_result = safe_attr(qds, "results")
-    if original_result is None:
+        # n-0 needs the quasi-dynamic simulation; n-1 only does not (checked once the assessments are chosen).
+        logger.write("CONTEXT", "No ComStatsim was found in the active study case: only n-1 can be calculated "
+                     "(untick n-0 in the case manager).", 1, "WARNING")
+    elif original_result is None:
         logger.write("CONTEXT", "ComStatsim.results is empty. The first run (REF) lets PowerFactory bind its own result "
                      "object; if it binds none, Outage Assessment creates an empty one in the study case. Nothing to do.",
                      1, "WARNING")
@@ -12471,7 +13236,7 @@ def execute_outage_assessment(app, result_consumer=None):
             details=["Bound result object: " + object_key(original_result)],
             hint="Bind ComStatsim.results to another result object, or run the quasi-dynamic simulation once by hand "
                  "so that PowerFactory binds its own, then run Outage Assessment again.")
-    option_found, original_option = _read_setting(qds, PLANNED_OUTAGE_OPTION)
+    option_found, original_option = _read_setting(qds, PLANNED_OUTAGE_OPTION) if qds is not None else (True, None)
     if not option_found:
         raise OutageAssessmentError(
             "The active ComStatsim does not expose the 'Planned Outages' "
@@ -12486,11 +13251,12 @@ def execute_outage_assessment(app, result_consumer=None):
                 object_name(original_result), setting_value('run_reference')), 2)
     _log_context(app, study_case, qds, original_result, logger)
     logger.step(2, "ComStatsim settings")
-    _log_qds_settings(qds, original_result, study_time_state, logger)
+    if qds is not None:
+        _log_qds_settings(qds, original_result, study_time_state, logger)
+    period = qds_period(qds) if qds is not None else (None, None)
     results = []
     result_objects = ResultStore(study_case=study_case)
     state_errors = []
-    period = qds_period(qds)
     logger.step(3, "Planned outages and planning cases")
     with RUN_STATS.measure("read planned outages"):
         records, candidates = classify_planned_outages(app, logger, period)
@@ -12498,12 +13264,23 @@ def execute_outage_assessment(app, result_consumer=None):
     # Read only, for the network scope of the case manager.
     with RUN_STATS.measure("read grids and contingencies"):
         grids = project_grids(app)
-        contingencies = read_contingencies(study_case)
-        elements = contingency_element_choices(app, contingencies) if CASE_SOURCE == "gui" else []
+        # n-1 always defines its own contingencies from the n-1 filter (_n1_command); the preview shows those.
+        contingencies = defined_contingencies(app)
+        elements = []
         kept = kept_stamps(study_case)
     with RUN_STATS.wait():
         request = obtain_case_request(app, records, candidates, period, logger, qds_time_info(qds, period), grids,
                                       contingencies, kept, elements)
+    # n-0 is the quasi-dynamic simulation (ComStatsim), n-1 the contingency analysis with its own time sweep
+    # (ComSimoutage). Without n-0 no QDS runs: the n-1 study times then come from the outage windows.
+    n0 = 'n-0' in (request.get("assessments") or ['n-0'])
+    if n0 and qds is None:
+        raise OutageAssessmentError(
+            "No ComStatsim was found in the active study case, so n-0 (the quasi-dynamic simulation) cannot be "
+            "calculated.", hint="Configure the quasi-dynamic simulation, or untick n-0 in the case manager to "
+                                "calculate n-1 only.")
+    if not n0:
+        RUN_CONTEXT['n1_steps'] = 'n-1 time steps'
     set_log_level(request.get("log_level"))
     # The settings are fixed here, after the case manager has closed, and apply to the whole run.
     request["settings_snapshot"] = activate_settings(request.get("settings"))
@@ -12513,7 +13290,7 @@ def execute_outage_assessment(app, result_consumer=None):
                                                           current_setting("monitoring_grids"))
     logger.write("SETTINGS", "Report filter: {}. Contingencies: {} {}.".format(
         grid_scope_text(), request["contingency_scope"], n1_filter_text()), 3)
-    if follows_outages():
+    if follows_outages() or not n0:
         follow_outage_statuses(records, logger)
     _log_plan(logger, request)
     ready = [plan for plan in request["cases"] if plan["status"] == PLAN_READY]
@@ -12525,9 +13302,27 @@ def execute_outage_assessment(app, result_consumer=None):
     evaluate_stamp = request.get("evaluate_stamp")
     # The run ID of both reports: the stamp of the result objects the run keeps (or re-evaluates).
     request["run_id"] = evaluate_stamp or result_objects.stamp
+    n1_grid = None if n0 else n1_only_grid(ready)
     try:
         if evaluate_stamp:
-            runs, n1_runs = kept_runs(study_case, evaluate_stamp, request, ready, logger, span_grid(qds, ready))
+            runs, n1_runs = kept_runs(study_case, evaluate_stamp, request, ready, logger,
+                                      span_grid(qds, ready) if n0 else n1_grid, n0)
+        elif not n0:
+            request["qds_run_period"] = ("No quasi-dynamic simulation in this run: n-0 is not ticked, n-1 only. The n-1 "
+                                         "time sweep samples the outage windows every {} min.".format(
+                                             setting_value('n1_step')))
+            logger.write("CALCULATION", "n-0 is not ticked: no quasi-dynamic simulation (ComStatsim) runs. n-1 is "
+                         "calculated with the contingency analysis alone; its time sweep samples the windows of the "
+                         "planned outages every {} min ({}).".format(
+                             setting_value('n1_step'), 'grid {} to {}'.format(_format_pf_time(n1_grid[0]), _format_pf_time(
+                                 n1_grid[1])) if n1_grid else 'no outage window is known'), 4, verbosity=LOG_COMPACT)
+            if N1_REFERENCE not in (request.get("assessments") or ()):
+                logger.write("CALCULATION", "n-1 is not calculated: it is not ticked.", 4, "WARNING")
+            elif not ready:
+                logger.write("CALCULATION", "n-1 is not calculated: no planning case can be calculated.", 4, "WARNING")
+            else:
+                n1_runs = calculate_n1(app, study_case, qds, request, records, ready, logger, study_time_state,
+                                       result_objects, grid=n1_grid)
         else:
             span = set_qds_span(qds_guard, qds, ready, logger)
             request["qds_run_period"] = (
@@ -12583,10 +13378,11 @@ def execute_outage_assessment(app, result_consumer=None):
         restoring = time.monotonic()
         logger.write("RESTORE", "Restoring the original PowerFactory state.", 5, verbosity=LOG_DETAILED)
         state_errors.extend(_restore_study_time(study_time_state, logger))
-        state_errors.extend(
-            _restore_planned_outage_option(qds, original_option, logger))
-        state_errors.extend(_restore_qds_span(qds_guard, qds, span, logger))
-        _log_results_binding(qds, original_result, logger)
+        if qds is not None:
+            state_errors.extend(
+                _restore_planned_outage_option(qds, original_option, logger))
+            state_errors.extend(_restore_qds_span(qds_guard, qds, span, logger))
+            _log_results_binding(qds, original_result, logger)
         _log_kept_results(result_objects, logger)
         RUN_CONTEXT['restore'] = ("NOT fully restored: " + "; ".join(state_errors)) if state_errors else (
             "restored and verified (Study Case time, 'Planned Outages' option, QDS period, every value Outage Assessment wrote)")
@@ -12597,13 +13393,13 @@ def execute_outage_assessment(app, result_consumer=None):
             "verify the study case manually before continuing.".format(
                 "; ".join(state_errors)))
     logger.write("RESTORE", "Original PowerFactory state restored and verified.", 5, verbosity=LOG_COMPACT)
+    imported = None
     if result_consumer is not None:
-        # The dashboard receives native runs only after restoration was verified.
-        # No report evaluation, table building or IntReport publication is reached.
-        return result_consumer({
+        imported = result_consumer({
             "app": app, "study_case": study_case, "qds": qds,
             "request": request, "runs": runs, "n1_runs": n1_runs,
             "result_objects": result_objects, "logger": logger, "span": span,
+            "n0": n0, "n1_grid": n1_grid, "evaluate_source": True,
         })
     logger.step(6, "Evaluation (phase 2): reading and comparing the kept result objects")
     if open_column_buffer(app) is None:
@@ -12611,6 +13407,9 @@ def execute_outage_assessment(app, result_consumer=None):
                      "(slow). The run summary counts these reads.", 6, "WARNING")
     try:
         results = evaluate_runs(runs, request, logger)
+        if not n0:
+            # n-1 only: one result per calculated case without QDS data; its n-1 entry follows.
+            results = [n0_skipped_case(_case_info(plan)) for plan in ready]
         if n1_runs:
             evaluate_n1(n1_runs, request, ready, results, logger)
     finally:
@@ -12621,6 +13420,10 @@ def execute_outage_assessment(app, result_consumer=None):
         check_run_budget(results)
         apply_reference(results)
         judge_cases(results)
+    if result_consumer is not None:
+        if assessment_consumer is not None:
+            assessment_consumer(imported, results, request)
+        return imported
     logger.step(7, "Results and report publication")
     with RUN_STATS.measure("log the results"):
         _log_results(logger, results, request)
@@ -12628,7 +13431,9 @@ def execute_outage_assessment(app, result_consumer=None):
         project = app.GetActiveProject()
     except Exception:
         project = None
-    if ready and setting_value('run_reference'):
+    if not n0:
+        run_mode = "n-1 ONLY - NO QUASI-DYNAMIC SIMULATION"
+    elif ready and setting_value('run_reference'):
         run_mode = "REFERENCE + PLANNING CASES"
     elif ready:
         run_mode = "PLANNING CASES ONLY"

@@ -1,4 +1,4 @@
-"""Raw GridLens results for interactive widgets; no engineering assessment."""
+"""Native GridLens data and original source findings, separate from dashboard criteria."""
 
 import json
 
@@ -8,7 +8,7 @@ from app.simulation.states import INVALID_OR_MISSING
 
 # Version of the result contract written by the bridge (gl_assessments.result_schema_version). 1: imports made
 # before analyses, master data and import status were recorded; 2: with them.
-RESULT_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 3
 
 TABLES = """
 -- One analysis: one import of one PowerFactory run. status: importing, complete or failed ('unknown' for an import
@@ -40,6 +40,10 @@ CREATE TABLE IF NOT EXISTS gl_cases (
     assessment_id TEXT NOT NULL REFERENCES gl_assessments(id), case_id TEXT NOT NULL,
     name TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL, definition TEXT NOT NULL,
     PRIMARY KEY(assessment_id, case_id)
+);
+CREATE TABLE IF NOT EXISTS gl_evaluations (
+    assessment_id TEXT NOT NULL REFERENCES gl_assessments(id), case_id TEXT NOT NULL,
+    payload TEXT NOT NULL, PRIMARY KEY(assessment_id, case_id)
 );
 CREATE TABLE IF NOT EXISTS gl_results (
     id TEXT PRIMARY KEY, assessment_id TEXT NOT NULL REFERENCES gl_assessments(id),
@@ -111,12 +115,20 @@ def assessments(db):
         'SELECT * FROM gl_assessments ORDER BY created_at DESC, id DESC')]
 
 
-def assessment(db, identifier):
+def assessment(db, identifier, summary=False):
     result = decode_row(db.execute('SELECT * FROM gl_assessments WHERE id=?', (identifier,)).fetchone(),
                         ('settings', 'configuration'))
     if result is not None:
         result['cases'] = [decode_row(row, ('definition',)) for row in db.execute(
             'SELECT * FROM gl_cases WHERE assessment_id=? ORDER BY rowid', (identifier,))]
+        payload = "json_remove(payload,'$.n1.statistics','$.n1.reference_statistics')" if summary else 'payload'
+        result['evaluations'] = {row[0]: json.loads(row[1]) for row in db.execute(
+            'SELECT case_id,' + payload + ' FROM gl_evaluations WHERE assessment_id=?', (identifier,))}
+        if summary:
+            for evaluation in result['evaluations'].values():
+                episodes = evaluation.get('episodes') or []
+                evaluation['episodes_total'] = len(episodes)
+                evaluation['episodes'] = episodes[:100]
         result['results'] = [decode_row(row, ('metadata',)) for row in db.execute(
             'SELECT * FROM gl_results WHERE assessment_id=? ORDER BY rowid', (identifier,))]
     return result

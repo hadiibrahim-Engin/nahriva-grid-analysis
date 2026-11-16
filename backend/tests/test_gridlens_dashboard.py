@@ -5,6 +5,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from contextlib import closing
 
 import pytest
 from fastapi.testclient import TestClient
@@ -55,8 +56,8 @@ def native(tmp_path, monkeypatch):
     monkeypatch.setattr(gl, 'CASE_SOURCE', 'gui')
     monkeypatch.setattr(gl, 'CASE_CONFIG_DIR', str(tmp_path / 'cases'))
     monkeypatch.setattr(gl, 'GRID_NAME_FILTER', '')
-    for name in ('evaluate_runs', 'evaluate_n1', 'build_cases_payload', 'publish_report', 'collect_series', 'judge_cases'):
-        monkeypatch.setattr(gl, name, lambda *a, **k: pytest.fail('Report evaluation must never run'))
+    for name in ('build_cases_payload', 'publish_report'):
+        monkeypatch.setattr(gl, name, lambda *a, **k: pytest.fail('Report tables must never be built or published'))
 
     def gui(records, *_args, **_kwargs):
         config = gl.empty_case_config()
@@ -66,7 +67,7 @@ def native(tmp_path, monkeypatch):
     return app, tmp_path / 'native.sqlite3'
 
 
-def test_gui_and_native_qds_then_import_without_any_report_evaluation(native):
+def test_gui_and_native_qds_then_import_and_original_evaluation_without_report(native):
     app, path = native
     outcome = bridge.run_assessment(app, path)
     assert app.qds.execute_calls == 2
@@ -279,6 +280,7 @@ def test_starter_starts_dashboard_early_shows_it_after_the_first_case_and_never_
     spec.loader.exec_module(starter)
     monkeypatch.setattr(starter, 'prepare_imports', lambda: None)
     monkeypatch.setattr(starter, 'preflight', lambda database: 50.0)
+    monkeypatch.setattr(gl, 'load_qt', lambda: None)
     monkeypatch.setenv('OA_DATABASE', str(tmp_path / 'starter.sqlite3'))
     monkeypatch.setitem(sys.modules, 'powerfactory', type('PF', (), {'GetApplication': staticmethod(lambda: App())}))
     import dashboard_launcher
@@ -335,7 +337,8 @@ def test_reused_cases_keep_widget_series_and_kept_runs_do_not_recalculate(native
     assert app.qds.execute_calls == 2
 
 
-def test_native_n1_and_n1_prime_run_and_restore_before_raw_import(native, monkeypatch):
+@pytest.mark.parametrize('n0', [True, False])
+def test_native_n1_and_n1_prime_run_and_restore_before_raw_import(native, monkeypatch, n0):
     app, path = native
     selected, other = app.outages
     selected.starttime, selected.endtime = PERIOD_START, PERIOD_START + 3600
@@ -365,25 +368,32 @@ def test_native_n1_and_n1_prime_run_and_restore_before_raw_import(native, monkey
             self.p_rescnt = Sweep([Sub(t, faults, [(0, 110.0 if self.isPlannedOutages else 90.0)] * len(faults)) for t in times])
             return 0
 
+    if not n0:
+        get = app.GetFromStudyCase
+        app.GetFromStudyCase = lambda name: None if name == 'ComStatsim' else get(name)
     ca = Analysis()
+    monkeypatch.setattr(gl, '_n1_command', lambda *args: (ca, None))
     contents = app.study.GetContents
     app.study.GetContents = lambda pattern='*', *args: [ca] if pattern == '*.ComSimoutage' else contents(pattern, *args)
 
     def gui(records, *_args, **_kwargs):
         config = gl.empty_case_config()
-        config['assessments'] = ['n-0', 'n-1', "(n-1)'"]
+        config['assessments'] = (['n-0'] if n0 else []) + ['n-1', "(n-1)'"]
         config['cases'] = [{'id': 'C1', 'name': 'Native sweeps', 'outages': [record['key'] for record in records if record['name'] == 'Chosen']}]
         return config
     monkeypatch.setattr(gl, 'run_case_manager', gui)
     outcome = bridge.run_assessment(app, path)
-    expected_times = [PERIOD_START + index * 900 for index in range(4)]
+    expected_times = [PERIOD_START + index * 900 for index in range(4)] if n0 else [PERIOD_START]
+    assert app.qds.execute_calls == (2 if n0 else 0)
     assert ca.calls[0][0:2] == (0, expected_times)
     assert ca.calls[1] == (1, expected_times, 0, 1)
     assert (ca.isPlannedOutages, ca.startTime, ca.endTime, ca.stepSize, ca.stepUnit, ca.stepNumber) == (1, 0, 1, 1, 2, 1)
     assert [outage.outserv for outage in app.outages] == [0, 1]
     store = ScenarioStore(path)
     details = raw.assessment(store.db, outcome['assessment_id'])
-    assert {result['kind'] for result in details['results']} == {'QDS', 'n-1', "(n-1)'"}
+    assert {result['kind'] for result in details['results']} == ({'QDS'} if n0 else set()) | {'n-1', "(n-1)'"}
+    assert details['evaluations']['C1']['n1']['status'] == 'EVALUATED'
+    assert len(store.overview()['scenarios']) == 1
     n1, prime = [next(result for result in details['results'] if result['kind'] == kind) for kind in ('n-1', "(n-1)'")]
     assert len(raw.contingencies(store.db, n1['id'])) == len(raw.contingencies(store.db, prime['id'])) == 2
     cid = bridge.identifier(gl.object_key(off_fault))
@@ -398,7 +408,74 @@ def test_native_n1_and_n1_prime_run_and_restore_before_raw_import(native, monkey
         url = '/api/simulation/scenarios/{}-C1/n1-pairs'.format(outcome['assessment_id'])
         # (n-1)': 110 % after 'Monitored fault' at every study time; before it the QDS of C1 (90 %).
         [pair] = client.get(url).json()['pairs']
-        assert (pair['contingency'], pair['post'], pair['pre'], pair['limit']) == ('Monitored fault', 110.0, 90.0, 100.0)
-        assert pair['hours_over'] == 4 * 0.25 and pair['t'] in expected_times
+        assert (pair['contingency'], pair['post'], pair['pre'], pair['limit']) == ('Monitored fault', 110.0, 90.0 if n0 else None, 100.0)
+        assert pair['hours_over'] == 1 and pair['t'] in expected_times
         # n-1 stays below the limit: no pair.
         assert client.get(url, params={'kind': 'n-1'}).json()['total_pairs'] == 0
+        source = client.get('/api/simulation/gridlens/assessments/' + outcome['assessment_id']).json()
+        assert source['evaluations']['C1']['n1']['status'] == 'EVALUATED'
+        response = client.get('/api/simulation/gridlens/results/' + prime['id'] + '/extremes')
+        assert response.status_code == 200
+        assert response.json()['rows'][0]['high'] == 110.0
+        assert client.get('/api/simulation/gridlens/results/' + prime['id'] + '/extremes', params={'limit': 0}).status_code == 422
+
+
+def test_original_verdict_and_episodes_survive_import_and_archive(native, monkeypatch, tmp_path):
+    app, path = native
+    clone = Result.clone
+
+    def outage_clone(result):
+        kept = clone(result)
+        if result.qds.iopt_maint:
+            kept.columns = (kept.columns[0], [110.0] * len(kept.columns[0]), *kept.columns[2:])
+        return kept
+
+    monkeypatch.setattr(Result, 'clone', outage_clone)
+    outcome = bridge.run_assessment(app, path)
+    with closing(ScenarioStore(path)) as store:
+        evaluation = raw.assessment(store.db, outcome['assessment_id'])['evaluations']['C1']
+        assert evaluation['n0']['assessment'] == gl.ASSESSMENT_LOADING
+        assert evaluation['episodes'][0]['element_name'] == 'Line A'
+        assert evaluation['episodes'][0]['peak_text'] == '110.0 %'
+    from app.archive.parquet import export_analysis, import_analysis
+    archive = tmp_path / 'archive'
+    archive = export_analysis(path, outcome['assessment_id'], archive)
+    restored = tmp_path / 'restored.sqlite3'
+    import_analysis(archive, restored)
+    with closing(ScenarioStore(restored)) as store:
+        assert raw.assessment(store.db, outcome['assessment_id'])['evaluations']['C1'] == evaluation
+
+
+def test_evaluation_failure_keeps_native_results_and_reports_failure(native, monkeypatch):
+    app, path = native
+
+    def fail(*args):
+        raise RuntimeError('Evaluation failed deliberately')
+
+    monkeypatch.setattr(gl, 'evaluate_runs', fail)
+    with pytest.raises(RuntimeError, match='Evaluation failed deliberately'):
+        bridge.run_assessment(app, path)
+    with closing(ScenarioStore(path)) as store:
+        assessment = raw.assessments(store.db)[0]
+        assert assessment['status'] == 'evaluation_failed'
+        detail = raw.assessment(store.db, assessment['id'])
+        assert len(detail['results']) == 2
+        assert detail['evaluations']['C1'] == {'status': 'failed', 'reason': 'Evaluation failed deliberately'}
+        assert app.qds.iopt_maint == 0
+
+
+def test_import_owner_is_held_until_original_evaluation_finishes(native, monkeypatch):
+    app, path = native
+    from app.simulation import imports
+    evaluate = gl.evaluate_runs
+
+    def evaluate_while_owned(*args):
+        with pytest.raises(imports.ImportBusy):
+            with imports.serialized(path):
+                pytest.fail('Another import must not recover an active evaluation.')
+        return evaluate(*args)
+
+    monkeypatch.setattr(gl, 'evaluate_runs', evaluate_while_owned)
+    bridge.run_assessment(app, path)
+    with imports.serialized(path):
+        pass

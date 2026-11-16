@@ -9,14 +9,14 @@ existing `setup.cmd` / `setup.ps1` first.
 
 1. The starter starts the local dashboard server at once (or reuses the one
    that serves this database) and lets it come up in the background.
-2. The Outage Assessment case manager of main.py opens: cases, outage
+2. The Outage Assessment 8.2 Qt case manager opens: cases, outage
    assignments, fixed background outages, settings, network filters and
-   calculation choices, exactly as in main.py.
+   calculation choices, exactly as in main_qt.py.
 3. Start the calculation: REF and every independent QDS case, then the
    selected n-1 and (n-1)' sweeps. Identical cases reuse native results.
 4. The settings written for the run (Study Case time, 'Planned Outages'
    option, QDS period) are restored and verified. Native `ElmRes` copies stay
-   in the study case. No report evaluation, no report tables, no PDF.
+   in the study case. No report tables or PDF are published.
 5. The bridge reads the copies into the local results database, REF first,
    then case by case, each in its own transaction. As soon as the first
    planning case is stored the browser opens; the dashboard lists the other
@@ -32,6 +32,18 @@ server it started. A failure keeps the cases already stored; the cases that
 are missing get status `IMPORT FAILED` with the reason, and the native results
 stay in PowerFactory for a new import.
 
+After the native import, the original 8.2 evaluation runs on the kept results. Source n-0 verdicts,
+locations and episodes, and n-1 summaries/statistics are stored in `gl_evaluations` and exposed by the
+assessment API. `?summary=true` omits the large n-1 statistics and lists the first 100 n-0 episodes
+per case; the panel links to a complete JSON download. The PowerFactory assessment panel polls while evaluation is pending, then shows these
+findings separately from browser-based criteria. A source evaluation failure keeps imported native results
+and is shown explicitly; interrupted evaluations are marked failed when the next import recovers the file.
+Assessment status changes from `importing` to `evaluating` to `complete` (or `evaluation_failed`).
+
+Untick n-0 for n-1 only. No ComStatsim is required: the source samples outage windows using the n-1 time
+step in Settings. These cases appear in the source panel with paginated contingency extremes. QDS widgets
+remain unavailable without QDS measurements; no baseline or QDS values are synthesized.
+
 Select a kept run in the case manager's **Results** choice to import its
 results again without a QDS or contingency calculation. The current settings
 and the native run ID are recorded on each import; the database assessment ID
@@ -42,8 +54,8 @@ Before the case manager opens, the starter checks the database folder (writable,
 any calculation. When the dashboard is reachable from other PCs, their addresses are printed.
 
 The starter uses `outage-assessment.config.json` and `OA_DATABASE`, `OA_HOST`,
-`OA_PORT` as before. Python used by PowerFactory needs only the standard
-library and its native module. The dashboard uses its existing separate
+`OA_PORT` as before. Python used by PowerFactory needs its native module, PyQt6/PyQt5 and pyarrow. Setup installs PyQt6
+in the backend environment; reuse requires matching Python major/minor versions. The dashboard uses its existing separate
 backend environment. On updating an installation, stop the old dashboard
 server before starting the new backend.
 
@@ -86,12 +98,11 @@ It does not restrict results to report plot points or a report top-N list.
 
 The additional `gl_*` tables retain assessment/case definitions, settings,
 native names and full paths, actual timestamps, native columns, contingencies
-and sparse cell states. There is no precomputed engineering classification in
-this contract. Existing dashboard widgets still apply their existing analyses
+and sparse cell states. Raw native results remain separate from source classification in `gl_evaluations`. Existing dashboard widgets still apply their existing analyses
 when requested; they are not a reproduction of the GridLens PDF verdicts.
 New n-1 widgets can use the raw API below without adopting those analyses.
 
-The schema extension is additive (layout 15, analysis schema 2). Existing
+The schema extension is additive (layout 16, analysis schema 2, native result contract 3). Existing
 compatible result files are retained and get the new tables when opened.
 
 ## Widget API

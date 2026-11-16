@@ -1,9 +1,9 @@
 """GridLens calculation -> native results -> local dashboard storage.
 
-Runs inside PowerFactory, using the standard library only. All calculation,
+Runs inside PowerFactory; the source Qt manager and Parquet writer need PyQt and pyarrow. All calculation,
 case-manager and restoration logic belongs to gridlens_runtime (the Outage
 Assessment main.py). This adapter reads native results after restoration; it
-performs no report evaluation.
+then stores the original evaluation without report table publication.
 
 Every QDS run and every n-1 sweep is committed on its own, REF first: the
 dashboard shows the first scenario while the remaining ones are still read.
@@ -14,6 +14,7 @@ import json
 import math
 import uuid
 from array import array
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from itertools import repeat
 
@@ -153,6 +154,9 @@ def _run_period(bundle):
     afterwards; the restored ComStatsim then shows the configured period, not the one the results cover.
     """
     ready = [plan for plan in bundle['request']['cases'] if plan['status'] == engine.PLAN_READY]
+    if not bundle.get('n0', True):
+        grid = bundle.get('n1_grid')
+        return tuple(grid[:2]) if grid else (None, None)
     start, end, _step = engine.span_grid(bundle['qds'], ready)
     return start, end
 
@@ -517,7 +521,7 @@ def _save_scenario(db, assessment_id, plan, loaded, reused, catalog):
     for key, kind in ((engine.REFERENCE_CASE_ID, 'REF'), (case_id, 'OUTAGE')):
         if key in loaded:
             db.execute('INSERT INTO pf_scenario_runs VALUES(?,?,?)', (scenario_id, loaded[key][1], kind))
-    if case_id in reused:
+    if case_id in reused and case_id in loaded:
         alias_id, source_id = uuid.uuid4().hex, loaded[case_id][0]
         db.execute('INSERT INTO gl_results SELECT ?,assessment_id,?,kind,native_name,native_path,status,reason,metadata,analysis_run_id FROM gl_results WHERE id=?',
                    (alias_id, case_id, source_id))
@@ -549,7 +553,7 @@ def _import_results(bundle, database, on_saved=None):
     catalog = {
         'project': engine.object_name(project), 'project_path': engine.object_key(project),
         'study_case': engine.object_name(bundle['study_case']), 'study_case_path': engine.object_key(bundle['study_case']),
-        'period': list(engine.qds_period(bundle['qds'])), 'outages': [],
+        'period': list(engine.qds_period(bundle['qds'])) if bundle.get('n0', True) and bundle['qds'] is not None else list(_run_period(bundle)), 'outages': [],
         'data_source': 'PowerFactory / GridLens', 'engine_version': engine.PUBLISHER_VERSION,
         'settings_snapshot': request['settings_snapshot'], 'native_run_id': request['run_id'],
     }
@@ -625,6 +629,8 @@ def _import_results(bundle, database, on_saved=None):
                     'background_ids': [identifier(record['key']) for record in request['background']],
                     'states': [(lo, hi, sorted(keys)) for lo, hi, keys in plan['states']],
                 }
+                db.execute('INSERT INTO gl_evaluations VALUES(?,?,?)',
+                           (assessment_id, plan['id'], text_json({'status': 'pending' if bundle.get('evaluate_source') and plan['status'] == engine.PLAN_READY else 'not_evaluated', 'reason': plan['reason']})))
                 db.execute('INSERT INTO gl_cases VALUES(?,?,?,?,?,?)',
                            (assessment_id, plan['id'], plan['name'], plan['status'], plan['reason'], text_json(definition)))
         for run in runs:
@@ -651,6 +657,13 @@ def _import_results(bundle, database, on_saved=None):
                         stats.pop(loaded[run['id']][1], None)
                     progress['scenarios'] += 1
             saved('QDS ' + run['id'])
+        if not bundle.get('n0', True):
+            for plan in plans.values():
+                if plan['id'] not in bundle['n1_runs']:
+                    continue
+                with db:
+                    _save_scenario(db, assessment_id, plan, loaded, reused, catalog)
+                    progress['scenarios'] += 1
         for case_id, side, kind in sweeps:
             entry = bundle['n1_runs'][case_id]
             with db:
@@ -685,8 +698,85 @@ def _import_results(bundle, database, on_saved=None):
 
 
 def run_assessment(app, database, on_saved=None):
+    imported = None
+    ownership = ExitStack()
+
+    def consume(bundle):
+        nonlocal imported
+        ownership.enter_context(imports.serialized(database))
+        imported = _import_results(bundle, database, on_saved)
+        store = ScenarioStore(str(database))
+        try:
+            with store.db:
+                store.db.execute("UPDATE gl_assessments SET status='evaluating' WHERE id=?", (imported['assessment_id'],))
+        finally:
+            store.close()
+        return imported
+
     try:
         return engine.execute_outage_assessment(
-            app, result_consumer=lambda bundle: import_results(bundle, database, on_saved))
+            app, result_consumer=consume, assessment_consumer=save_assessments)
+    except BaseException as exc:
+        if imported is not None:
+            store = ScenarioStore(str(database))
+            try:
+                with store.db:
+                    store.db.execute(
+                        "UPDATE gl_evaluations SET payload=? WHERE assessment_id=? AND json_extract(payload,'$.status')='pending'",
+                        (text_json({'status': 'failed', 'reason': str(exc)[:1000]}), imported['assessment_id']))
+                with store.db:
+                    store.db.execute("UPDATE gl_assessments SET status='evaluation_failed' WHERE id=?", (imported['assessment_id'],))
+            finally:
+                store.close()
+        raise
     finally:
-        engine.reset_settings()
+        try:
+            engine.reset_settings()
+        finally:
+            ownership.close()
+
+
+def assessment_json(value):
+    """Encode source statistics, including tuple-keyed counters, without losing key structure."""
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            return {'entries': [{'key': assessment_json(key), 'value': assessment_json(item)}
+                                for key, item in value.items()]}
+        return {key: assessment_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [assessment_json(item) for item in (sorted(value) if isinstance(value, set) else value)]
+    return value
+
+
+def save_assessments(imported, results, request):
+    """Persist the unmodified 8.2 judgments and episodes separately from dashboard criteria.
+
+    Called only after native state restoration, import and original evaluation. Never serialize PF objects
+    or the large value arrays: episode rows use the same formatting as the source assessment.
+    """
+    store = ScenarioStore(imported['database'])
+    try:
+        with store.db:
+            for result in results:
+                steps = engine.row_steps(result['hours']) if result.get('hours') else []
+                reference = result['id'] == engine.REFERENCE_CASE_ID
+                episodes = []
+                found = result.get('episodes') or [] if reference else [
+                    (record['item'], episode)
+                    for records in (result.get('comparison') or {}).values()
+                    for record in records
+                    for episode in record.get('episodes') or []]
+                for item, episode in found:
+                    episodes.append(engine._episode_row(0, result, item, episode, steps, reference))
+                source = result.get('n1') or {}
+                n1 = {key: source[key] for key in ('status', 'reason', 'kind', 'summary', 'times',
+                      'contingencies', 'details', 'requested_times', 'statistics', 'reference_statistics') if key in source}
+                # n-1 evaluation contains only native assessment data, no PowerFactory handles.
+                payload = {'engine_version': engine.PUBLISHER_VERSION, 'status': result.get('status'),
+                           'reason': result.get('reason') or result.get('message') or '', 'n0': result.get('judged'),
+                           'n1': n1, 'episodes': episodes}
+                store.db.execute('INSERT OR REPLACE INTO gl_evaluations VALUES(?,?,?)',
+                                 (imported['assessment_id'], result['id'], text_json(assessment_json(payload))))
+            store.db.execute("UPDATE gl_assessments SET status='complete' WHERE id=?", (imported['assessment_id'],))
+    finally:
+        store.close()
