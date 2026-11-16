@@ -14,6 +14,13 @@ export interface NativeResult {
   analysis_run_id: string | null;
 }
 
+export interface SweepIndex {
+  analysis: string | null;
+  status: string | null;
+  scenarios: { id: string; case_id: string; name: string;
+    sweeps: { id: string; kind: 'n-1' | "(n-1)'"; status: string; reason: string }[] }[];
+}
+
 export interface NativeColumn {
   result_id: string;
   column_id: number;
@@ -93,6 +100,9 @@ const root = '/gridlens';
 const resultPath = (id: string) => `${root}/results/${encodeURIComponent(id)}`;
 
 export const gridlens = {
+  async sweeps(analysis: string | null, signal?: AbortSignal) {
+    return (await api.get<SweepIndex>(`${root}/sweeps`, { params: analysis === null ? {} : { analysis }, signal })).data;
+  },
   async assessments(signal?: AbortSignal) {
     return (await api.get<{ assessments: NativeAssessment[] }>(`${root}/assessments`, { signal })).data.assessments;
   },

@@ -16,13 +16,13 @@ function SweepExtremes({ result }: { result: NativeResult }) {
     });
     return () => controller.abort();
   }, [result.id, page]);
-  return <details className="ab-sub"><summary>{result.kind} · {result.status}{result.reason ? ` · ${result.reason}` : ''}</summary>
+  return <details className="ab-sub" open><summary>{result.kind} · {result.status}{result.reason ? ` · ${result.reason}` : ''}</summary>
     {Number(result.metadata.unresolved_rows) > 0 && <p role="alert">
       {Number(result.metadata.unresolved_rows)} rows could not be assigned to a contingency. The result is incomplete.
       {' '}<a href={`/api/simulation/gridlens/results/${encodeURIComponent(result.id)}/unresolved-rows`} target="_blank" rel="noreferrer">Inspect retained rows and diagnostics</a>
     </p>}
     {error ? <p role="alert">{error}</p> : !data ? <p role="status">Loading extremes …</p> : <>
-      <p>{data.total} monitored quantities · ranked by limit exceedance. {data.total === 0 && 'No recorded quantities.'}</p>
+      <p>{data.total} quantities with explicit extremes · ranked by limit exceedance. {data.total === 0 && 'No explicit extremes available. Check the recording limits and import status; sparse code-3 cells have no stored numeric value.'}</p>
       <div className="overflow-x-auto"><table className="ab-table"><thead><tr>
         <th>Equipment</th><th>Quantity</th><th>Minimum</th><th>Maximum</th><th>Lower / upper limit</th><th>Study times outside limits</th>
       </tr></thead><tbody>{data.rows.map((row, index) => <tr key={index}>
@@ -45,7 +45,7 @@ export default function NativeAssessment({ refreshKey }: { refreshKey: number })
     let timer: ReturnType<typeof setTimeout>;
     async function load() {
       try {
-        const id = analysis ?? (await gridlens.assessments(controller.signal))[0]?.id;
+        const id = analysis ?? (await gridlens.sweeps(null, controller.signal)).analysis;
         const detail = id && id !== UNASSIGNED ? await gridlens.assessment(id, controller.signal) : null;
         if (controller.signal.aborted) return;
         setState({ scope: analysis, detail, error: '' });
@@ -63,8 +63,14 @@ export default function NativeAssessment({ refreshKey }: { refreshKey: number })
   if (state.error) return <p role="alert">{state.error}</p>;
   const detail = state.detail;
   if (!detail) return null;
+  const sweeps = detail.results.filter((r) => r.kind !== 'QDS');
+  const requested = Array.isArray(detail.configuration.assessments) && detail.configuration.assessments.some((a) => a === 'n-1');
   return <SectionCard title={`${detail.name} · PowerFactory assessment ${detail.engine_version}`} summary="Original outage assessment findings">
     <a className="ab-chip" href={`/api/simulation/gridlens/assessments/${encodeURIComponent(detail.id)}`} download={`assessment-${detail.id}.json`}>Download full source findings</a>
+    <p className="ab-sub">Stored contingency results: {sweeps.filter((r) => r.kind === 'n-1').length} n-1 · {sweeps.filter((r) => r.kind === "(n-1)'").length} (n-1)'</p>
+    {sweeps.length === 0 && <p role="status">{detail.status === 'importing' ? 'n-1 results have not been imported yet.'
+      : requested ? 'n-1 was requested, but no native n-1 results were stored. Reimport the kept run from PowerFactory Results.'
+        : 'No n-1 results were imported for this calculation. Select a calculation with n-1 results or calculate and import n-1 in PowerFactory.'}</p>}
     <p className="ab-sub">Original assessment of the saved run and network scope. Dashboard limits and filters below apply to the dashboard analysis.</p>
     {[...(detail.evaluations.REF ? [{ case_id: 'REF', name: 'Reference' }] : []), ...detail.cases].map((item) => {
       const evaluation = detail.evaluations[item.case_id];
@@ -74,7 +80,7 @@ export default function NativeAssessment({ refreshKey }: { refreshKey: number })
           <p>{evaluation.status === 'pending' ? 'Original assessment is being evaluated …' : evaluation.status}
             {evaluation.reason ? ` · ${evaluation.reason}` : ''}</p>
           <p>n-0: <strong>{item.case_id === 'REF' ? 'Baseline' : evaluation.n0?.assessment ?? 'Not evaluated'}</strong></p>
-          {evaluation.n1 && <p>{evaluation.n1.kind ?? 'n-1'}: <strong>{evaluation.n1.summary ?? evaluation.n1.status}</strong>
+          {evaluation.n1 && (evaluation.n1.status || evaluation.n1.summary) && <p>{evaluation.n1.kind ?? 'n-1'}: <strong>{evaluation.n1.summary ?? evaluation.n1.status}</strong>
             {evaluation.n1.reason ? ` · ${evaluation.n1.reason}` : ''}</p>}
           {!!evaluation.episodes?.length && <details><summary>{evaluation.episodes.length} of {evaluation.episodes_total ?? evaluation.episodes.length} n-0 violation episodes</summary>
             <div className="overflow-x-auto"><table className="ab-table"><thead><tr>

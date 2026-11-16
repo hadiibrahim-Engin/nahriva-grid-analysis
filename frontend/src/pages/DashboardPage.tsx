@@ -653,7 +653,7 @@ export default function DashboardPage() {
     <div className="grid-theme-scope dashboard-shell h-screen flex flex-col bg-[var(--grid-bg)] text-[var(--grid-text)] overflow-hidden">
       <header className="dashboard-topbar">
         <div className="dashboard-topbar__brand">
-          <DatabasePicker />
+          <DatabasePicker refreshKey={refreshNonce} />
           <h1 className="truncate text-base font-bold tracking-tight text-[var(--grid-text)]">{APP_NAME}</h1>
         </div>
         <div className="dashboard-topbar__context" aria-live="polite">

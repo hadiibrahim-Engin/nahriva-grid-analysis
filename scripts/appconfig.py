@@ -21,7 +21,7 @@ def load(root=ROOT, *, database=None, host="127.0.0.1", port=DEFAULT_PORT):
     path = Path(root) / CONFIG_NAME
     if path.is_file():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
         except ValueError as exc:
             raise ValueError(f"{path.name} is not valid JSON: {exc}") from None
     env = os.environ

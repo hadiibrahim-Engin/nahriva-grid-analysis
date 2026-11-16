@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, ConfigDict
 from app.analysis.bootstrap import get_repository, select_database
-from app.simulation import across, areas, gridlens_store, compare, data, grids, maps, settings, states, timepoint
+from app.simulation import across, areas, gridlens_store, compare, data, grids, inventory, maps, settings, states, timepoint
 from app.simulation.store import ScenarioStore, catalog_signature, now
 
 router = APIRouter(prefix="/api/simulation", tags=["PowerFactory scenarios"])
@@ -91,6 +91,12 @@ def store():
         yield connection
     finally:
         connection.close()
+
+
+@router.get("/database/contents")
+def database_contents(db=Depends(store)):
+    """Contents of the open database: analysis/case/result metadata, without loading measurement values."""
+    return inventory.contents(db)
 
 
 @router.get("/states")

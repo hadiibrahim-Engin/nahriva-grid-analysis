@@ -17,6 +17,11 @@ def required_result(db, identifier):
     return result
 
 
+@router.get('/sweeps')
+def sweeps(analysis: str | None = Query(None, max_length=200), db=Depends(store)):
+    return raw.sweep_index(db.db, analysis)
+
+
 @router.get('/assessments')
 def assessments(db=Depends(store)):
     return {'assessments': raw.assessments(db.db)}

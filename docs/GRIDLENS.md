@@ -240,3 +240,49 @@ the kept run in **Results** and import it again using the updated script. No rec
 
 After updating an existing installation, stop the old dashboard server once before starting the new backend.
 The starter rebuilds a frontend whose source files are newer than its build automatically.
+
+
+## Finding n-1 results and running a read-only diagnostic
+
+Select the intended calculation in **Analysis**. In **PowerFactory assessment**, each case lists its stored
+n-1 and (n-1)' results with expanded extrema tables. Overload-pair charts use the native sweep index
+(`GET /api/simulation/gridlens/sweeps?analysis=<id>`) independently of QDS. Only imported sweep types are
+enabled: a calculation containing only n-1 selects n-1 automatically. The pair charts show overloads only;
+an empty pair chart does not mean that no results were imported. Sparse code-3 cells have no numeric value
+to plot; the extrema table and source import status show what is actually available.
+
+Storage: `gl_results` links result kind/status to calculation and case, `gl_contingencies` identifies faults,
+`gl_times` records study times, `gl_columns` describes recorded quantities, and `gl_values` holds sparse raw
+cells. `gl_n1_columns` / `gl_n1_hourly` hold extrema and violation summaries. Unresolved native row identities
+are retained separately in `gl_unresolved_rows`.
+
+For a real PowerFactory check, create another external **ComPython** pointing to
+`powerfactory/check_n1_results.py`. Activate the affected study case and execute it after the calculation.
+It reads kept n-1 results and the configured SQLite database; it never calls Execute, changes model settings,
+imports results or installs packages. If the dashboard uses another database, set `DATABASE_PATH` at the top
+of the diagnostic script to that exact file. Otherwise the normal configuration / OA_DATABASE setting applies.
+
+The output window prints findings and the local report path:
+`.tools/n1-diagnostic-<timestamp>.json`. The report includes Python/runtime context, bounded samples of native
+API return values, contingency identity resolution, calculation IDs, import statuses and summary counts.
+Its samples cover up to 10 result objects, 3 study-time subresults per object, 8 rows and 3 columns; this is a
+diagnostic sample, not proof that every cell of a large sweep is valid. It contains model/equipment names and
+paths and remains on the PC. A missing database is reported without creating or migrating one.
+
+
+## Database contents overview
+
+Use **Database contents** in the dashboard header to inspect the open database before choosing a calculation.
+The dialog lists named calculations, creation date, project/study case, expandable case names and statuses,
+and separate n-0/QDS, n-1 and (n-1)' result counts. Incomplete, failed and uncalculated results are distinguished;
+reference result sets are included in result counts. Earlier cases without a calculation assignment form their
+own group and do not increase the named-calculation count. The SQLite file size excludes external result files.
+
+Search names/cases/statuses, then choose **View calculation** to load only that calculation through the existing
+analysis selection. **Refresh contents** updates the metadata. Opening or exporting another dataset remains
+available in the other tabs where database switching is enabled; the contents overview is also available in
+read-only/network mode.
+
+`GET /api/simulation/database/contents` reads calculation, case and result headers inside a consistent SQLite
+read transaction. It does not query raw measurement cells, hourly values or prepared scenario payloads. This
+keeps the initial database overview independent of the number of recorded time-series samples.

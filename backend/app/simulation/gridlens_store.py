@@ -229,6 +229,25 @@ def qds_series(db, native, column, start, end, limit, offset):
              'code': row['code']} for row in rows]
 
 
+def sweep_index(db, analysis=None):
+    """Native n-1 cases of ONE analysis, independent of QDS links. Reads metadata only."""
+    from app.simulation import across
+    chosen = across.resolve_analysis(db, analysis)
+    if chosen is None:
+        latest = db.execute('SELECT id FROM gl_assessments ORDER BY created_at DESC,rowid DESC LIMIT 1').fetchone()
+        chosen = latest[0] if latest else None
+    state = db.execute('SELECT status FROM gl_assessments WHERE id=?', (chosen,)).fetchone()
+    cases = {}
+    for row in db.execute(
+        "SELECT r.id,r.case_id,r.kind,r.status,r.reason,COALESCE(c.name,r.case_id) AS name "
+        "FROM gl_results r LEFT JOIN gl_cases c ON c.assessment_id=r.assessment_id AND c.case_id=r.case_id "
+        "WHERE r.assessment_id=? AND r.kind IN (?,?) ORDER BY r.rowid", (chosen, 'n-1', "(n-1)'")):
+        item = cases.setdefault(row['case_id'], {'id': chosen + '-' + row['case_id'], 'case_id': row['case_id'],
+                                                'name': row['name'], 'sweeps': []})
+        item['sweeps'].append({'id': row['id'], 'kind': row['kind'], 'status': row['status'], 'reason': row['reason']})
+    return {'analysis': chosen, 'status': state[0] if state else None, 'scenarios': list(cases.values())}
+
+
 def n1_pairs(db, scenario_id, kind="(n-1)'", start=None, end=None, limit=100, grid=None, kv=None,
              equipment="all", element_ids=None):
     """Which contingency overloads which branch, and how strongly: per pair the highest loading after the

@@ -6,12 +6,12 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { utc, views, type N1Pair, type N1Pairs } from '../../api/views';
 import { LOADING_LIMITS } from '../../config/loadingBands';
 import ReactECharts from '../charts/ReactECharts';
-import { useAcrossData } from '../../hooks/useAcrossData';
+import { useAnalysis } from '../../hooks/useAnalysis';
+import { gridlens, type SweepIndex } from '../../api/gridlens';
 import { useChartTheme } from '../../hooks/useChartTheme';
 import { useGridFilter } from '../../hooks/useGridFilter';
 import { useTimeRange } from '../../hooks/useTimeRange';
 import { readAcrossColors, type AcrossColors } from '../../util/acrossColors';
-import { scenarioCode } from '../../util/acrossScenarios';
 import type { DynamicChartConfig } from '../../util/dynamicCharts';
 
 echarts.use([ScatterChart, CustomChart, SankeyChart, GridComponent, TooltipComponent, MarkLineComponent, CanvasRenderer]);
@@ -58,23 +58,47 @@ export default function N1PairsChart({ kind, config = { sourceKeys: [] } }: { ki
     [config.elementMode, config.elementIds],
   );
   const elementKey = [...elementIds].sort().join(',');
-  const { data } = useAcrossData(0);
+  const { analysis } = useAnalysis();
+  const [indexState, setIndexState] = useState<{ analysis: string | null; data: SweepIndex | null; error: string } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function load() {
+      try {
+        const data = await gridlens.sweeps(analysis, controller.signal);
+        if (controller.signal.aborted) return;
+        setIndexState({ analysis, data, error: '' });
+        if (data.status === 'importing' || data.status === 'evaluating') timer = setTimeout(load, 3000);
+      } catch {
+        if (!controller.signal.aborted) setIndexState({ analysis, data: null, error: 'The n-1 case list could not be loaded.' });
+      }
+    }
+    void load();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [analysis]);
+  const currentIndex = indexState?.analysis === analysis ? indexState : null;
   const scenarios = useMemo(() => {
-    const all = (data?.scenarios ?? []).map((s, i) => ({ id: s.id, label: `${scenarioCode(i)} ${s.name}` }));
+    const all = (currentIndex?.data?.scenarios ?? []).map((s) => ({ ...s, label: `${s.case_id} · ${s.name}` }));
     const chosen = new Set(config.scenarioIds ?? []);
     return chosen.size ? all.filter((s) => chosen.has(s.id)) : all;
-  }, [data, config.scenarioIds]);
+  }, [currentIndex, config.scenarioIds]);
   const [picked, setPicked] = useState<string | null>(null);
-  const [sweep, setSweep] = useState<Sweep>("(n-1)'");
+  const [pickedSweep, setSweep] = useState<Sweep | null>(null);
+  const scenarioItem = scenarios.find((s) => s.id === picked) ?? scenarios[0];
+  const available = scenarioItem?.sweeps ?? [];
+  const sweep: Sweep = pickedSweep && available.some((s) => s.kind === pickedSweep) ? pickedSweep
+    : available.some((s) => s.kind === "(n-1)'") ? "(n-1)'" : 'n-1';
+  const native = available.find((s) => s.kind === sweep);
   const [top, setTop] = useState<number>(config.topN && config.topN > 0 ? config.topN : 25);
   const [width, setWidth] = useState<'hours' | 'loading'>('hours');
   useEffect(() => setTop(config.topN && config.topN > 0 ? config.topN : 25), [config.topN]);
-  const scenario = picked && scenarios.some((s) => s.id === picked) ? picked : scenarios[0]?.id ?? null;
-  const key = `${scenario}|${sweep}|${top}|${range.from}|${range.to}|${grid}|${kv}|${equipment}|${elementKey}`;
+  const scenario = scenarioItem?.id ?? null;
+  const readable = native?.status === 'completed' || native?.status === 'incomplete';
+  const key = `${native?.id}|${native?.status}|${scenario}|${sweep}|${top}|${range.from}|${range.to}|${grid}|${kv}|${equipment}|${elementKey}`;
   const [result, setResult] = useState<{ key: string; data: N1Pairs | null; error: string } | null>(null);
 
   useEffect(() => {
-    if (!scenario) return;
+    if (!scenario || !readable) return;
     const controller = new AbortController();
     views.n1Pairs(scenario, sweep, range, top, { grid, kv, equipment, elementIds }, controller.signal)
       .then((found) => setResult({ key, data: found, error: '' }))
@@ -84,7 +108,7 @@ export default function N1PairsChart({ kind, config = { sourceKeys: [] } }: { ki
         setResult({ key, data: null, error: missing ? 'This scenario has no such n-1 sweep.' : 'The n-1 results could not be loaded.' });
       });
     return () => controller.abort();
-  }, [key, scenario, sweep, top, range, grid, kv, equipment, elementIds]);
+  }, [key, scenario, sweep, top, range, grid, kv, equipment, elementIds, readable]);
 
   const shown = result?.key === key ? result : null;
   const pairs = useMemo(() => shown?.data?.pairs ?? [], [shown]);
@@ -157,7 +181,9 @@ export default function N1PairsChart({ kind, config = { sourceKeys: [] } }: { ki
     };
   }, [showSankey, pairs, theme, colors, width, sweep, before]);
 
-  if (scenarios.length === 0) return <div className="ab-empty" aria-busy>Loading scenarios …</div>;
+  if (!currentIndex) return <div className="ab-empty" aria-busy>Loading n-1 cases …</div>;
+  if (currentIndex.error) return <div className="ab-empty" role="alert">{currentIndex.error}</div>;
+  if (scenarios.length === 0) return <div className="ab-empty" role="status">No imported n-1 results for the selected calculation and case selection.</div>;
   const d = shown?.data;
   const side = new Set(pairs.map((p) => p.contingency)).size;
   const dumbbellHeight = 64 + 26 * pairs.length;
@@ -168,10 +194,10 @@ export default function N1PairsChart({ kind, config = { sourceKeys: [] } }: { ki
         <select className="ab-control" aria-label="Scenario" value={scenario ?? ''} onChange={(e) => setPicked(e.target.value)}>
           {scenarios.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
         </select>
-        <button type="button" className="ab-chip" aria-pressed={sweep === "(n-1)'"} onClick={() => setSweep("(n-1)'")}
-          title="Contingencies during the planned outages of the scenario">During the maintenance</button>
-        <button type="button" className="ab-chip" aria-pressed={sweep === 'n-1'} onClick={() => setSweep('n-1')}
-          title="The same contingencies without the planned outages">Without maintenance</button>
+        <button type="button" className="ab-chip" disabled={!available.some((s) => s.kind === "(n-1)'")} aria-pressed={sweep === "(n-1)'"} onClick={() => setSweep("(n-1)'")}
+          title="Contingencies during the planned outages of the scenario">(n-1)' · During the maintenance</button>
+        <button type="button" className="ab-chip" disabled={!available.some((s) => s.kind === 'n-1')} aria-pressed={sweep === 'n-1'} onClick={() => setSweep('n-1')}
+          title="The same contingencies without the planned outages">n-1 · Without maintenance</button>
         <span className="ab-sub">Top</span>
         {TOPS.map((n) => <button key={n} type="button" className="ab-chip" aria-pressed={top === n} onClick={() => setTop(n)}>{n === ALL ? 'All' : n}</button>)}
         {showSankey && (
@@ -182,7 +208,9 @@ export default function N1PairsChart({ kind, config = { sourceKeys: [] } }: { ki
           </>
         )}
       </div>
-      {!shown && <div className="ab-empty" aria-busy>Loading n-1 results …</div>}
+      {native?.status === 'incomplete' && <p role="alert">Incomplete n-1 result: {native.reason || 'Some native values or study times are missing.'}</p>}
+      {!readable && <p role="status">{native?.status}: {native?.reason || 'No readable native result was stored.'}</p>}
+      {readable && !shown && <div className="ab-empty" aria-busy>Loading n-1 results …</div>}
       {shown?.error && <div className="ab-empty" role="status">{shown.error}</div>}
       {d && pairs.length === 0 && <div className="ab-empty">No contingency overloads a branch in this {sweep} sweep and time range.</div>}
       {d && pairs.length > 0 && (

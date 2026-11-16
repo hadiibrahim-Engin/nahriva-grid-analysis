@@ -406,6 +406,13 @@ def test_native_n1_and_n1_prime_run_and_restore_before_raw_import(native, monkey
     monkeypatch.setattr(settings, 'ANALYSIS_MODE', 'sqlite')
     from app.main import app as web
     with TestClient(web) as client:
+        index = client.get('/api/simulation/gridlens/sweeps', params={'analysis': outcome['assessment_id']}).json()
+        assert index['analysis'] == outcome['assessment_id']
+        assert index['scenarios'][0]['case_id'] == 'C1'
+        assert {r['kind'] for r in index['scenarios'][0]['sweeps']} == {'n-1', "(n-1)'"}
+        if not n0:
+            assert client.get('/api/simulation/across-scenarios/index', params={'analysis': outcome['assessment_id']}).json()['scenarios'] == []
+        assert client.get('/api/simulation/gridlens/sweeps', params={'analysis': 'another-calculation'}).json()['scenarios'] == []
         url = '/api/simulation/scenarios/{}-C1/n1-pairs'.format(outcome['assessment_id'])
         # (n-1)': 110 % after 'Monitored fault' at every study time; before it the QDS of C1 (90 %).
         [pair] = client.get(url).json()['pairs']
@@ -653,3 +660,16 @@ def test_case_manager_requires_name_before_starting_calculation():
     dialog._settings_ready = lambda *a: pytest.fail('Must not start calculation without its name')
     dialog.start()
     assert events == ['error', 'cases page', 'focus']
+
+
+def test_n1_index_does_not_need_qds_or_read_measurement_cells(native, monkeypatch):
+    import sqlite3
+    app, path = native
+    # A QDS-only calculation has no native n-1 choices.
+    first = bridge.run_assessment(app, path)
+    with closing(ScenarioStore(path)) as store:
+        assert raw.sweep_index(store.db, first['assessment_id'])['scenarios'] == []
+        def authorize(action, table, *args):
+            return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_READ and table in ('gl_values', 'analysis_values') else sqlite3.SQLITE_OK
+        store.db.set_authorizer(authorize)
+        assert raw.sweep_index(store.db, first['assessment_id'])['analysis'] == first['assessment_id']
