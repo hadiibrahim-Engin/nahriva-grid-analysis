@@ -35,6 +35,7 @@ import {
   type DashboardSeries,
   type DynamicChartConfig,
 } from '../util/dynamicCharts';
+import { useGridFilter } from '../hooks/useGridFilter';
 
 const AGG_LABELS: Record<AggregationFn, string> = {
   MINMAX: 'Min/Max (keeps peaks)',
@@ -73,6 +74,7 @@ export default function ChartTemplatePicker({
   endIso,
   onGenerate,
 }: Props) {
+  const { grid, kv } = useGridFilter();
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<ChartTemplate | null>(null);
 
@@ -214,6 +216,8 @@ export default function ChartTemplatePicker({
       ok: ok && thresholdLevelsOk,
       config: {
         sourceKeys,
+        grid,
+        kv,
         ...(selected.needsThreshold ? { threshold } : {}),
         ...(selected.needsThresholdLevels ? {
           thresholdLevels: normalizedThresholdEntries.map((entry) => entry.value),

@@ -12,6 +12,9 @@ export interface SavedSeries {
   componentId: string;
   componentName: string;
   measurementType: string;
+  grid?: string | null;
+  nominalKv?: number | null;
+  className?: string | null;
 }
 
 export interface SavedView {

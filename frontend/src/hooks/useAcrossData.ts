@@ -3,7 +3,7 @@ import { analysisParams, useAnalysis } from './useAnalysis';
 import api from '../api/client';
 import { cellsQuery, committedPrefix, mergeCells, scenarioGroups, type AcrossIndex, type CellsPayload } from '../util/acrossLoad';
 import type { AcrossData } from '../util/acrossScenarios';
-import { restrictToGrid } from '../util/grids';
+import { restrictToGrid, type GridSelection } from '../util/grids';
 import { useGridFilter } from './useGridFilter';
 
 /** How many groups of scenarios are asked for at the same time. Small on purpose: the database may be large. */
@@ -62,7 +62,7 @@ export interface AcrossLoad {
  * is reduced. A refresh only fetches scenarios that are not cached yet.
  * The data is restricted to the grid chosen in the dashboard header (all grids when none is chosen).
  */
-export function useAcrossData(refreshKey: number): AcrossLoad {
+export function useAcrossData(refreshKey: number, filter?: { grid?: GridSelection; kv?: number | null }): AcrossLoad {
   const { analysis } = useAnalysis();
   const [index, setIndex] = useState<AcrossIndex | null>(null);
   const [parts, setParts] = useState<Record<string, CellsPayload | null>>({});
@@ -124,7 +124,9 @@ export function useAcrossData(refreshKey: number): AcrossLoad {
     return () => { active = false; };
   }, [refreshKey, peerTick, analysis]);
 
-  const { grid, kv } = useGridFilter();
+  const header = useGridFilter();
+  const grid = filter?.grid === undefined ? header.grid : filter.grid;
+  const kv = filter?.kv === undefined ? header.kv : filter.kv;
   const merged = useMemo(() => (index ? mergeCells(index, committedPrefix(index, parts)) : null), [index, parts]);
   const data = useMemo(() => (merged ? restrictToGrid(merged, grid, kv) : null), [merged, grid, kv]);
   const total = index?.scenarios.length ?? 0;

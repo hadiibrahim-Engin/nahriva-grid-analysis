@@ -330,13 +330,16 @@ def scenario_n1_pairs(scenario_id: str,
                       start: int | None = Query(None, description="Range start, epoch seconds (inclusive)"),
                       end: int | None = Query(None, description="Range end, epoch seconds (inclusive)"),
                       limit: int = Query(100, ge=1, le=100_000),
-                      grid: str | None = Query(None, max_length=200), kv: float | None = None, db=Depends(store)):
+                      grid: str | None = Query(None, max_length=200), kv: float | None = None,
+                      equipment: str = Query('all', pattern='^(all|line|transformer)$'),
+                      element_ids: str | None = Query(None, max_length=20_000), db=Depends(store)):
     """Which contingency overloads which branch: per pair the loading before and after the contingency and the
     hours above the limit, worst first. kind "(n-1)'" with the scenario's planned outages, "n-1" without; grid and
     kv keep the pairs whose overloaded branch lies there."""
     if start is not None and end is not None and end < start:
         raise HTTPException(422, "The range ends before it starts.")
-    result = gridlens_store.n1_pairs(db.db, scenario_id, kind, start, end, limit, grid, kv)
+    chosen = [item for item in (element_ids or '').split(',') if item]
+    result = gridlens_store.n1_pairs(db.db, scenario_id, kind, start, end, limit, grid, kv, equipment, chosen)
     if result is None:
         raise HTTPException(404, "The scenario has no such n-1 sweep.")
     return JSONResponse(result)

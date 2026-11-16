@@ -1862,6 +1862,49 @@ body {
 .ab-map__key { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--grid-muted); }
 .ab-map__key i { display: inline-block; width: 14px; height: 4px; border-radius: 2px; }
 .ab-map__report p { margin: 4px 0; }
+
+/* Independent scope controls on every user-added plot. */
+.plot-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 12px;
+  margin: 0 0 8px;
+  padding: 8px 10px 9px;
+  border: 1px solid var(--grid-border-soft);
+  border-radius: 6px;
+  background: var(--grid-surface-soft);
+}
+.plot-filter-bar__legend {
+  padding: 0 5px;
+  color: var(--grid-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.plot-filter-bar__field {
+  display: grid;
+  min-width: 132px;
+  gap: 3px;
+  color: var(--grid-muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+.plot-filter-bar__field select {
+  max-width: 230px;
+  text-transform: none;
+}
+@media (max-width: 720px) {
+  .plot-filter-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .plot-filter-bar__field { min-width: 0; }
+  .plot-filter-bar__field select { width: 100%; max-width: none; }
+}
+@media (max-width: 460px) {
+  .plot-filter-bar { grid-template-columns: 1fr; }
+}
 /* Areas: load, generation and transit. */
 .ab-unavailable { padding: 10px 12px; border-radius: 8px; font-size: 12.5px; color: var(--grid-text-soft); background: var(--grid-warning-soft); border: 1px solid color-mix(in srgb, var(--grid-warning) 40%, transparent); }
 .ab-unavailable p, .ab-unavailable ul { margin: 6px 0 0; }

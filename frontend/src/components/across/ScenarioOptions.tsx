@@ -14,7 +14,7 @@ const EQUIPMENT_OPTIONS: { id: Equipment; label: string }[] = [
   { id: 'transformer', label: 'Transformers' },
 ];
 
-export type ScenarioConfigPatch = Pick<DynamicChartConfig, 'topN' | 'equipment' | 'elementMode' | 'elementIds' | 'scenarioIds'>;
+export type ScenarioConfigPatch = Pick<DynamicChartConfig, 'topN' | 'equipment' | 'elementMode' | 'elementIds' | 'scenarioIds' | 'grid' | 'kv'>;
 
 /**
  * Options of the scenario evaluation charts: automatic top N or exactly the chosen equipment
@@ -27,7 +27,7 @@ export default function ScenarioOptions({ kind, config, onChange, compact = fals
   compact?: boolean;
 }) {
   const bus = isVoltageKind(kind);
-  const { data } = useAcrossData(0);
+  const { data } = useAcrossData(0, { grid: config.grid, kv: config.kv });
   const [query, setQuery] = useState('');
   const mode = config.elementMode ?? 'auto';
   const topN = config.topN ?? 12;

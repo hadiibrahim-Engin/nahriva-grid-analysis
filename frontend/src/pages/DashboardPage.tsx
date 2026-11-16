@@ -88,6 +88,9 @@ interface SelectedSeries {
   componentId: string;
   componentName: string;
   measurementType: string;
+  grid?: string | null;
+  nominalKv?: number | null;
+  className?: string | null;
 }
 
 const APP_NAME = 'Outage Assessment';
@@ -446,9 +449,41 @@ export default function DashboardPage() {
     if (selectedSeriesList.some((s) => s.key === key)) return;
     setSelectedSeriesList((prev) => [
       ...prev,
-      { key, facilityName: fac.name, facilityId: fac.id, componentId: selectedComponentId, componentName: comp.name, measurementType: selectedMtype },
+      {
+        key,
+        facilityName: fac.name,
+        facilityId: fac.id,
+        componentId: selectedComponentId,
+        componentName: comp.name,
+        measurementType: selectedMtype,
+        grid: comp.grid ?? null,
+        nominalKv: comp.nominal_kv ?? null,
+        className: comp.class_name ?? null,
+      },
     ]);
   }, [selectedComponentId, selectedMtype, selectedFacilityId, components, pinnedComponent, facilities, selectedSeriesList]);
+
+  // Views saved before plot-level filters did not carry equipment metadata. Enrich them from the
+  // current component catalogue once it arrives, without changing their keys or source selection.
+  useEffect(() => {
+    if (components.length === 0) return;
+    const byId = new Map(components.map((component) => [component.id, component]));
+    setSelectedSeriesList((previous) => {
+      let changed = false;
+      const next = previous.map((series) => {
+        const component = byId.get(series.componentId);
+        if (!component || (series.grid !== undefined && series.nominalKv !== undefined && series.className !== undefined)) return series;
+        changed = true;
+        return {
+          ...series,
+          grid: component.grid ?? null,
+          nominalKv: component.nominal_kv ?? null,
+          className: component.class_name ?? null,
+        };
+      });
+      return changed ? next : previous;
+    });
+  }, [components]);
 
   const removeSeries = useCallback((key: string) => {
     setSelectedSeriesList((prev) => prev.filter((s) => s.key !== key));

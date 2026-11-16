@@ -33,6 +33,9 @@ import ScenarioOptions from './across/ScenarioOptions';
 import ErrorBoundary from './ErrorBoundary';
 import GeneratingLoader from './ui/GeneratingLoader';
 import ColorSwatchPicker from './ui/ColorSwatchPicker';
+import PlotFilters from './charts/PlotFilters';
+import { useGridFilter } from '../hooks/useGridFilter';
+import { atVoltage, inGrid } from '../util/grids';
 import {
   buildCorrelation,
   buildCorrelation3,
@@ -464,6 +467,7 @@ export default function DynamicChartCard({
   onUpdateConfig,
   resolutions,
 }: Props) {
+  const headerScope = useGridFilter();
   const template = getTemplate(instance.templateId);
   const rawConfig = instance.config ?? { sourceKeys: EMPTY_SOURCE_KEYS };
   const sourceKeys = Array.isArray(rawConfig.sourceKeys) ? rawConfig.sourceKeys : EMPTY_SOURCE_KEYS;
@@ -477,20 +481,38 @@ export default function DynamicChartCard({
     () => sourceKeys.map((key) => availableSeries.find((s) => s.key === key) ?? null),
     [sourceKeys, availableSeries],
   );
-  const presentSources = useMemo(
+  const configuredSources = useMemo(
     () => resolvedSources.filter((s): s is DashboardSeries => s !== null),
     [resolvedSources],
+  );
+  const scopeGrid = config.grid === undefined ? headerScope.grid : config.grid;
+  const scopeKv = config.kv === undefined ? headerScope.kv : config.kv;
+  const presentSources = useMemo(
+    () => configuredSources.filter((source) => (
+      inGrid(source, scopeGrid)
+      && atVoltage({ nominal_kv: source.nominalKv }, scopeKv)
+      && (!config.componentId || source.componentId === config.componentId)
+    )),
+    [configuredSources, scopeGrid, scopeKv, config.componentId],
   );
 
   const missing = useMemo(() => {
     if (!template) return false;
     if (template.scenarioLevel) return false;
-    if (template.componentLevel) return presentSources.length === 0;
+    if (template.componentLevel) return configuredSources.length === 0;
     if (template.arity === 'two') return !resolvedSources[0] || !resolvedSources[1];
     if (template.arity === 'three') return !resolvedSources[0] || !resolvedSources[1] || !resolvedSources[2];
-    if (template.arity === 'multi') return presentSources.length === 0;
+    if (template.arity === 'multi') return configuredSources.length === 0;
     return !resolvedSources[0];
-  }, [template, resolvedSources, presentSources.length]);
+  }, [template, resolvedSources, configuredSources.length]);
+
+  const scopeMissing = useMemo(() => {
+    if (!template || template.scenarioLevel) return false;
+    if (template.componentLevel || template.arity === 'multi') return presentSources.length === 0;
+    if (template.arity === 'two') return presentSources.length < 2;
+    if (template.arity === 'three') return presentSources.length < 3;
+    return presentSources.length < 1;
+  }, [template, presentSources.length]);
 
   // -- Fetch-based templates -----------------------------------------------
   const [items, setItems] = useState<FetchItem[] | null>(null);
@@ -634,6 +656,8 @@ export default function DynamicChartCard({
         text="Source not available — the signal was removed from the selection. Add the signal again to restore this chart."
       />
     );
+  } else if (scopeMissing) {
+    body = <InfoState tone="warn" text="No configured source matches this plot's grid, voltage and equipment filters." />;
   } else if (template.scenarioLevel) {
     body = (
       <ErrorBoundary label={template.name}>
@@ -704,6 +728,12 @@ export default function DynamicChartCard({
 
   return (
     <CardShell id={instance.id} title={template.name} subtitle={subtitle} sourceSummary={sourceSummary} onRemove={onRemove}>
+      <PlotFilters
+        template={template}
+        config={config}
+        availableSeries={availableSeries}
+        onChange={(nextConfig) => onUpdateConfig(instance.id, nextConfig)}
+      />
       <LiveConfigControls
         template={template}
         config={config}

@@ -95,6 +95,8 @@ export interface N1Pair {
   /** The branch it overloads. */
   element: string;
   grid: string;
+  nominal_kv: number | null;
+  type: string | null;
   /** Highest loading after the contingency (%), at time `t`. */
   post: number;
   t: number;
@@ -117,10 +119,12 @@ export interface N1Pairs {
 
 export const views = {
   async n1Pairs(scenarioId: string, kind: N1Pairs['kind'], range: TimeRange, limit: number,
-    filter: { grid: string | null; kv: number | null }, signal?: AbortSignal) {
+    filter: { grid: string | null; kv: number | null; equipment?: 'all' | 'line' | 'transformer'; elementIds?: string[] }, signal?: AbortSignal) {
     const params = {
       kind, limit, ...(range.from === null ? {} : { start: range.from }), ...(range.to === null ? {} : { end: range.to }),
       ...(filter.grid === null ? {} : { grid: filter.grid }), ...(filter.kv === null ? {} : { kv: filter.kv }),
+      ...(filter.equipment && filter.equipment !== 'all' ? { equipment: filter.equipment } : {}),
+      ...(filter.elementIds?.length ? { element_ids: filter.elementIds.join(',') } : {}),
     };
     return (await api.get<N1Pairs>(`/scenarios/${encodeURIComponent(scenarioId)}/n1-pairs`, { params, signal })).data;
   },

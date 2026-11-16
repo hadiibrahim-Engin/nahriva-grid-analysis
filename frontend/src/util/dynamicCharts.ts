@@ -17,12 +17,21 @@ export interface DashboardSeries {
   componentId: string;
   componentName: string;
   measurementType: string;
+  /** Equipment metadata used by the independent filters of each plot. */
+  grid?: string | null;
+  nominalKv?: number | null;
+  className?: string | null;
 }
 
 /** Persisted configuration for one generated chart card. */
 export interface DynamicChartConfig {
   /** Ordered source series keys. [0] = primary, [1] = secondary (two-signal). */
   sourceKeys: string[];
+  /** Independent plot scope. null means all; undefined keeps legacy charts on the header filter. */
+  grid?: string | null;
+  kv?: number | null;
+  /** Signal charts can narrow their configured sources to one equipment item. */
+  componentId?: string | null;
   threshold?: number;
   /** Scenario evaluation charts: how many equipment items to show, and of which kind. */
   topN?: number;

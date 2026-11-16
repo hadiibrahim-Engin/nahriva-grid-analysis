@@ -16,8 +16,8 @@ import type { DynamicChartConfig } from '../../util/dynamicCharts';
 
 echarts.use([ScatterChart, CustomChart, SankeyChart, GridComponent, TooltipComponent, MarkLineComponent, CanvasRenderer]);
 
-/** One of the two charts, or both under one set of controls (the n-1 review workspace). */
-type Kind = 'n1BeforeAfter' | 'n1Flow' | 'both';
+/** One of the two n-1 visualisations offered by the chart picker. */
+type Kind = 'n1BeforeAfter' | 'n1Flow';
 type Sweep = N1Pairs['kind'];
 /** Pairs to show; ALL asks for every pair (the server caps at 100,000). */
 const ALL = 100_000;
@@ -44,13 +44,20 @@ function tip(p: N1Pair, sweep: Sweep, before: string) {
  * scenario's sweep; the time range of the toolbar applies.
  */
 export default function N1PairsChart({ kind, config = { sourceKeys: [] } }: { kind: Kind; config?: DynamicChartConfig }) {
-  const showDumbbell = kind !== 'n1Flow';
-  const showSankey = kind !== 'n1BeforeAfter';
+  const showDumbbell = kind === 'n1BeforeAfter';
+  const showSankey = kind === 'n1Flow';
   const theme = useChartTheme();
   const colors = useMemo(() => readAcrossColors(theme.isLight), [theme.isLight]);
   const range = useTimeRange();
-  // The global grid and voltage-level filters of the header: they keep the pairs whose overloaded branch lies there.
-  const { grid, kv } = useGridFilter();
+  const headerScope = useGridFilter();
+  const grid = config.grid === undefined ? headerScope.grid : config.grid;
+  const kv = config.kv === undefined ? headerScope.kv : config.kv;
+  const equipment = config.equipment ?? 'all';
+  const elementIds = useMemo(
+    () => config.elementMode === 'selected' ? config.elementIds ?? [] : [],
+    [config.elementMode, config.elementIds],
+  );
+  const elementKey = [...elementIds].sort().join(',');
   const { data } = useAcrossData(0);
   const scenarios = useMemo(() => {
     const all = (data?.scenarios ?? []).map((s, i) => ({ id: s.id, label: `${scenarioCode(i)} ${s.name}` }));
@@ -61,14 +68,15 @@ export default function N1PairsChart({ kind, config = { sourceKeys: [] } }: { ki
   const [sweep, setSweep] = useState<Sweep>("(n-1)'");
   const [top, setTop] = useState<number>(config.topN && config.topN > 0 ? config.topN : 25);
   const [width, setWidth] = useState<'hours' | 'loading'>('hours');
+  useEffect(() => setTop(config.topN && config.topN > 0 ? config.topN : 25), [config.topN]);
   const scenario = picked && scenarios.some((s) => s.id === picked) ? picked : scenarios[0]?.id ?? null;
-  const key = `${scenario}|${sweep}|${top}|${range.from}|${range.to}|${grid}|${kv}`;
+  const key = `${scenario}|${sweep}|${top}|${range.from}|${range.to}|${grid}|${kv}|${equipment}|${elementKey}`;
   const [result, setResult] = useState<{ key: string; data: N1Pairs | null; error: string } | null>(null);
 
   useEffect(() => {
     if (!scenario) return;
     const controller = new AbortController();
-    views.n1Pairs(scenario, sweep, range, top, { grid, kv }, controller.signal)
+    views.n1Pairs(scenario, sweep, range, top, { grid, kv, equipment, elementIds }, controller.signal)
       .then((found) => setResult({ key, data: found, error: '' }))
       .catch((e: unknown) => {
         if (controller.signal.aborted) return;
@@ -76,7 +84,7 @@ export default function N1PairsChart({ kind, config = { sourceKeys: [] } }: { ki
         setResult({ key, data: null, error: missing ? 'This scenario has no such n-1 sweep.' : 'The n-1 results could not be loaded.' });
       });
     return () => controller.abort();
-  }, [key, scenario, sweep, top, range, grid, kv]);
+  }, [key, scenario, sweep, top, range, grid, kv, equipment, elementIds]);
 
   const shown = result?.key === key ? result : null;
   const pairs = useMemo(() => shown?.data?.pairs ?? [], [shown]);
@@ -180,12 +188,13 @@ export default function N1PairsChart({ kind, config = { sourceKeys: [] } }: { ki
       {d && pairs.length > 0 && (
         <p className="ab-sub">
           {d.total_pairs} pairs: {d.contingencies} contingencies overload {d.elements} branches
-          {grid !== null || kv !== null ? ` in ${[grid, kv !== null ? `${kv} kV` : null].filter(Boolean).join(', ')} (header filter)` : ''}
+          {grid !== null || kv !== null ? ` in ${[grid, kv !== null ? `${kv} kV` : null].filter(Boolean).join(', ')}` : ''}
+          {equipment !== 'all' ? ` · ${equipment}s only` : ''}
+          {elementIds.length ? ` · ${elementIds.length} selected equipment item${elementIds.length === 1 ? '' : 's'}` : ''}
           {d.total_pairs > pairs.length ? ` · the ${pairs.length} worst shown` : ''} · before = {d.before}
         </p>
       )}
       {dumbbell && <ReactECharts echarts={echarts} option={dumbbell} notMerge style={{ height: dumbbellHeight }} exportName={`n1-before-after-${sweep}`} />}
-      {sankey && kind === 'both' && <h4 className="across-card__title">Contingency → overloaded branches</h4>}
       {sankey && <ReactECharts echarts={echarts} option={sankey} notMerge style={{ height: sankeyHeight }} exportName={`n1-flow-${sweep}`} />}
     </div>
   );

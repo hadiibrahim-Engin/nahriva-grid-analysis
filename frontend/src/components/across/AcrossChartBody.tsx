@@ -85,7 +85,7 @@ const NEED_CHOICE = <Empty>Please choose at least one element under “Selection
  * automatic top N. The scenarios can be narrowed down as well.
  */
 export default function AcrossChartBody({ kind, config }: { kind: ChartKind; config: DynamicChartConfig }) {
-  const { data, total, shown, loading, error } = useAcrossData(0);
+  const { data, total, shown, loading, error } = useAcrossData(0, { grid: config.grid, kv: config.kv });
   const theme = useChartTheme();
   const colors = useMemo(() => readAcrossColors(theme.isLight), [theme.isLight]);
   const top = config.topN && config.topN > 0 ? config.topN : 12;

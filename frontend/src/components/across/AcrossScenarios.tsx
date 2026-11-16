@@ -14,7 +14,6 @@ import { SectionCard } from './shared';
 import { readParam, writeParam } from '../../util/shareLink';
 import type { WorkspaceId } from '../../util/workspaces';
 import DashboardSection from '../DashboardSection';
-import N1Review from './N1Review';
 
 const AcrossCharts = lazy(() => import('./AcrossCharts'));
 const ScenarioRadar = lazy(() => import('./ScenarioRadar'));
@@ -150,7 +149,6 @@ export default memo(function AcrossScenarios({ refreshKey, intro, onWorkspaceCha
       <DashboardSection workspace="assessment">{intro}<p role={error ? 'alert' : 'status'}>{message}</p>
         {loaded && status !== 'all' && <button type="button" className="ab-chip" onClick={() => setStatus('all')}>Show all scenarios</button>}
       </DashboardSection>
-      <N1Review refreshKey={refreshKey} />
     </>;
   }
   const periodHours = data!.period_hours;
@@ -252,7 +250,6 @@ export default memo(function AcrossScenarios({ refreshKey, intro, onWorkspaceCha
           </ErrorBoundary>
         </DashboardSection>
 
-        <N1Review refreshKey={refreshKey} />
         <DashboardSection workspace="compare" lazy>
             <SectionCard id={SUMMARY_IDS.charts} title="Scenario comparison" summary={`${analysis.scenarios.length} scenarios · ${analysis.lines.length} equipment`}>
               <ErrorBoundary label="Evaluation charts">

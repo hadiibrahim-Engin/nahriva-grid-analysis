@@ -200,6 +200,7 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
     measurements: [],
     arity: 'none',
     scenarioLevel: true,
+    needsScenarioOptions: true,
   },
   {
     id: 'n1-flow',
@@ -210,6 +211,7 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
     measurements: [],
     arity: 'none',
     scenarioLevel: true,
+    needsScenarioOptions: true,
   },
   // -- Signal charts: one or more saved signals --------------------------------
   {

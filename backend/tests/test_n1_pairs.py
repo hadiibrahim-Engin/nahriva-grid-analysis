@@ -66,3 +66,18 @@ def test_the_global_grid_and_voltage_filters_keep_the_overloaded_branches_there(
     assert {p["grid"] for p in north["pairs"]} == {"Area North"}
     assert {p["contingency"] for p in north["pairs"]} - {p["element"] for p in north["pairs"]}  # outages from elsewhere
     assert gridlens_store.n1_pairs(store.db, scenario["id"], kv=16.5)["total_pairs"] == 0  # generator terminals
+
+
+def test_plot_equipment_filters_are_applied_before_the_top_n_limit(store):
+    scenario, _outage = maintenance(store)
+    every = gridlens_store.n1_pairs(store.db, scenario["id"], limit=100_000)
+    assert every["pairs"]
+    chosen_id = every["pairs"][-1]["element_id"]
+
+    chosen = gridlens_store.n1_pairs(store.db, scenario["id"], limit=1, element_ids=[chosen_id])
+    assert chosen["total_pairs"] > 0
+    assert len(chosen["pairs"]) == 1
+    assert chosen["pairs"][0]["element_id"] == chosen_id
+
+    lines = gridlens_store.n1_pairs(store.db, scenario["id"], limit=100_000, equipment="line")
+    assert all(pair["type"] == "line" for pair in lines["pairs"])

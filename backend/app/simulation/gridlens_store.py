@@ -206,12 +206,14 @@ def qds_series(db, native, column, start, end, limit, offset):
              'code': row['code']} for row in rows]
 
 
-def n1_pairs(db, scenario_id, kind="(n-1)'", start=None, end=None, limit=100, grid=None, kv=None):
+def n1_pairs(db, scenario_id, kind="(n-1)'", start=None, end=None, limit=100, grid=None, kv=None,
+             equipment="all", element_ids=None):
     """Which contingency overloads which branch, and how strongly: per pair the highest loading after the
     contingency, the loading before it at that time, and the hours above the branch's limit, worst first.
 
-    `grid` and `kv` (the dashboard's global filters) keep the pairs whose overloaded branch lies in that grid or
-    at that nominal voltage; the contingency may lie anywhere, since its effect across grids is the point.
+    `grid`, `kv`, `equipment` and `element_ids` keep the pairs whose overloaded branch matches the plot filter;
+    the contingency may lie anywhere, since its effect across grids is the point. Filtering happens before
+    `limit`, so a chosen element cannot disappear merely because it was outside the unfiltered top N.
 
     `kind` "(n-1)'" is the sweep with the scenario's planned outages, "n-1" the one without (before: the QDS of the
     planning case, or REF). Reads the recorded n-1 cells (above the recording limit) and one value per pair from
@@ -240,12 +242,16 @@ def n1_pairs(db, scenario_id, kind="(n-1)'", start=None, end=None, limit=100, gr
         "WHERE v.result_id=? AND k.metric='loading' AND v.contingency_id<>'' AND v.value IS NOT NULL" + window +
         ' GROUP BY v.contingency_id, v.column_id HAVING over_n > 0', params).fetchall()
     columns = {r[0]: r[1:] for r in db.execute(
-        'SELECT c.column_id, c.element_id, c.name, c.path, e.nominal_kv FROM gl_columns c '
+        "SELECT c.column_id, c.element_id, c.name, c.path, e.nominal_kv, "
+        "CASE WHEN c.class_name IN ('ElmTr2', 'ElmTr3') THEN 'transformer' ELSE 'line' END FROM gl_columns c "
         'LEFT JOIN gl_elements e ON e.assessment_id=? AND e.element_id=c.element_id WHERE c.result_id=?',
         (assessment, identifier))}
-    if grid is not None or kv is not None:
+    chosen_ids = set(element_ids or ())
+    if grid is not None or kv is not None or equipment != 'all' or chosen_ids:
         found = [r for r in found if (grid is None or grid_name(columns[r[1]][2]) == grid)
-                 and (kv is None or columns[r[1]][3] == kv)]
+                 and (kv is None or columns[r[1]][3] == kv)
+                 and (equipment == 'all' or columns[r[1]][4] == equipment)
+                 and (not chosen_ids or columns[r[1]][0] in chosen_ids)]
     found.sort(key=lambda r: (-r[2], -r[4]))
     shown = found[:limit]
     names = dict(db.execute('SELECT id, name FROM gl_contingencies WHERE result_id=?', (identifier,)).fetchall())
@@ -264,10 +270,11 @@ def n1_pairs(db, scenario_id, kind="(n-1)'", start=None, end=None, limit=100, gr
             (pre[0], *elements, *times))}
     pairs = []
     for contingency, column, post, t, over, upper in shown:
-        element_id, name, path, _kv = columns[column]
+        element_id, name, path, nominal_kv, element_type = columns[column]
         pairs.append({
             'contingency': names.get(contingency, contingency), 'element_id': element_id, 'element': name,
-            'grid': grid_name(path), 'post': post, 't': t, 'pre': before.get((element_id, t)),
+            'grid': grid_name(path), 'nominal_kv': nominal_kv, 'type': element_type,
+            'post': post, 't': t, 'pre': before.get((element_id, t)),
             'limit': upper if upper is not None else 100.0, 'hours_over': over * step,
         })
     return {

@@ -3,7 +3,6 @@ import {
   Activity,
   BarChart3,
   Boxes,
-  GitBranch,
   LayoutDashboard,
   Network,
   Scale,
@@ -16,7 +15,6 @@ const WORKSPACE_ICONS: Record<WorkspaceId, LucideIcon> = {
   scenarios: Activity,
   network: Network,
   assets: Boxes,
-  n1: GitBranch,
   compare: Scale,
   charts: BarChart3,
 };
@@ -56,7 +54,7 @@ export default function WorkspaceRail({ value, onChange }: {
         })}
       </nav>
       <div className="workspace-rail__hint">
-        Scroll to explore. Select a section to jump to it; n-1 results load on request.
+        Select a section to focus the analysis. Add n-1 views from Charts when needed.
       </div>
     </aside>
   );
