@@ -14,7 +14,7 @@ const analysisLabel = (a: AnalysisInfo) => {
   const status = a.status === 'complete' ? '' : ` · ${a.status}`;
   // The run id is the stamp of the kept result objects in PowerFactory (OA_<run id>): unique per run.
   const run = a.native_run_id ? ` · run ${a.native_run_id}` : '';
-  return `${when(a.created_at)}${run} · ${[a.project, a.study_case].filter(Boolean).join(' / ')} · ${a.scenarios} cases${status}`;
+  return `${a.name ? `${a.name} · ` : ''}${when(a.created_at)}${run} · ${[a.project, a.study_case].filter(Boolean).join(' / ')} · ${a.scenarios} cases${status}`;
 };
 
 /** Analysis dropdown of the dashboard header; empty selection = the newest analysis. */

@@ -96,3 +96,13 @@ def extremes(identifier: str, offset: int = Query(0, ge=0), limit: int = Query(5
         'ORDER BY n.severity DESC,c.name,n.column_id LIMIT ? OFFSET ?', (identifier, limit, offset))
     total = db.db.execute('SELECT COUNT(*) FROM gl_n1_columns WHERE result_id=?', (identifier,)).fetchone()[0]
     return {'rows': [dict(row) for row in rows], 'total': total, 'offset': offset, 'limit': limit}
+
+
+@router.get('/results/{identifier}/unresolved-rows')
+def unresolved_rows(identifier: str, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000), db=Depends(store)):
+    required_result(db.db, identifier)
+    rows = db.db.execute('SELECT t,row_index,diagnostic,cells FROM gl_unresolved_rows WHERE result_id=? '
+                         'ORDER BY t,row_index LIMIT ? OFFSET ?', (identifier, limit, offset))
+    total = db.db.execute('SELECT COUNT(*) FROM gl_unresolved_rows WHERE result_id=?', (identifier,)).fetchone()[0]
+    return {'rows': [raw.decode_row(row, ('diagnostic', 'cells')) for row in rows], 'total': total,
+            'offset': offset, 'limit': limit}

@@ -4,6 +4,7 @@ import { createContext, useContext } from 'react';
 export interface AnalysisInfo {
   id: string;
   native_run_id: string | null;
+  name?: string;
   project: string | null;
   study_case: string | null;
   engine_version: string | null;

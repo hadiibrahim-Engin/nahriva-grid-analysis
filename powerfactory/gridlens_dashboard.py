@@ -431,6 +431,7 @@ def _read_sweep(db, assessment_id, case_id, kind, sweep, entry, elements):
             contingency(path, path.rsplit('\\', 1)[-1].removesuffix('.ComOutage'))
     column_ids, cells = {}, []
     unreadable = 0
+    unresolved = 0
     moments = set()
     summary = SweepSummary(db, result_id)
     for sub in engine._contents(obj, '*.ElmRes'):
@@ -461,13 +462,33 @@ def _read_sweep(db, assessment_id, case_id, kind, sweep, entry, elements):
                 columns.append((column, column_ids[key]))
             db.executemany('INSERT INTO gl_time_columns VALUES(?,?,?)', ((result_id, moment, slot) for _c, slot in columns))
             rows = int(sub.GetNumberOfRows())
-            faults = []
+            faults, seen_faults = [], set()
             for row in range(rows):
-                code, outage = engine._status_pair(sub.GetObjectValue(row))
-                if code != 0 or outage is None:
-                    raise engine.OutageAssessmentError('A contingency result row has no readable contingency identity.')
+                outage, diagnostic = engine.contingency_row_object(sub, row)
+                if outage is None:
+                    # Preserve raw cells without inventing a contingency or pretending that coverage is complete.
+                    raw_cells = []
+                    for column, slot in columns:
+                        try:
+                            code, value = engine._status_pair(sub.GetValue(row, column))
+                        except Exception:
+                            code, value = None, None
+                        number = engine.finite_number(value) if code == 0 else None
+                        state = 'value' if number is not None else 'not_recorded' if code == 3 else 'invalid' if code == 0 else 'read_error'
+                        raw_cells.append({'column_id': slot, 'code': code, 'value': number, 'state': state})
+                    db.execute('INSERT INTO gl_unresolved_rows VALUES(?,?,?,?,?)',
+                               (result_id, moment, row, text_json(diagnostic), text_json(raw_cells)))
+                    unresolved += 1
+                    faults.append(None)
+                    continue
                 path = engine.object_key(outage)
-                faults.append(None if path in filtered else contingency(path, engine.object_name(outage)))
+                fault = None if path in filtered else contingency(path, engine.object_name(outage))
+                if fault is not None and fault in seen_faults:
+                    raise engine.OutageAssessmentError('Duplicate contingency identity in {} at study time {}, row {}: {}'.format(
+                        engine.object_key(sub), moment, row, path))
+                faults.append(fault)
+                if fault is not None:
+                    seen_faults.add(fault)
             db.executemany('INSERT INTO gl_pairs VALUES(?,?,?)',
                            ((result_id, moment, fault) for fault in faults if fault is not None))
             for column, slot in columns:
@@ -500,9 +521,10 @@ def _read_sweep(db, assessment_id, case_id, kind, sweep, entry, elements):
     elements.flush()
     summary.finish()
     missing = sorted(set(metadata['requested_times']) - moments)
-    metadata.update(calculated_times=sorted(moments), missing_times=missing, unreadable_cells=unreadable)
-    db.execute('UPDATE gl_results SET metadata=?,status=? WHERE id=?',
-               (text_json(metadata), 'incomplete' if missing or unreadable else 'completed', result_id))
+    metadata.update(calculated_times=sorted(moments), missing_times=missing, unreadable_cells=unreadable, unresolved_rows=unresolved)
+    reason = '{} contingency row(s) could not be identified; raw cells and diagnostics retained separately.'.format(unresolved) if unresolved else ''
+    db.execute('UPDATE gl_results SET metadata=?,status=?,reason=? WHERE id=?',
+               (text_json(metadata), 'incomplete' if missing or unreadable or unresolved else 'completed', reason, result_id))
     return result_id
 
 
@@ -617,7 +639,8 @@ def _import_results(bundle, database, on_saved=None):
                 'period_start,period_end,result_schema_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
                     assessment_id, request['run_id'], catalog['project'], catalog['study_case'], engine.PUBLISHER_VERSION,
                     datetime.now(timezone.utc).isoformat(), text_json(request['settings_snapshot']),
-                    text_json(request.get('config') or {}), 'kept' if request.get('evaluate_stamp') else 'calculated',
+                    text_json(dict(request.get('config') or {}, analysis_name=(request.get('config') or {}).get('analysis_name', '').strip()
+                                   or '{} - {}'.format(catalog['project'], request['run_id']))), 'kept' if request.get('evaluate_stamp') else 'calculated',
                     'importing', 'PowerFactory', text_json(kinds), catalog['project_path'], catalog['study_case_path'],
                     engine._generated_by(), *(None if t is None else int(t) for t in run_period), RESULT_SCHEMA_VERSION))
             db.execute('INSERT INTO pf_catalog VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at',

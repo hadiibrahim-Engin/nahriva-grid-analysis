@@ -54,6 +54,12 @@ def installation_issues(root, python=None, version=None):
         assets = re.findall(r'''(?:src|href)=["']/?(assets/[^"']+)["']''', html)
         if not assets or any(not (index.parent / asset).is_file() for asset in assets):
             issues.append('Frontend-Build ist unvollständig')
+        else:
+            inputs = list((root / 'frontend/src').rglob('*'))
+            inputs += [root / 'frontend' / name for name in ('package.json', 'package-lock.json', 'index.html', 'vite.config.ts')]
+            inputs += list((root / 'frontend').glob('tsconfig*.json'))
+            if any(path.is_file() and path.stat().st_mtime_ns > index.stat().st_mtime_ns for path in inputs):
+                issues.append('Frontend-Build ist veraltet')
     return issues
 
 

@@ -220,3 +220,15 @@ exit $LASTEXITCODE
     assert json.loads(progress.read_text(encoding='utf-8-sig'))['status'] == 'complete'
     assert (root / 'backend/.venv/bin/python').is_file()
     assert bool(list((root / 'backend').glob('.venv.backup-*'))) == bool(old_version)
+
+
+def test_updated_frontend_sources_trigger_automatic_rebuild(installation, monkeypatch):
+    import os
+    root, _, _ = installation
+    monkeypatch.setattr(boot.subprocess, 'run', healthy)
+    source = root / 'frontend/src/App.tsx'
+    source.parent.mkdir()
+    source.write_text('updated frontend')
+    os.utime(root / 'frontend/dist/index.html', (1, 1))
+    os.utime(source, (2, 2))
+    assert boot.installation_issues(root) == ['Frontend-Build ist veraltet']

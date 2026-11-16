@@ -28,10 +28,11 @@ One script sets everything up (`setup.cmd`), one script runs in PowerFactory (`p
    the backend packages and frontend build. A Windows progress window shows the six setup steps, an activity
    indicator and live output. Missing Node is downloaded locally; Python is chosen to match PowerFactory.
    Internet access is needed for downloads. PowerFactory must use Python 3.12 or newer.
-4. After setup the case manager opens automatically. Define the cases and assessments and calculate.
+4. After setup the case manager opens automatically. Enter a **Calculation name** for the whole run,
+   define its cases and assessments, and calculate. The name groups its cases in the dashboard.
    **The browser opens as soon as the first case is stored** (default `http://127.0.0.1:8765`).
 
-Later starts reuse the installation. Incomplete builds and missing backend packages trigger automatic repair.
+Later starts reuse the installation. Incomplete or outdated frontend builds and missing backend packages trigger automatic repair.
 Setup failures display the reason and point to `.tools\setup.log`; run the script again after fixing the cause.
 An incompatible existing backend environment is preserved as `backend/.venv.backup-<id>` before replacement.
 `setup.cmd` / `setup.ps1` remain available for manual setup, offline installation and advanced options.

@@ -103,7 +103,7 @@ and sparse cell states. Raw native results remain separate from source classific
 when requested; they are not a reproduction of the GridLens PDF verdicts.
 New n-1 widgets can use the raw API below without adopting those analyses.
 
-The schema extension is additive (layout 16, analysis schema 2, native result contract 3). Existing
+The schema extension is additive (layout 17, analysis schema 2, native result contract 4). Existing
 compatible result files are retained and get the new tables when opened.
 
 ## Widget API
@@ -214,3 +214,29 @@ The profile keeps the delivered samples, gaps, reference lines and outage window
 
 Neither visiting n-1 review nor **Expand** starts n-1-pairs requests. Only **Load n-1 results** mounts those charts;
 **Hide n-1 results** closes them. The asset view separately offers **Show n-1 extremes** for its existing summary.
+
+
+## Calculation names and contingency import diagnostics
+
+In the case manager, **Calculation name** names the complete run containing its planning cases. Enter it
+before Start calculation. It is saved with the case configuration, shown in the dashboard analysis picker,
+source assessment heading and comparison search, and retained in archives. Individual C1/C2 case identifiers
+remain local to that named calculation. Earlier imports display project and native run stamp as a fallback.
+
+When reimporting kept results through **Results**, enter the desired calculation name and select the old
+run stamp: this creates a new named import without repeating the PowerFactory calculation.
+
+For contingency results, the importer reads the row-axis object or resolves its stored index using `GetObj`.
+DIgSILENT explains the index/object distinction in its [ElmRes result-reading FAQ](https://www.digsilent.net/en/faq-reader-powerfactory/how-can-i-read-data-from-a-result-file-elmres-via-script.html).
+If no native contingency identity can be resolved, the import keeps the row's raw cells and diagnostic calls
+in `gl_unresolved_rows`, marks the result **incomplete**, and shows the reason in the source assessment panel.
+It does not guess an identity or turn missing coverage into zero or a successful n-1 verdict. The original
+n-1 source evaluator reports **NOT EVALUATED** in that case. Other imported results remain available.
+
+`GET /api/simulation/gridlens/results/{id}/unresolved-rows?offset=0&limit=100` returns paginated raw rows,
+including study time, native row index, diagnostic API calls and raw column values/codes. The panel links to
+this endpoint; the full archive preserves all rows. To recover from the former Step 6 import error, choose
+the kept run in **Results** and import it again using the updated script. No recalculation is required.
+
+After updating an existing installation, stop the old dashboard server once before starting the new backend.
+The starter rebuilds a frontend whose source files are newer than its build automatically.

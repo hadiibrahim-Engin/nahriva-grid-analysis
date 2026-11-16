@@ -156,7 +156,9 @@ def analyses(db):
     found = [
         {**dict(row), "calculation_types": json.loads(row["calculation_types"] or "[]")}
         for row in db.execute(
-            "SELECT a.id, a.native_run_id, a.project, a.study_case, a.engine_version, a.created_at, a.mode, a.status, "
+            "SELECT COALESCE(NULLIF(json_extract(a.configuration,'$.analysis_name'),''), "
+            "a.project || ' - ' || a.native_run_id) AS name, a.id, a.native_run_id, a.project, a.study_case, "
+            "a.engine_version, a.created_at, a.mode, a.status, "
             "a.source_system, a.calculation_types, a.period_start, a.period_end, "
             "(SELECT COUNT(*) FROM pf_scenarios s WHERE s.analysis_id = a.id) AS scenarios "
             "FROM gl_assessments a ORDER BY a.created_at DESC, a.rowid DESC"

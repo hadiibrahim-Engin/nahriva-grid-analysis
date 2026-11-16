@@ -32,7 +32,11 @@ def _analysis(db, analysis_id):
     if analysis_id == across.UNASSIGNED:
         return {"id": across.UNASSIGNED, "settings": "{}", "status": "unknown"}
     row = db.execute("SELECT * FROM gl_assessments WHERE id=?", (analysis_id,)).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    found = dict(row)
+    found['name'] = json.loads(found.get('configuration') or '{}').get('analysis_name') or '{} - {}'.format(found.get('project'), found.get('native_run_id'))
+    return found
 
 
 def _flat(value, prefix=""):

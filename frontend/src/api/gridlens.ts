@@ -27,6 +27,7 @@ export interface NativeColumn {
 }
 
 export interface NativeAssessment {
+  name: string;
   id: string;
   native_run_id: string;
   project: string;

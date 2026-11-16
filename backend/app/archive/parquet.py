@@ -65,6 +65,7 @@ TABLES = (
     ("element_limits", "pf_element_limits", "run_id IN (SELECT id FROM _runs)"),
     ("series", "analysis_series", "run_id IN (SELECT id FROM _runs)"),
     ("results", "gl_results", "assessment_id = :analysis"),
+    ("unresolved_rows", "gl_unresolved_rows", "result_id IN (SELECT id FROM _results)"),
     ("n1_columns_native", "gl_columns", "result_id IN (SELECT id FROM _results)"),
     ("n1_contingencies", "gl_contingencies", "result_id IN (SELECT id FROM _results)"),
     ("n1_times", "gl_times", "result_id IN (SELECT id FROM _results)"),
@@ -302,7 +303,7 @@ def verify_archive(path):
                     if columns != entry.get("columns"):
                         problems.append(f"{name} schema differs from manifest")
         optional_v1 = {"pf_catalog", "pf_jobs", "pf_scenario_cells", "pf_lodf", "pf_lodf_undefined"}
-        required = {table for _, table, _ in TABLES} - {"gl_evaluations"}
+        required = {table for _, table, _ in TABLES} - {"gl_evaluations", "gl_unresolved_rows"}
         if manifest["format_version"] == 1:
             required -= optional_v1
         if required - tables:
@@ -338,7 +339,7 @@ def import_analysis(archive, database, on_file=None):
         raise ArchiveError("Invalid archive source metadata.")
     if (not isinstance(source.get("layout_version"), int)
             or not OLDEST_LAYOUT <= source["layout_version"] <= LAYOUT_VERSION
-            or source.get("result_schema_version") not in (2, RESULT_SCHEMA_VERSION)
+            or source.get("result_schema_version") not in (2, 3, RESULT_SCHEMA_VERSION)
             or manifest.get("states_version") not in (1, STATES_VERSION)):
         raise ArchiveError("Incompatible archive schema or states version. Use a matching dashboard version.")
     target.parent.mkdir(parents=True, exist_ok=True)

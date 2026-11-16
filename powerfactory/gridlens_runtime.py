@@ -2050,10 +2050,11 @@ def _read_n1_sub(sub, wanted, in_scope, meta, keep_unrecorded=False):
         rows = int(sub.GetNumberOfRows())
         contingencies = []
         for row in range(rows):
-            code, outage = _status_pair(sub.GetObjectValue(row))
-            contingency = object_key(outage) if code == 0 and outage is not None else None
+            outage, diagnostic = contingency_row_object(sub, row)
+            contingency = object_key(outage) if outage is not None else None
             if contingency is None or contingency in present:
-                raise OutageAssessmentError('The n-1 result contains an unreadable or duplicate contingency row.')
+                raise OutageAssessmentError('The n-1 result {} contains an unreadable or duplicate contingency row {}: {}.'.format(
+                    object_key(sub), row, json.dumps(diagnostic, ensure_ascii=False)))
             meta['contingencies'].setdefault(contingency, object_name(outage))
             present.add(contingency)
             contingencies.append(contingency)
@@ -2167,6 +2168,72 @@ def _status_pair(returned):
         code = finite_number(returned[0])
         return (None if code is None else int(code)), returned[1]
     return None, None
+
+
+def contingency_row_object(result, row):
+    """Resolve the row-axis object, not a monitored equipment column or a guessed row number.
+
+    ElmRes.GetObjectValue(row, col) and GetValue(row, col) select the axis with -1. GetObj(index)
+    resolves the exact signed index written in that axis (Python Function Reference, ElmRes).
+    Some bindings expose only the one-argument default-column form.
+    """
+    diagnostics = []
+
+    def read(method):
+        try:
+            function = getattr(result, method)
+            try:
+                raw = function(row, -1)
+            except TypeError:
+                raw = function(row)
+        except Exception as exc:
+            diagnostics.append({'method': method, 'error': str(exc)[:240]})
+            return None
+        if isinstance(raw, (list, tuple)):
+            code, value = _status_pair(raw)
+            if code == 2:
+                # Binding does not expose -1 as an explicit column: use its documented axis default.
+                try:
+                    raw = function(row)
+                except Exception as exc:
+                    diagnostics.append({'method': method, 'error': str(exc)[:240]})
+                    return None
+                code, value = _status_pair(raw) if isinstance(raw, (list, tuple)) else (0, raw)
+        else:
+            code, value = 0, raw
+        diagnostics.append({'method': method, 'code': code, 'type': type(value).__name__})
+        return value if code == 0 else None
+
+    def object_at(value):
+        if class_name(value) == 'ComOutage':
+            if object_key(value).strip() not in ('', 'unknown', 'None'):
+                return value
+            diagnostics.append({'reason': 'Contingency object has no readable native identity'})
+            return None
+        index = finite_number(value)
+        if index is None or index != int(index):
+            if value is not None:
+                diagnostics.append({'class': class_name(value), 'type': type(value).__name__})
+            return None
+        try:
+            found = result.GetObj(int(index))
+            if isinstance(found, (list, tuple)):
+                code, found = _status_pair(found)
+                if code != 0:
+                    return None
+            diagnostics.append({'method': 'GetObj', 'index': int(index), 'class': class_name(found)})
+            if class_name(found) == 'ComOutage' and object_key(found).strip() not in ('', 'unknown', 'None'):
+                return found
+            return None
+        except Exception as exc:
+            diagnostics.append({'method': 'GetObj', 'index': int(index), 'error': str(exc)[:240]})
+            return None
+
+    for method in ('GetObjectValue', 'GetValue'):
+        found = object_at(read(method))
+        if found is not None:
+            return found, diagnostics
+    return None, diagnostics
 
 
 def n1_limit(quantity, category, nominal_kv=None):
@@ -7058,7 +7125,7 @@ def assign_definitions(records):
 def empty_case_config(project_key=''):
     return {'schema': CASE_CONFIG_SCHEMA, 'schema_version': CASE_CONFIG_SCHEMA_VERSION, 'revision': 0,
             'project': project_key, 'saved_at': '', 'saved_by': '', 'assessments': ['n-0'], 'background': [],
-            'cases': [], 'rules': [], 'settings': {}, 'log_level': normalized_log_level(LOG_LEVEL)}
+            'analysis_name': '', 'cases': [], 'rules': [], 'settings': {}, 'log_level': normalized_log_level(LOG_LEVEL)}
 
 
 def _occurrence_window(record, plan_case):
@@ -7162,6 +7229,9 @@ def validate_case_config(config, max_cases=-1):
         problems.append('unknown schema {!r}'.format(config.get('schema')))
     if config.get('schema_version') != CASE_CONFIG_SCHEMA_VERSION:
         problems.append('schema version {!r} is not {}'.format(config.get('schema_version'), CASE_CONFIG_SCHEMA_VERSION))
+    analysis_name = config.get('analysis_name', '')
+    if not isinstance(analysis_name, str) or len(analysis_name.strip()) > 120:
+        problems.append('calculation name must be text with at most 120 characters')
     revision = config.get('revision', 0)
     if type(revision) is not int or revision < 0:
         problems.append('revision must be a non-negative integer')
@@ -9877,6 +9947,18 @@ class CaseManagerDialog:
         strip.setSpacing(10)
         options, card = self.card(spacing=6)
         self.card_title(card, 'Calculation')
+        name_row = widgets.QHBoxLayout()
+        name_label = self.label('Calculation name', 'caption')
+        self.analysis_name = widgets.QLineEdit()
+        self.analysis_name.setMaxLength(120)
+        self.analysis_name.setPlaceholderText('e.g. Maintenance plan - Week 42')
+        self.analysis_name.setText(self.editor.config.get('analysis_name') or '')
+        self.analysis_name.textChanged.connect(lambda text: self.editor.config.__setitem__('analysis_name', text.strip()))
+        name_label.setBuddy(self.analysis_name)
+        self.tip(self.analysis_name, 'Name of the complete calculation containing all cases. Shown in the dashboard and analysis comparisons.')
+        name_row.addWidget(name_label)
+        name_row.addWidget(self.analysis_name, 1)
+        card.addLayout(name_row)
         # n-0 is the quasi-dynamic simulation; unticked, the run is n-1 only (no QDS, own n-1 time sweep).
         self.n0_check = widgets.QCheckBox('n-0 - quasi-dynamic simulation (reference and one run per case)')
         self.n1_check = widgets.QCheckBox('n-1 - reference contingency analysis')
@@ -10814,6 +10896,7 @@ class CaseManagerDialog:
                 saved.get('revision'))):
             return
         self.editor.load(saved)
+        self.analysis_name.setText(self.editor.config.get('analysis_name') or '')
         for check, assessment in ((self.n0_check, 'n-0'), (self.n1_check, N1_REFERENCE), (self.n1_prime_check, N1_PRIME)):
             check.blockSignals(True)
             check.setChecked(assessment in self.editor.config['assessments'])
@@ -10829,6 +10912,11 @@ class CaseManagerDialog:
     def start(self):
         """Check the configuration and hand it to Outage Assessment; the calculation starts after the window closes."""
         self.finish_editing()
+        if not self.analysis_name.text().strip():
+            self.error('Start calculation', 'Please give this calculation a name. It groups all cases in the dashboard.')
+            self.show_page(0)
+            self.analysis_name.setFocus()
+            return
         if not self._settings_ready('Start calculation'):
             return
         problem = self.editor.set_assessments(self.n0_check.isChecked(), self.n1_check.isChecked(),
@@ -12665,7 +12753,7 @@ def obtain_case_request(app, records, candidates, period, logger, qds_info=None,
     except OutageAssessmentError:
         latest = None
     unsaved = latest is None or any(latest.get(name) != config.get(name)
-                                    for name in ("cases", "background", "rules", "settings")) or (
+                                    for name in ("cases", "background", "rules", "settings", "analysis_name")) or (
         normalized_log_level(latest.get("log_level")) != normalized_log_level(config.get("log_level")))
     config = dict(config)
     stamp = config.pop("evaluate_stamp", None)

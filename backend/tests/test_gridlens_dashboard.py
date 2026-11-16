@@ -480,3 +480,176 @@ def test_import_owner_is_held_until_original_evaluation_finishes(native, monkeyp
     bridge.run_assessment(app, path)
     with imports.serialized(path):
         pass
+
+
+@pytest.mark.parametrize('form', ['pair', 'direct', 'index', 'axis_index', 'legacy', 'default_axis'])
+def test_contingency_identity_supports_documented_axis_and_object_index(form):
+    fault = PFObject('Fault A', 'ComOutage')
+
+    class NativeAxis:
+        def GetObjectValue(self, row, *column):
+            assert row == 4
+            if form == 'legacy' and column:
+                raise TypeError('only one argument')
+            if form == 'default_axis' and column:
+                return 2, None
+            if form in ('legacy', 'default_axis', 'pair'):
+                return 0, fault
+            if form == 'direct':
+                return fault
+            return (0, -7) if form == 'index' else (3, None)
+
+        def GetValue(self, row, column):
+            assert column == -1  # Never treat a monitored loading value as the row axis.
+            return 0, -7
+
+        def GetObj(self, index):
+            assert index == -7  # No row-number, sign or off-by-one guesses.
+            return fault
+
+    found, _diagnostic = gl.contingency_row_object(NativeAxis(), 4)
+    assert found is fault
+
+
+def test_calculation_name_groups_cases_and_survives_archive(native, monkeypatch, tmp_path):
+    app, path = native
+    original = gl.run_case_manager
+    name = 'Winterplanung – Nord'
+
+    def gui(*args, **kwargs):
+        config = original(*args, **kwargs)
+        config['analysis_name'] = name
+        return config
+
+    monkeypatch.setattr(gl, 'run_case_manager', gui)
+    first = bridge.run_assessment(app, path)
+    name = 'Sommerplanung – Süd'
+    second = bridge.run_assessment(app, path)
+    with closing(ScenarioStore(path)) as store:
+        assert raw.assessment(store.db, first['assessment_id'])['name'] == 'Winterplanung – Nord'
+        assert raw.assessment(store.db, second['assessment_id'])['name'] == 'Sommerplanung – Süd'
+        from app.simulation import across, compare
+        assert {item['name'] for item in across.analyses(store.db)} == {'Winterplanung – Nord', 'Sommerplanung – Süd'}
+        assert compare._analysis(store.db, first['assessment_id'])['name'] == 'Winterplanung – Nord'
+        assert raw.assessment(store.db, first['assessment_id'])['cases'][0]['case_id'] == 'C1'
+    from app.archive.parquet import export_analysis, import_analysis
+    archive = export_analysis(path, first['assessment_id'], tmp_path / 'archives')
+    restored = tmp_path / 'named.sqlite3'
+    import_analysis(archive, restored)
+    with closing(ScenarioStore(restored)) as store:
+        assert raw.assessment(store.db, first['assessment_id'])['name'] == 'Winterplanung – Nord'
+
+
+def test_unresolved_contingency_rows_are_retained_without_inventing_identity(native, monkeypatch, tmp_path):
+    app, path = native
+    fault = PFObject('Known fault', 'ComOutage')
+    fault_key = gl.object_key(fault)
+    sweep = Sweep([Sub(PERIOD_START, [fault, None], [(0, 110.0), (0, 145.0)])])
+
+    def calculate(*args, **kwargs):
+        return {'C1': {'status': 'CALCULATED', 'kind': gl.N1_REFERENCE,
+                       'elements_of': {fault_key: set()},
+                       'reference': {'kept': sweep, 'window_times': [PERIOD_START]}, 'scenario': None}}
+
+    original = gl.run_case_manager
+
+    def gui(*args, **kwargs):
+        config = original(*args, **kwargs)
+        config['analysis_name'] = 'Identity diagnostics'
+        config['assessments'] = ['n-0', gl.N1_REFERENCE]
+        return config
+
+    monkeypatch.setattr(gl, 'run_case_manager', gui)
+    monkeypatch.setattr(gl, 'calculate_n1', calculate)
+    outcome = bridge.run_assessment(app, path)
+    with closing(ScenarioStore(path)) as store:
+        detail = raw.assessment(store.db, outcome['assessment_id'])
+        native = next(row for row in detail['results'] if row['kind'] == 'n-1')
+        assert native['status'] == 'incomplete' and native['metadata']['unresolved_rows'] == 1
+        assert len(raw.contingencies(store.db, native['id'])) == 1
+        [row] = store.db.execute('SELECT * FROM gl_unresolved_rows WHERE result_id=?', (native['id'],))
+        assert row['row_index'] == 1 and json.loads(row['cells'])[0]['value'] == 145.0
+        assert json.loads(row['diagnostic'])
+        assert store.db.execute('SELECT COUNT(*) FROM gl_values WHERE result_id=?', (native['id'],)).fetchone()[0] == 1
+        assert detail['evaluations']['C1']['n1']['status'] == 'NOT EVALUATED'
+        assert len(store.overview()['scenarios']) == 1
+    monkeypatch.setattr(settings, 'ANALYSIS_DB_PATH', str(path))
+    monkeypatch.setattr(settings, 'ANALYSIS_MODE', 'sqlite')
+    from app.main import app as web
+    with TestClient(web) as client:
+        body = client.get('/api/simulation/gridlens/results/' + native['id'] + '/unresolved-rows').json()
+        assert body['total'] == 1 and body['rows'][0]['cells'][0]['value'] == 145.0
+    from app.archive.parquet import export_analysis, import_analysis
+    archive = export_analysis(path, outcome['assessment_id'], tmp_path / 'archives')
+    restored = tmp_path / 'unresolved.sqlite3'
+    import_analysis(archive, restored)
+    with closing(ScenarioStore(restored)) as store:
+        assert store.db.execute('SELECT COUNT(*) FROM gl_unresolved_rows').fetchone()[0] == 1
+
+
+def test_calculation_name_validation_accepts_older_configs_and_rejects_invalid_names():
+    config = gl.empty_case_config()
+    config.pop('analysis_name')
+    assert not gl.validate_case_config(config)
+    for value in (None, 14, 'X' * 121):
+        config['analysis_name'] = value
+        assert any('calculation name' in problem for problem in gl.validate_case_config(config))
+    config['analysis_name'] = 'Netzplanung – Woche 42'
+    assert not gl.validate_case_config(config)
+
+
+def test_identity_resolution_rejects_monitored_equipment_and_retains_diagnostics():
+    owner = PFObject('Line A', 'ElmLne')
+    axis = type('Axis', (), {'GetObjectValue': lambda *args: (0, owner),
+                            'GetValue': lambda *args: (0, 90.0), 'GetObj': lambda *args: owner})()
+    found, diagnostics = gl.contingency_row_object(axis, 0)
+    assert found is None
+    assert any(item.get('class') == 'ElmLne' for item in diagnostics)
+
+
+def test_indexed_contingency_identity_is_shared_by_import_and_original_evaluator(native, monkeypatch):
+    app, path = native
+    fault = PFObject('Indexed fault', 'ComOutage')
+    fault_key = gl.object_key(fault)
+
+    class IndexedSub(Sub):
+        def GetObjectValue(self, row, column=-1):
+            return 0, -row - 1
+
+        def GetObj(self, index):
+            assert index < 0
+            return self.faults[-index - 1]
+
+    sweep = Sweep([IndexedSub(PERIOD_START, [fault], [(0, 110.0)])])
+    original = gl.run_case_manager
+
+    def gui(*args, **kwargs):
+        config = original(*args, **kwargs)
+        config['analysis_name'] = 'Indexed native result'
+        config['assessments'] = ['n-0', gl.N1_REFERENCE]
+        return config
+
+    monkeypatch.setattr(gl, 'run_case_manager', gui)
+    monkeypatch.setattr(gl, 'calculate_n1', lambda *a, **k: {
+        'C1': {'status': 'CALCULATED', 'kind': gl.N1_REFERENCE, 'elements_of': {fault_key: set()},
+               'reference': {'kept': sweep, 'window_times': [PERIOD_START]}, 'scenario': None}})
+    outcome = bridge.run_assessment(app, path)
+    with closing(ScenarioStore(path)) as store:
+        detail = raw.assessment(store.db, outcome['assessment_id'])
+        result = next(row for row in detail['results'] if row['kind'] == 'n-1')
+        assert result['status'] == 'completed' and result['metadata']['unresolved_rows'] == 0
+        assert raw.contingencies(store.db, result['id'])[0]['path'] == fault_key
+        assert detail['evaluations']['C1']['n1']['status'] == 'EVALUATED'
+
+
+def test_case_manager_requires_name_before_starting_calculation():
+    from types import SimpleNamespace
+    events = []
+    dialog = object.__new__(gl.CaseManagerDialog)
+    dialog.analysis_name = SimpleNamespace(text=lambda: '   ', setFocus=lambda: events.append('focus'))
+    dialog.finish_editing = lambda: None
+    dialog.error = lambda *args: events.append('error')
+    dialog.show_page = lambda *args: events.append('cases page')
+    dialog._settings_ready = lambda *a: pytest.fail('Must not start calculation without its name')
+    dialog.start()
+    assert events == ['error', 'cases page', 'focus']

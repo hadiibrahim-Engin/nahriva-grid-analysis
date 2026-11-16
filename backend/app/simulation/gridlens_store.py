@@ -8,7 +8,7 @@ from app.simulation.states import INVALID_OR_MISSING
 
 # Version of the result contract written by the bridge (gl_assessments.result_schema_version). 1: imports made
 # before analyses, master data and import status were recorded; 2: with them.
-RESULT_SCHEMA_VERSION = 3
+RESULT_SCHEMA_VERSION = 4
 
 TABLES = """
 -- One analysis: one import of one PowerFactory run. status: importing, complete or failed ('unknown' for an import
@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS gl_results (
     status TEXT NOT NULL, reason TEXT NOT NULL, metadata TEXT NOT NULL, analysis_run_id TEXT
 );
 CREATE INDEX IF NOT EXISTS gl_results_assessment ON gl_results(assessment_id, case_id, kind);
+-- Rows whose native identity could not be resolved. Never used as an identified contingency or inferred OK.
+CREATE TABLE IF NOT EXISTS gl_unresolved_rows (
+    result_id TEXT NOT NULL REFERENCES gl_results(id), t INTEGER NOT NULL, row_index INTEGER NOT NULL,
+    diagnostic TEXT NOT NULL, cells TEXT NOT NULL, PRIMARY KEY(result_id,t,row_index)
+);
 CREATE TABLE IF NOT EXISTS gl_columns (
     result_id TEXT NOT NULL REFERENCES gl_results(id), column_id INTEGER NOT NULL,
     element_id TEXT NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL, class_name TEXT NOT NULL,
@@ -110,8 +115,14 @@ def decode_row(row, fields=()):
     return result
 
 
+def named_assessment(result):
+    if result is not None:
+        result['name'] = result['configuration'].get('analysis_name') or '{} - {}'.format(result['project'], result['native_run_id'])
+    return result
+
+
 def assessments(db):
-    return [decode_row(row, ('settings', 'configuration')) for row in db.execute(
+    return [named_assessment(decode_row(row, ('settings', 'configuration'))) for row in db.execute(
         'SELECT * FROM gl_assessments ORDER BY created_at DESC, id DESC')]
 
 
@@ -131,7 +142,7 @@ def assessment(db, identifier, summary=False):
                 evaluation['episodes'] = episodes[:100]
         result['results'] = [decode_row(row, ('metadata',)) for row in db.execute(
             'SELECT * FROM gl_results WHERE assessment_id=? ORDER BY rowid', (identifier,))]
-    return result
+    return named_assessment(result)
 
 
 def result(db, identifier):

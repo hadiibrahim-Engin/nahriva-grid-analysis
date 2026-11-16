@@ -17,6 +17,10 @@ function SweepExtremes({ result }: { result: NativeResult }) {
     return () => controller.abort();
   }, [result.id, page]);
   return <details className="ab-sub"><summary>{result.kind} · {result.status}{result.reason ? ` · ${result.reason}` : ''}</summary>
+    {Number(result.metadata.unresolved_rows) > 0 && <p role="alert">
+      {Number(result.metadata.unresolved_rows)} rows could not be assigned to a contingency. The result is incomplete.
+      {' '}<a href={`/api/simulation/gridlens/results/${encodeURIComponent(result.id)}/unresolved-rows`} target="_blank" rel="noreferrer">Inspect retained rows and diagnostics</a>
+    </p>}
     {error ? <p role="alert">{error}</p> : !data ? <p role="status">Loading extremes …</p> : <>
       <p>{data.total} monitored quantities · ranked by limit exceedance. {data.total === 0 && 'No recorded quantities.'}</p>
       <div className="overflow-x-auto"><table className="ab-table"><thead><tr>
@@ -59,7 +63,7 @@ export default function NativeAssessment({ refreshKey }: { refreshKey: number })
   if (state.error) return <p role="alert">{state.error}</p>;
   const detail = state.detail;
   if (!detail) return null;
-  return <SectionCard title={`PowerFactory assessment · ${detail.engine_version}`} summary="Original outage assessment findings">
+  return <SectionCard title={`${detail.name} · PowerFactory assessment ${detail.engine_version}`} summary="Original outage assessment findings">
     <a className="ab-chip" href={`/api/simulation/gridlens/assessments/${encodeURIComponent(detail.id)}`} download={`assessment-${detail.id}.json`}>Download full source findings</a>
     <p className="ab-sub">Original assessment of the saved run and network scope. Dashboard limits and filters below apply to the dashboard analysis.</p>
     {[...(detail.evaluations.REF ? [{ case_id: 'REF', name: 'Reference' }] : []), ...detail.cases].map((item) => {

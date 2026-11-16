@@ -16,7 +16,7 @@ const when = (iso: string | null) => {
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : '–';
 };
 const describe = (a: AnalysisInfo) =>
-  a.id === UNASSIGNED ? 'Earlier results' : `${when(a.created_at)}${a.native_run_id ? ` · run ${a.native_run_id}` : ''}`;
+  a.id === UNASSIGNED ? 'Earlier results' : `${a.name ? `${a.name} · ` : ''}${when(a.created_at)}${a.native_run_id ? ` · run ${a.native_run_id}` : ''}`;
 const STATE_LABEL: Record<string, string> = { value: '', outaged: 'switched off', only_a: 'only in A', only_b: 'only in B' };
 const CHECK_MARK: Record<CompareCheck['status'], string> = { ok: '✓', warning: '⚠', info: 'ℹ' };
 
@@ -49,7 +49,7 @@ export default function CompareDialog({ refreshKey }: { refreshKey: number }) {
     const needle = query.trim().toLowerCase();
     return (analyses ?? []).filter((a) =>
       (status === 'all' || a.status === status)
-      && (!needle || [a.project, a.study_case, a.native_run_id, a.engine_version, a.created_at, a.id]
+      && (!needle || [a.name, a.project, a.study_case, a.native_run_id, a.engine_version, a.created_at, a.id]
         .some((v) => v?.toLowerCase().includes(needle))));
   }, [analyses, query, status]);
   const statuses = useMemo(() => [...new Set((analyses ?? []).map((a) => a.status))].sort(), [analyses]);
