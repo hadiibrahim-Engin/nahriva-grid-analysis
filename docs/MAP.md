@@ -1,5 +1,34 @@
 # Network map (from Figma)
 
+## Map colouring, focus mode and loading another map
+
+On `/network`, **Auslastung** colours the equipment directly on the drawing using loading bands and the voltage
+band. **Kosten** colours generators continuously by signed hourly Redispatch cost: larger amounts have stronger
+colour, positive costs are red, negative costs turquoise, missing costs grey. The numeric scale is shared by all
+scenarios at the selected hour; lines without cost data are grey in cost mode. The separate time heatmap is
+available under **Zeitvergleich**.
+
+**Karten-Vollmodus** hides the equipment inspector and lower analysis sections so the drawing fills the available
+space. Scenario selection, colouring and the clock remain visible. Exit with the same button or Escape. It also
+requests browser fullscreen where supported; the map-only layout works without browser fullscreen. **Details
+ausblenden** can hide the right inspector independently.
+
+Open **Karten hinzufügen / Speicherort** below the map controls to see the actual folder of the current database.
+Copy another SVG into it (for example `nord.svg`, `sued.svg`), click **Karten neu laden**, then choose it in **Karte**.
+Reload also refreshes an overwritten drawing. No server restart is needed. `?map=nord` keeps the map in a link;
+`?layer=cost&focus=map` opens cost colouring in map-only mode.
+
+The **Netzkarte** link opens `/network`, a standalone map page with an inspector across all scenarios, exact UTC
+time navigation, a scenario/time heatmap and generator Redispatch costs. A map click selects equipment without
+leaving the page. Heatmap clicks choose the scenario and the actual peak timestamp; the slider, previous/next-hour
+buttons and date/time field update the map, inspector and costs together. Large heatmap windows retain peaks;
+the slider uses the complete clock. Missing measurements remain missing. See [REDISPATCH.md](REDISPATCH.md).
+
+Generator symbols can be grouped in **Generators**, one child group with an id per PowerFactory generator, using
+the same name/grid/path matching as **Elements**. Alternatively put them directly in **Elements**. Their recorded
+active power is shown in MW; imported costs are labelled per generator and hour. Generators without a matching
+SVG layer remain available in the table and selector. The IEEE39 example now includes ten source symbols.
+
 The dashboard colours the operator's own network map with the results of one scenario at one time: branches
 (lines, transformers) by loading, busbars by voltage, switched-off equipment dashed. The map is drawn in Figma and
 exported as SVG; the dashboard never contacts Figma.
@@ -21,8 +50,9 @@ flowchart LR
 2. Name each layer like the PowerFactory element: its name (`Line 01 - 02`), or, when the same name exists in
    several grids, the grid and the name (`Area West Line 01 - 02`), or its full path. Case, spaces and punctuation
    do not matter (`Line_01_-_02` matches `Line 01 - 02`).
-3. Everything else (background, labels, generators, legends) stays outside `Elements`; it is drawn but not
-   coloured. Keep labels outside the equipment layers, otherwise they are coloured too.
+3. Background, free labels and legends stay outside `Elements`; they are drawn but not coloured. Generator
+   symbols can instead use one named child group each under `Generators`. Keep free labels outside the equipment
+   layers, otherwise they are coloured too.
 4. Export the frame as **SVG** with **Include id attribute** and save it as `maps/<name>.svg` in the folder of the
    results database (or in the folder named by `OA_MAP_DIR`). Several maps are offered in a list.
 

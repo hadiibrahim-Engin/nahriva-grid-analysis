@@ -11,6 +11,7 @@ from app.analysis import schema
 from app.analysis.series import insert_values
 from app.simulation import values
 from app.simulation.gridlens_store import TABLES as GRIDLENS_TABLES
+from app.simulation.redispatch import TABLES as REDISPATCH_TABLES
 
 
 def now():
@@ -212,7 +213,7 @@ VIEWS = """
 
 # PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
 # database is brought up to date once when it is next opened.
-LAYOUT_VERSION = 17
+LAYOUT_VERSION = 18
 
 # Columns added to tables of earlier layouts: (table, column, declaration). New files get them from the CREATE.
 ADDED_COLUMNS = (
@@ -279,7 +280,7 @@ class ScenarioStore:
         """Create what is missing and bring an earlier layout up to date; runs once per database file."""
         self.db.execute("PRAGMA journal_mode=WAL")
         schema.apply(self.db)
-        self.db.executescript(PF_TABLES + values.TABLE + GRIDLENS_TABLES)
+        self.db.executescript(PF_TABLES + values.TABLE + GRIDLENS_TABLES + REDISPATCH_TABLES)
         for table, column, declaration in ADDED_COLUMNS:
             if column not in {row[1] for row in self.db.execute("PRAGMA table_info(" + table + ")")}:
                 self.db.execute("ALTER TABLE {} ADD COLUMN {} {}".format(table, column, declaration))

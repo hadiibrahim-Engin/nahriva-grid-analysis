@@ -38,8 +38,8 @@ def api(database, monkeypatch):
 def test_the_example_map_has_one_layer_per_element_of_the_example_network():
     model = ieee39.Ieee39()
     layers = {maps.key(layer) for layer in maps.element_layers(ieee39.map_svg())}
-    assert layers == {maps.key(e.loc_name) for e in model.branches + model.buses}
-    assert len(layers) == 34 + 12 + 39
+    assert layers == {maps.key(e.loc_name) for e in model.branches + model.buses + model.sources}
+    assert len(layers) == 34 + 12 + 39 + 10
 
 
 def test_layers_match_by_name_or_grid_and_name_and_leftovers_are_reported(database, monkeypatch):

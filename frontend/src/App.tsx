@@ -1,9 +1,10 @@
-import { Suspense } from 'react';
+import { lazy, Suspense } from 'react';
 import ErrorBoundary from './components/ErrorBoundary';
 import AnalysisProvider from './components/AnalysisProvider';
 import GridFilterProvider from './components/GridFilterProvider';
-// The only page, so it is part of the first download: loaded lazily it was requested only after the entry had run.
-import DashboardPage from './pages/DashboardPage';
+// Each workspace loads its own page; the standalone map does not download the dashboard's chart gallery.
+const DashboardPage = lazy(()=>import('./pages/DashboardPage'));
+const NetworkPage = lazy(()=>import('./pages/NetworkPage'));
 export default function App() {
-  return <Suspense fallback={<div className="min-h-screen bg-[var(--grid-bg)] text-[var(--grid-muted)] p-8">Loading…</div>}><ErrorBoundary label="Outage Assessment"><AnalysisProvider><GridFilterProvider><DashboardPage /></GridFilterProvider></AnalysisProvider></ErrorBoundary></Suspense>;
+  return <Suspense fallback={<div className="min-h-screen bg-[var(--grid-bg)] text-[var(--grid-muted)] p-8">Loading…</div>}><ErrorBoundary label="Outage Assessment"><AnalysisProvider><GridFilterProvider>{window.location.pathname==='/network' ? <NetworkPage/> : <DashboardPage />}</GridFilterProvider></AnalysisProvider></ErrorBoundary></Suspense>;
 }

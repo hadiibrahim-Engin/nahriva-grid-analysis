@@ -52,6 +52,8 @@ TABLES = (
     ("cases", "gl_cases", "assessment_id = :analysis"),
     ("evaluations", "gl_evaluations", "assessment_id = :analysis"),
     ("scenarios", "pf_scenarios", "id IN (SELECT id FROM _scenarios)"),
+    ("redispatch_imports", "rd_imports", "analysis_id = :analysis"),
+    ("redispatch_hours", "rd_hours", "import_id IN (SELECT id FROM rd_imports WHERE analysis_id = :analysis)"),
     ("scenario_runs", "pf_scenario_runs", "scenario_id IN (SELECT id FROM _scenarios)"),
     ("scenario_provenance", "pf_scenario_provenance", "scenario_id IN (SELECT id FROM _scenarios)"),
     ("runs", "analysis_runs", "id IN (SELECT id FROM _runs)"),
@@ -173,6 +175,9 @@ def export_analysis(database, analysis_id, out_dir, on_file=None, context=None):
         files = []
         try:
             for name, table, where in TABLES:
+                if table in ('rd_imports', 'rd_hours') and not db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                    continue  # read-only export of a pre-layout-18 database
                 schema = _schema(pa, db, table)
                 path = partial / f"{name}.parquet"
                 rows = _write(pa, pq, path, schema, db.execute(f"SELECT * FROM {table} WHERE {where}",
@@ -303,7 +308,11 @@ def verify_archive(path):
                     if columns != entry.get("columns"):
                         problems.append(f"{name} schema differs from manifest")
         optional_v1 = {"pf_catalog", "pf_jobs", "pf_scenario_cells", "pf_lodf", "pf_lodf_undefined"}
-        required = {table for _, table, _ in TABLES} - {"gl_evaluations", "gl_unresolved_rows"}
+        required = {table for _, table, _ in TABLES} - {"gl_evaluations", "gl_unresolved_rows", "rd_imports", "rd_hours"}
+        source = manifest.get('source')
+        layout = source.get('layout_version') if isinstance(source, dict) else None
+        if isinstance(layout, int) and layout >= 18:
+            required |= {'rd_imports', 'rd_hours'}
         if manifest["format_version"] == 1:
             required -= optional_v1
         if required - tables:
@@ -392,6 +401,21 @@ def import_analysis(archive, database, on_file=None):
         if db.execute("SELECT 1 FROM pf_scenarios WHERE analysis_id IS NOT ? LIMIT 1",
                       (manifest["analysis_id"],)).fetchone():
             raise ArchiveError("Archive contains scenarios from another analysis.")
+        if db.execute("SELECT 1 FROM rd_hours h JOIN rd_imports i ON i.id=h.import_id "
+                      "LEFT JOIN pf_scenarios s ON s.id=h.scenario_id "
+                      "LEFT JOIN gl_elements e ON e.assessment_id=i.analysis_id AND e.element_id=h.element_id "
+                      "WHERE s.analysis_id IS NOT i.analysis_id OR e.class_name IS NULL "
+                      "OR e.class_name NOT IN ('ElmSym','ElmGenstat','ElmPvsys') LIMIT 1").fetchone():
+            raise ArchiveError('Archive contains foreign Redispatch scenarios or generators.')
+        from decimal import Decimal, InvalidOperation
+        from app.simulation.redispatch import _decimal, product
+        try:
+            for energy, price, cost in db.execute('SELECT energy_mwh,price_eur_per_mwh,cost_eur FROM rd_hours'):
+                e, p, c = _decimal(energy), _decimal(price), Decimal(cost)
+                if not c.is_finite() or product(e,p) != c:
+                    raise ValueError()
+        except (InvalidOperation, ValueError):
+            raise ArchiveError('Archive contains invalid Redispatch costs.') from None
         if db.execute("SELECT 1 FROM gl_results WHERE analysis_run_id IS NOT NULL "
                       "AND analysis_run_id NOT IN (SELECT id FROM analysis_runs) LIMIT 1").fetchone():
             raise ArchiveError("Archive has a native result with a missing analysis run.")

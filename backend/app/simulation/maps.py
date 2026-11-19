@@ -75,7 +75,11 @@ def element_layers(svg):
     group = next((node for node in root.iter() if key(node.get("id")) == ELEMENTS_GROUP), None)
     if group is None:
         raise ValueError('The map has no group named "Elements" with the equipment layers.')
-    return [child.get("id") for child in group if child.get("id")]
+    layers = [child.get("id") for child in group if child.get("id")]
+    generators = next((node for node in root.iter() if key(node.get('id')) == 'generators'), None)
+    if generators is not None and generators is not group:
+        layers.extend(child.get('id') for child in generators if child.get('id'))
+    return layers
 
 
 def _elements(db, analysis):
@@ -144,7 +148,7 @@ def _match(db, name, analysis):
 
 
 _LAYOUT_CACHE = TTLCache(max_entries=16, ttl_seconds=3600)
-METRICS = ("loading", "voltage")
+METRICS = ("loading", "voltage", "active_power")
 
 
 def _layout(store, matched, run_id, analysis):
@@ -155,7 +159,7 @@ def _layout(store, matched, run_id, analysis):
                   for metric in METRICS]
         rows = []
         for element_id, *_rest in matched["elements"]:
-            metric = 0 if element_id in limits[0] else 1 if element_id in limits[1] else None
+            metric = next((i for i, entries in enumerate(limits) if element_id in entries), None)
             rows.append((element_id, metric, *(limits[metric][element_id] if metric is not None else (None, None))))
         return rows
     key_ = (store.path, matched["map"], id(matched), run_id)

@@ -661,6 +661,7 @@ export default function DashboardPage() {
           <small>{workspaceMeta.description}</small>
         </div>
         <div className="dashboard-topbar__actions">
+          <a className="ab-chip" href={`/network${window.location.search}`}>Netzkarte ↗</a>
           <div role="group" aria-label="Expand or collapse dashboard sections" className="flex items-center gap-1">
             <button type="button" className="ab-chip" onClick={() => setAllSectionsOpen(false)} title="Collapse all cards">Collapse</button>
             <button type="button" className="ab-chip" onClick={() => setAllSectionsOpen(true)} title="Expand all cards">Expand</button>

@@ -6,13 +6,17 @@ The results live in **one SQLite file and the folder of the same name with `.val
 import; the folder holds the raw QDS values, one immutable Parquet file per run (`pf_run_values` names it, decision
 E2, see [STORAGE.md](STORAGE.md)). Both belong together: copy, back up and delete them together. Runs imported
 before layout 14, and databases restored by older releases, keep their values in `analysis_values`; the
-dashboard reads both. New archive restorations retain Parquet. The PowerFactory script is the only writer; the dashboard and any external tool only read.
+dashboard reads both. New archive restorations retain Parquet. PowerFactory writes native results; the local
+dashboard can additionally import explicit Redispatch deliveries through the same serialized write lock.
 The SQLite file uses WAL mode, so reading never blocks the script and the script never blocks a reader.
 
-Layout version: **17** (`PRAGMA user_version`; results schema 2 in `schema_migrations`). The tables are defined in
+Layout version: **18** (`PRAGMA user_version`; results schema 2 in `schema_migrations`). The tables are defined in
 `backend/app/analysis/migrations/002_analysis.sql` (results), `backend/app/simulation/store.py` (PowerFactory bridge,
 summaries, views) and `backend/app/simulation/gridlens_store.py` (analyses, master data, native results). An older
-file is brought up to date once when it is opened.
+file is brought up to date once when it is opened. Layout 18 adds `rd_imports` and `rd_hours`, defined in
+`backend/app/simulation/redispatch.py`: immutable delivery revisions and supplied hourly MWh, EUR/MWh and exact
+signed costs. These are distinct from native power-flow measurements and included in analysis archives.
+The import contract is described in [REDISPATCH.md](REDISPATCH.md).
 
 ## Overview
 

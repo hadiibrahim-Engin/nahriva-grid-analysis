@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, ConfigDict
 from app.analysis.bootstrap import get_repository, select_database
-from app.simulation import across, areas, gridlens_store, compare, data, grids, inventory, maps, settings, states, timepoint
+from app.simulation import across, areas, gridlens_store, compare, data, grids, inventory, maps, network, redispatch, settings, states, timepoint
 from app.simulation.store import ScenarioStore, catalog_signature, now
 
 router = APIRouter(prefix="/api/simulation", tags=["PowerFactory scenarios"])
@@ -103,6 +103,45 @@ def database_contents(db=Depends(store)):
 def state_catalogue():
     """Every result state the API reports, with its meaning (versioned)."""
     return states.catalogue()
+
+
+@router.get('/network/timeline')
+def network_timeline(analysis: str | None = Query(None, max_length=200), element: str | None = Query(None, max_length=200),
+                     metric: str = Query('loading', pattern='^(loading|voltage|active_power|redispatch)$'),
+                     points: int = Query(180, ge=12, le=500), start: int | None = None, end: int | None = None,
+                     db=Depends(store)):
+    if start is not None and end is not None and end < start:
+        raise HTTPException(422, 'The range ends before it starts.')
+    if metric == 'active_power' and element is None:
+        raise HTTPException(422, 'Select a generator for active power.')
+    return JSONResponse(network.timeline(db, analysis, element, metric, points, start, end))
+
+
+@router.get('/network/at-time')
+def network_at_time(t: int, analysis: str | None = Query(None, max_length=200),
+                    element: str | None = Query(None, max_length=200), grid: str | None = Query(None, max_length=200),
+                    kv: float | None = None, db=Depends(store)):
+    return JSONResponse(network.at_time(db, analysis, t, element, grid, kv))
+
+
+class RedispatchImport(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    analysis: str | None = Field(None, max_length=200)
+    source: str = Field(min_length=1, max_length=200)
+    quantity_kind: str = Field(pattern='^(requested|planned|delivered)$')
+    csv: str = Field(min_length=1, max_length=10_000_000)
+
+
+@router.post('/redispatch/import')
+def import_redispatch(body: RedispatchImport, db=Depends(store)):
+    archive_access()
+    from app.simulation.imports import ImportBusy
+    try:
+        return redispatch.import_csv(db, body.analysis, body.source, body.quantity_kind, body.csv)
+    except ImportBusy as exc:
+        raise HTTPException(409, str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
 
 
 @router.get("/capabilities")

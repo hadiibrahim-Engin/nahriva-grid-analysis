@@ -71,6 +71,11 @@ the browser. **Ctrl+C** stops the server.
 
 ## What the dashboard shows
 
+**Netzkarte** opens a dedicated `/network` page: a large interactive SVG map, equipment results across every
+scenario at the same time, a scenario/time heatmap and UTC hour navigation. Generator costs use explicitly
+imported hourly Redispatch MWh × EUR/MWh; missing costs stay unavailable. Import contract and demo:
+[Redispatch](docs/REDISPATCH.md). `scripts/prepare_network_demo.py` creates a separate synthetic live-test dataset.
+
 The standard view is the **summary**: key figures, an assessment per scenario with reasons, the
 profile of the chosen scenario, busbar voltage, a matrix of all equipment (lines and transformers),
 comparison charts, a radar plot and a detail table. A navigation bar follows this reading order.

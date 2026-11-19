@@ -15,7 +15,7 @@ import pytest
 
 from app.analysis.repository import AnalysisRepository
 from app.simulation import values
-from app.simulation.store import ScenarioStore
+from app.simulation.store import ScenarioStore, LAYOUT_VERSION
 from tests.qds_fixture import create_dummy_database
 from tests.stored_values import run_values
 
@@ -113,7 +113,7 @@ def test_layout_14_adds_storage_view_without_changing_values(tmp_path):
         db.execute('DROP VIEW v_run_storage')
         db.execute('PRAGMA user_version=14')
     store = ScenarioStore(path)
-    assert store.db.execute('PRAGMA user_version').fetchone()[0] == 17
+    assert store.db.execute('PRAGMA user_version').fetchone()[0] == LAYOUT_VERSION
     assert store.db.execute('SELECT COUNT(*) FROM v_run_storage').fetchone()[0] == 16
     assert store.db.execute('SELECT COUNT(*) FROM analysis_values').fetchone()[0] == before
     store.close()
@@ -144,7 +144,7 @@ def test_layout_15_adds_original_evaluation_storage_without_inventing_verdicts(t
         db.execute('PRAGMA user_version=15')
     store = ScenarioStore(path)
     try:
-        assert store.db.execute('PRAGMA user_version').fetchone()[0] == 17
+        assert store.db.execute('PRAGMA user_version').fetchone()[0] == LAYOUT_VERSION
         assert store.db.execute('SELECT COUNT(*) FROM gl_evaluations').fetchone()[0] == 0
         assert store.db.execute('SELECT COUNT(*) FROM analysis_values').fetchone()[0] == before
     finally:

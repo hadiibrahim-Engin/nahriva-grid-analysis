@@ -197,6 +197,7 @@ export default memo(function TimePointView({ scenarioId, label, refreshKey, onPi
             title="Show or hide the network map (hidden: nothing of it is loaded)">
             Network map
           </button>
+          <a className="ab-chip" href={`/network${window.location.search}`}>Große Netzkarte ↗</a>
           <RestoreDialog scenarioId={scenarioId} label={label} t={t} />
         </div>
       }

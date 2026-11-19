@@ -307,11 +307,12 @@ def map_svg():
     for number, n in enumerate(GENERATOR_BUSES, start=1):
         x, y = xy(n)
         gy = y + 34 if n not in (37, 38, 30) else y - 34
-        generators.append(f'<path d="M{x} {y}L{x} {gy}" stroke="#94A3B8" stroke-width="2"/>'
+        name = 'External grid %02d' % n if n == SLACK else 'Gen %02d' % n
+        generators.append(f'<g id="{fid(name)}"><path d="M{x} {y}L{x} {gy}" stroke="#94A3B8" stroke-width="2"/>'
                           f'<circle cx="{x}" cy="{gy}" r="12" fill="white" stroke="#94A3B8" stroke-width="2"/>'
-                          f'<text x="{x - 7}" y="{gy + 4}" font-family="Inter" font-size="10" fill="#64748B">G{number}</text>')
+                          f'<text x="{x - 7}" y="{gy + 4}" font-family="Inter" font-size="10" fill="#64748B">G{number}</text></g>')
     return (
-        f'<svg width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" fill="none" '
+        f'<svg width="{WIDTH}" height="{HEIGHT}" viewBox="-40 -40 {WIDTH+80} {HEIGHT+80}" fill="none" '
         'xmlns="http://www.w3.org/2000/svg">\n'
         f'<g id="IEEE_39-bus_transmission_system">\n<rect id="Background" width="{WIDTH}" height="{HEIGHT}" fill="white"/>\n'
         '<g id="Generators">' + "".join(generators) + '</g>\n'

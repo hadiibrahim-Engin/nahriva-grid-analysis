@@ -6,6 +6,8 @@ import { useAnalysis } from '../../hooks/useAnalysis';
 import { useChartTheme } from '../../hooks/useChartTheme';
 import { useGridFilter } from '../../hooks/useGridFilter';
 import { readAcrossColors, type AcrossColors } from '../../util/acrossColors';
+import { readParam, writeParam } from '../../util/shareLink';
+import { costHeatColour, costMagnitude } from '../../util/mapHeat';
 
 interface MapInfo { name: string; bytes: number }
 interface MapMatch {
@@ -23,7 +25,7 @@ interface MapMatch {
 interface MapValues {
   t: number;
   in_window: boolean;
-  m: (0 | 1 | null)[];
+  m: (0 | 1 | 2 | null)[];
   v: (number | null)[];
   r: (number | null)[];
   lo: (number | null)[];
@@ -87,6 +89,7 @@ function colourOf(values: MapValues, i: number, colors: AcrossColors, muted: str
     return v >= l.severe ? colors.bands.severe : v > l.clear ? colors.bands.clear : v > l.overload
       ? colors.bands.light : v >= l.warning ? colors.bands.high : colors.bands.ok;
   }
+  if (values.m[i] === 2) return colors.lodf;
   const lower = values.lo[i] ?? ASSESSMENT.voltageBandPu.lower;
   const upper = values.up[i] ?? ASSESSMENT.voltageBandPu.upper;
   if (v < lower || v > upper) return colors.bands.severe;
@@ -102,8 +105,9 @@ function tooltip(match: MapMatch, values: MapValues | null, i: number): string {
   const r = values.r[i];
   if (v === null) return `${head}\nno valid value`;
   const loading = values.m[i] === 0;
-  const f = (x: number) => (loading ? `${x.toFixed(1)} %` : `${x.toFixed(3)} p.u.`);
-  const d = r === null ? '' : ` (${v - r >= 0 ? '+' : ''}${loading ? `${(v - r).toFixed(1)} pp` : (v - r).toFixed(3)} against REF ${f(r)})`;
+  const power = values.m[i] === 2;
+  const f = (x: number) => (loading ? `${x.toFixed(1)} %` : power ? `${x.toFixed(1)} MW` : `${x.toFixed(3)} p.u.`);
+  const d = r === null ? '' : ` (${v - r >= 0 ? '+' : ''}${loading ? `${(v - r).toFixed(1)} pp` : power ? `${(v-r).toFixed(1)} MW` : (v - r).toFixed(3)} against REF ${f(r)})`;
   return `${head}\n${f(v)}${d}`;
 }
 
@@ -113,17 +117,24 @@ function tooltip(match: MapMatch, values: MapValues | null, i: number): string {
  * asset view. Built for large maps: the drawing is inserted once, a new time only changes colours, and zooming and
  * panning move one GPU layer without rendering React.
  */
-export default function NetworkMap({ scenarioId, t, onPickAsset }: {
+export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElementId, onElementsLoaded, mode='results', costs, costScale }: {
   scenarioId: string;
   t: number;
   onPickAsset?: (elementId: string) => void;
+  selectedElementId?: string | null;
+  onElementsLoaded?: (elements: MapMatch['elements']) => void;
+  mode?: 'results' | 'redispatch';
+  costs?: { element_id: string; cost_eur: number | null }[];
+  costScale?: number;
 }) {
   const { analysis } = useAnalysis();
   const { grid, kv } = useGridFilter();
   const theme = useChartTheme();
   const colors = useMemo(() => readAcrossColors(theme.isLight), [theme.isLight]);
   const [list, setList] = useState<{ folder: string; maps: MapInfo[] } | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string | null>(()=>readParam('map'));
+  const [mapRevision,setMapRevision]=useState(0);
+  const [listError,setListError]=useState('');
   const [map, setMap] = useState<{ key: string; svg: string; match: MapMatch } | null>(null);
   const [loaded, setValues] = useState<{ map: string; data: MapValues } | null>(null);
   const [error, setError] = useState('');
@@ -138,12 +149,14 @@ export default function NetworkMap({ scenarioId, t, onPickAsset }: {
   useEffect(() => {
     const controller = new AbortController();
     api.get<{ folder: string; maps: MapInfo[] }>('/maps', { signal: controller.signal })
-      .then((response) => setList(response.data))
-      .catch(() => { if (!controller.signal.aborted) setList({ folder: '', maps: [] }); });
+      .then((response) => {setList(response.data);setListError('');})
+      .catch(() => { if (!controller.signal.aborted) setListError('Der Kartenordner konnte nicht gelesen werden. Bitte erneut laden.'); });
     return () => controller.abort();
-  }, []);
-  const name = chosen ?? list?.maps[0]?.name ?? null;
-  const mapKey = `${name}|${analysis}`;
+  }, [mapRevision]);
+  const name = list?.maps.some(m=>m.name===chosen)?chosen:list?.maps[0]?.name ?? null;
+  const mapKey = `${name}|${analysis}|${mapRevision}`;
+  const costsById=useMemo(()=>new Map(costs?.map(c=>[c.element_id,c.cost_eur])??[]),[costs]);
+  const maxCost=costScale??costMagnitude(costs?.map(c=>c.cost_eur)??[]);
 
   useEffect(() => {
     if (!name) return;
@@ -167,19 +180,20 @@ export default function NetworkMap({ scenarioId, t, onPickAsset }: {
     if (!name) return;
     const controller = new AbortController();
     api.get<MapValues>(`/maps/${encodeURIComponent(name)}/values`, { signal: controller.signal, params: { scenario: scenarioId, t } })
-      .then((response) => setValues({ map: name, data: response.data }))
+      .then((response) => setValues({ map: mapKey, data: response.data }))
       .catch(() => { if (!controller.signal.aborted) setError('The values of this time could not be loaded.'); });
     return () => controller.abort();
-  }, [name, scenarioId, t]);
+  }, [name, scenarioId, t, mapKey]);
 
   const shownMap = map?.key === mapKey ? map : null;
   // Values of another map have another order; the previous time of the same map is kept while the next loads.
-  const values = loaded?.map === name ? loaded.data : null;
+  const values = loaded?.map === mapKey ? loaded.data : null;
   const drawing = useMemo(() => {
     if (!shownMap) return null;
     const svg = sanitize(shownMap.svg);
     return svg ? { svg, paints: prepare(svg, shownMap.match.layers, shownMap.match.elements.length) } : 'invalid' as const;
   }, [shownMap]);
+  useEffect(()=>{ if(shownMap) onElementsLoaded?.(shownMap.match.elements); },[shownMap,onElementsLoaded]);
 
   // Moves the drawing: one transform on one element, at most once per frame. translate3d keeps the drawing on its
   // own compositor layer, so moving costs no repaint and the browser redraws it sharp off the main thread after a
@@ -225,14 +239,48 @@ export default function NetworkMap({ scenarioId, t, onPickAsset }: {
       // Outside the header's grid or voltage-level filter: drawn grey and faint, so the rest stands out.
       const [, , elementGrid, elementKv] = elements[i] ?? [];
       const outside = (grid !== null && elementGrid !== grid) || (kv !== null && elementKv !== kv);
-      const colour = outside ? theme.mutedText : colourOf(values, i, colors, theme.mutedText);
+      const cost = costsById.get(elements[i]?.[0]);
+      const isPlant=['ElmSym','ElmGenstat','ElmPvsys'].includes(elements[i]?.[4]??'');
+      const colour = outside ? theme.mutedText : mode==='redispatch'
+        ? isPlant ? costHeatColour(cost,maxCost,colors.bands.severe,colors.neg,theme.mutedText) : theme.mutedText
+        : colourOf(values, i, colors, theme.mutedText);
       const dashed = off.has(i) ? '6 5' : '';
-      const faint = outside ? '0.18' : values.m[i] === null || (values.v[i] === null && !off.has(i)) ? '0.45' : '';
+      const faint = outside ? '0.18' : mode==='redispatch' ? isPlant&&cost!=null?'1':'0.35'
+        : values.m[i] === null || (values.v[i] === null && !off.has(i)) ? '0.45' : '';
       for (const shape of paint.strokes) { shape.style.stroke = colour; shape.style.strokeDasharray = dashed; }
       for (const shape of paint.fills) shape.style.fill = colour;
       for (const shape of paint.all) shape.style.opacity = faint;
     });
-  }, [drawing, values, colors, theme.mutedText, grid, kv, shownMap]);
+  }, [drawing, values, colors, theme.mutedText, grid, kv, shownMap,mode,costsById,maxCost]);
+
+  useEffect(()=>{
+    if(!drawing||drawing==='invalid'||!shownMap)return;
+    drawing.svg.querySelectorAll('[data-selected]').forEach(node=>node.removeAttribute('data-selected'));
+    const i=shownMap.match.elements.findIndex(e=>e[0]===selectedElementId);
+    if(i>=0)drawing.svg.querySelectorAll(`[data-index="${i}"]`).forEach(node=>node.setAttribute('data-selected','true'));
+  },[drawing,shownMap,selectedElementId]);
+
+  useEffect(()=>{
+    if(!drawing||drawing==='invalid'||!shownMap)return;
+    drawing.svg.querySelector('[data-cost-labels]')?.remove();
+    if(!costs)return;
+    const group=document.createElementNS('http://www.w3.org/2000/svg','g');group.setAttribute('data-cost-labels','true');
+    for(const item of costs){
+      const i=shownMap.match.elements.findIndex(e=>e[0]===item.element_id);
+      const node=drawing.svg.querySelector<SVGGraphicsElement>(`[data-index="${i}"]`);
+      if(!node)continue;
+      const box=node.getBBox();const label=document.createElementNS('http://www.w3.org/2000/svg','text');
+      const rootMatrix=drawing.svg.getCTM();const matrix=node.getCTM();
+      const point=new DOMPoint(box.x+box.width/2,box.y+box.height);
+      const position=rootMatrix&&matrix?point.matrixTransform(rootMatrix.inverse().multiply(matrix)):point;
+      label.setAttribute('x',String(position.x));label.setAttribute('y',String(position.y+15));
+      label.setAttribute('text-anchor','middle');label.setAttribute('class','ab-map__cost-label');label.setAttribute('data-index',String(i));
+      label.textContent=item.cost_eur===null?'RD —':`${item.cost_eur.toLocaleString('de-DE',{maximumFractionDigits:2})} €`;
+      group.append(label);
+    }
+    drawing.svg.append(group);
+    return ()=>group.remove();
+  },[drawing,shownMap,costs]);
 
   // Wheel and trackpad: smooth zoom around the pointer (a pinch arrives as wheel with ctrlKey, in small steps).
   useEffect(() => {
@@ -260,7 +308,9 @@ export default function NetworkMap({ scenarioId, t, onPickAsset }: {
     const i = event ? indexAt(event.target) : null;
     const area = frame.current?.getBoundingClientRect();
     if (i === null || !shownMap || !area || !event) { box.hidden = true; return; }
-    const text = tooltip(shownMap.match, values, i);
+    const cost=costsById.get(shownMap.match.elements[i][0]);
+    const costText=mode==='redispatch'?'\nRedispatch: '+(cost==null?'keine Kosten für diese Stunde':cost.toLocaleString('de-DE',{style:'currency',currency:'EUR'})+' / UTC-Stunde'):'';
+    const text = tooltip(shownMap.match, values, i)+costText;
     if (box.textContent !== text) box.textContent = text;
     box.style.transform = `translate(${event.clientX - area.left + 14}px, ${event.clientY - area.top + 14}px)`;
     box.hidden = false;
@@ -295,8 +345,9 @@ export default function NetworkMap({ scenarioId, t, onPickAsset }: {
     pointers.current.delete(event.pointerId);
     const moved = gesture.current?.moved;
     if (pointers.current.size === 0) gesture.current = null;
-    if (moved || !shownMap) return;
-    const i = indexAt(event.target);
+    if (event.type === 'pointercancel' || moved || !shownMap) return;
+    // Pointer capture sends pointerup to the frame; hit-test the SVG underneath the release position.
+    const i = indexAt(document.elementFromPoint(event.clientX, event.clientY));
     if (i !== null && onPickAsset) onPickAsset(shownMap.match.elements[i][0]);
   };
   const onDoubleClick = (event: ReactMouseEvent) => {
@@ -304,11 +355,20 @@ export default function NetworkMap({ scenarioId, t, onPickAsset }: {
     if (area) zoomAt(event.clientX - area.left, event.clientY - area.top, event.shiftKey ? 1 / 2 : 2);
   };
 
+  const mapFiles=<details className="ab-map__files">
+    <summary>Karten hinzufügen / Speicherort</summary>
+    <p>Aktiver Kartenordner: <code>{list?.folder??'wird geladen …'}</code></p>
+    <ol><li>Netzplan in Figma als SVG mit „Include id attribute“ exportieren.</li>
+      <li>Die SVG-Datei in diesen Ordner kopieren, zum Beispiel <code>nord.svg</code>. Mehrere Karten können nebeneinander liegen.</li>
+      <li>„Karten neu laden“ klicken und oben die Karte auswählen. Der Server muss nicht neu gestartet werden.</li></ol>
+    <p>Eine Ebene pro Betriebsmittel in der Gruppe „Elements“, benannt wie in PowerFactory. Kraftwerke können in einer Gruppe „Generators“ liegen. Ein neues SVG liefert die Zeichnung; Ergebniswerte kommen aus der gewählten Analyse.</p>
+    <button type="button" className="ab-chip" onClick={()=>setMapRevision(n=>n+1)}>Karten neu laden</button>
+    {listError&&<p role="alert">{listError}</p>}
+  </details>;
+
   if (list && list.maps.length === 0) {
     return (
-      <p className="across-card__hint">
-        No network map. Export your Figma map as SVG (with “Include id attribute”) into {list.folder || 'the folder “maps” next to the database'}; the equipment layers go into a group named “Elements”.
-      </p>
+      <div className="ab-map"><p className="across-card__hint">Noch keine SVG-Karte im Kartenordner.</p>{mapFiles}</div>
     );
   }
   const m = shownMap?.match;
@@ -316,21 +376,29 @@ export default function NetworkMap({ scenarioId, t, onPickAsset }: {
   return (
     <div className="ab-map" aria-label="Network map">
       <div className="ab-chips">
-        {list && list.maps.length > 1 && (
-          <select className="ab-control" aria-label="Network map" value={name ?? ''} onChange={(e) => setChosen(e.target.value)}>
+        {list && list.maps.length > 0 && (
+          <label className="ab-map__select">Karte <select className="ab-control" aria-label="Netzkarte auswählen" value={name ?? ''} onChange={(e) => {setChosen(e.target.value);writeParam('map',e.target.value);}}>
             {list.maps.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
-          </select>
+          </select></label>
         )}
-        <span className="ab-sub">Branches by loading:</span>
+        {mode==='results'?<><span className="ab-sub">Auslastung:</span>
         {[[colors.bands.ok, `< ${l.warning} %`], [colors.bands.high, `${l.warning}–${l.overload} %`], [colors.bands.light, `${l.overload}–${l.clear} %`],
           [colors.bands.clear, `${l.clear}–${l.severe} %`], [colors.bands.severe, `≥ ${l.severe} %`]].map(([color, text]) => (
           <span key={text} className="ab-map__key"><i style={{ background: color }} />{text}</span>
         ))}
-        <span className="ab-sub">Busbars: in band · close · outside; dashed = switched off</span>
+        <span className="ab-sub">Sammelschienen: Spannungsband · gestrichelt = abgeschaltet</span></>:<>
+          <span className="ab-map__cost-scale" aria-label={`Kostenskala von minus bis plus ${maxCost.toLocaleString('de-DE')} Euro je Stunde`}>
+            <span>−{maxCost.toLocaleString('de-DE',{maximumFractionDigits:2})} €</span>
+            <i style={{background:`linear-gradient(to right, ${colors.neg}, #e8eef2, ${colors.bands.severe})`}}/>
+            <span>+{maxCost.toLocaleString('de-DE',{maximumFractionDigits:2})} € / h</span>
+          </span>
+          <span className="ab-sub">Kraftwerke nach Kostenbetrag · gleiche Skala für alle Szenarien dieser Stunde · grau = keine Kostendaten</span>
+        </>}
         <button type="button" className="ab-chip" onClick={() => zoomCentre(1.5)} aria-label="Zoom in">+</button>
         <button type="button" className="ab-chip" onClick={() => zoomCentre(1 / 1.5)} aria-label="Zoom out">−</button>
         <button type="button" className="ab-chip" onClick={fit}>Fit</button>
       </div>
+      {mapFiles}
       {(error || drawing === 'invalid') && <div className="ab-empty" role="alert">{error || 'The map is not valid SVG.'}</div>}
       {!shownMap && !error && <div className="ab-empty" aria-busy>Loading network map …</div>}
       <div ref={frame} className="ab-map__frame" title="Wheel or pinch: zoom · drag: move · double-click: zoom in (Shift: out)"
