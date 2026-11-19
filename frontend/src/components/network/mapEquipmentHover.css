@@ -1,0 +1,25 @@
+.ab-map__hover { position:absolute; left:0; top:0; z-index:5; width:max-content; max-width:min(920px,calc(100vw - 40px)); overflow:auto; overscroll-behavior:contain; border:2px solid var(--grid-text-soft); border-radius:8px; background:var(--grid-surface); color:var(--grid-text); box-shadow:0 12px 40px #0005; cursor:default; font-size:12px; line-height:1.4; touch-action:auto; }
+.ab-map__hover[hidden] { display:none; }
+.ab-map__hover :is(button,a):focus-visible { outline:2px solid var(--grid-primary); outline-offset:2px; }
+.ab-map-hover__header { display:flex; justify-content:space-between; gap:28px; padding:12px 14px; border-bottom:1px solid var(--grid-border); background:var(--grid-subpanel); }
+.ab-map-hover__header strong { display:block; font-size:15px; }
+.ab-map-hover__header b { font-size:11px; font-weight:600; }
+.ab-map-hover__header span { display:block; font-size:10px; color:var(--grid-muted); }
+.ab-map-hover__scroll { overflow-x:auto; }
+.ab-map__hover table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+.ab-map__hover thead { background:var(--grid-subpanel); }
+.ab-map__hover th, .ab-map__hover td { padding:9px 12px; text-align:right; border-bottom:1px solid var(--grid-border-soft); white-space:nowrap; }
+.ab-map__hover thead th { color:var(--grid-muted); font-size:10px; font-weight:600; }
+.ab-map__hover :is(td,th) small { display:block; color:var(--grid-muted); font-size:9px; font-weight:400; margin-top:3px; }
+.ab-map__hover tbody th { min-width:170px; max-width:250px; text-align:left; font-size:11px; font-weight:500; white-space:normal; }
+.ab-map__hover thead th:first-child { text-align:left; }
+.ab-map-hover__scenario { display:flex; gap:6px; align-items:baseline; }
+.ab-map-hover__scenario b { color:var(--grid-muted); font:10px ui-monospace,monospace; flex:none; }
+.ab-map__hover tr[data-current=true] { background:var(--grid-primary-soft); box-shadow:inset 3px 0 var(--grid-primary); }
+.ab-map__hover td[data-alert=true] { color:var(--grid-danger-text); background:color-mix(in srgb,var(--grid-danger-text) 12%,transparent); }
+.ab-map__hover footer { padding:10px 14px; font-size:10px; color:var(--grid-muted); }
+.ab-map__hover footer span { display:block; margin-top:3px; }
+.ab-map-hover__notice { padding:14px; margin:0; }
+.ab-map__contrast { display:inline-flex; align-items:center; gap:4px; color:var(--grid-muted); font-size:11px; }
+.ab-map__contrast select { width:auto; padding:3px 5px; font-size:11px; }
+@media (prefers-contrast:more) { .ab-map__hover { border-color:var(--grid-text); } }

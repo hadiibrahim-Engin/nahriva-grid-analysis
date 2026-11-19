@@ -151,7 +151,7 @@ export default function NetworkPage() {
       <div className="nw-segment" role="group" aria-label="Kartenfärbung"><button aria-pressed={mapMode==='results'} onClick={()=>{setMapMode('results');writeParam('layer','loading');}}>Auslastung</button><button aria-pressed={mapMode==='redispatch'} onClick={()=>{setMapMode('redispatch');writeParam('layer','cost');}}>Kosten</button></div>
     </div>
     <main className="nw-main">
-      {current?.delivery?.source.startsWith('DEMO_')&&<p className="nw-demo-notice">Demodaten: Netzberechnung und Redispatch-Kosten sind synthetisch. Diese Werte sind keine realen Betriebs- oder Abrechnungsdaten.</p>}
+      {current?.delivery?.source.startsWith('DEMO_')&&<p className="nw-demo-notice">Synthetische Demo: stündliche Redispatch-Planung mit ausgeglichener Hoch- und Abregelung. Der Lastfluss zeigt den Zustand vor Redispatch; keine realen Betriebs- oder Abrechnungsdaten.</p>}
       {error && <p className="nw-error" role="alert">{error}</p>}
       {!data&&!error&&empty}
       {data&&scenarios.length===0&&<div className="nw-empty">Keine Szenarien in dieser Analyse. Bitte eine andere Analyse auswählen.</div>}
@@ -161,7 +161,7 @@ export default function NetworkPage() {
             <div className="nw-panel-heading"><div><span className="nw-eyebrow">{code(Math.max(0,scenarios.indexOf(scenario!)))} · {scenario?.name}</span><h2>{t===null?'Keine QDS-Zeitpunkte':`${date(t)} UTC`}</h2></div>
               <span className="nw-state">{mapMode==='redispatch'?'Kosten je Kraftwerk und Stunde':'Leitungen: Auslastung · Sammelschienen: Spannung'}</span></div>
             {t!==null&&scenario?.has_qds ? <Suspense fallback={empty}><NetworkMap scenarioId={scenario.id} t={t} onPickAsset={pickElement}
-              selectedElementId={element} onElementsLoaded={setMapElements} mode={mapMode} costs={costLabels} costScale={costScale}/></Suspense>
+              selectedElementId={element} onElementsLoaded={setMapElements} mode={mapMode} costs={costLabels} costScale={costScale} dataRevision={`${revision}|${current?.delivery?.id??''}`}/></Suspense>
               : <div className="nw-empty">Dieser Fall enthält keine QDS-Zeitreihe für die Karte. n-1-Ergebnisse bleiben im Dashboard verfügbar.</div>}
           </section>
           {!mapFocus&&inspectorVisible&&<aside className="nw-inspector" aria-label="Betriebsmittel über alle Szenarien">

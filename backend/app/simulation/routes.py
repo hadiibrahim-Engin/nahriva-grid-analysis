@@ -124,6 +124,15 @@ def network_at_time(t: int, analysis: str | None = Query(None, max_length=200),
     return JSONResponse(network.at_time(db, analysis, t, element, grid, kv))
 
 
+@router.get('/network/equipment-at-time')
+def network_equipment_at_time(t: int, element: str = Query(..., min_length=1, max_length=200),
+                              analysis: str | None = Query(None, max_length=200), db=Depends(store)):
+    result = network.equipment_at_time(db, analysis, t, element)
+    if result is None:
+        raise HTTPException(404, 'Element not found in this analysis.')
+    return JSONResponse(result)
+
+
 class RedispatchImport(BaseModel):
     model_config = ConfigDict(extra='forbid')
     analysis: str | None = Field(None, max_length=200)

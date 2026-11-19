@@ -8,6 +8,8 @@ import { useGridFilter } from '../../hooks/useGridFilter';
 import { readAcrossColors, type AcrossColors } from '../../util/acrossColors';
 import { readParam, writeParam } from '../../util/shareLink';
 import { costHeatColour, costMagnitude } from '../../util/mapHeat';
+import { outlineEquipment, prepareHeatBackground } from '../../util/mapBackground';
+import MapEquipmentHover from '../network/MapEquipmentHover';
 
 interface MapInfo { name: string; bytes: number }
 interface MapMatch {
@@ -32,11 +34,10 @@ interface MapValues {
   up: (number | null)[];
   off: number[];
 }
-/** The shapes of one element that take its colour, found once per map. */
-interface Paint { strokes: SVGElement[]; fills: SVGElement[]; all: SVGElement[] }
+/** Keep the original drawing separate from the result background. */
+interface Paint { strokes: SVGElement[]; dashes: string[]; all: SVGElement[]; opacity: string[]; heat: SVGGElement | null }
 
 const SHAPES = 'path,line,polyline,polygon,rect,circle,ellipse';
-const WHITE = new Set(['#fff', '#ffffff', 'white']);
 const DROP = 'script,foreignObject,iframe,object,embed,audio,video';
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 40;
@@ -64,7 +65,7 @@ function sanitize(text: string): SVGSVGElement | null {
 
 /** Marks every matched layer (one pass over all ids, not one search per layer) and collects its colour shapes. */
 function prepare(svg: SVGSVGElement, layers: Record<string, number>, count: number): Paint[] {
-  const paints: Paint[] = Array.from({ length: count }, () => ({ strokes: [], fills: [], all: [] }));
+  const paints: Paint[] = Array.from({ length: count }, () => ({ strokes: [], dashes: [], all: [], opacity: [], heat: null }));
   for (const node of Array.from(svg.querySelectorAll<SVGElement>('[id]'))) {
     const index = layers[node.id];
     if (index === undefined) continue;
@@ -72,10 +73,9 @@ function prepare(svg: SVGSVGElement, layers: Record<string, number>, count: numb
     const paint = paints[index];
     for (const shape of node.matches(SHAPES) ? [node] : Array.from(node.querySelectorAll<SVGElement>(SHAPES))) {
       const stroke = shape.getAttribute('stroke');
-      const fill = shape.getAttribute('fill');
       paint.all.push(shape);
-      if (stroke && stroke !== 'none') paint.strokes.push(shape);
-      if (fill && fill !== 'none' && !WHITE.has(fill.toLowerCase()) && shape.getAttribute('fill-opacity') !== '0') paint.fills.push(shape);
+      paint.opacity.push(shape.style.opacity);
+      if (stroke && stroke !== 'none') { paint.strokes.push(shape); paint.dashes.push(shape.style.strokeDasharray); }
     }
   }
   return paints;
@@ -96,28 +96,13 @@ function colourOf(values: MapValues, i: number, colors: AcrossColors, muted: str
   return v < lower + ASSESSMENT.voltageMarginPu || v > upper - ASSESSMENT.voltageMarginPu ? colors.bands.high : colors.bands.ok;
 }
 
-function tooltip(match: MapMatch, values: MapValues | null, i: number): string {
-  const [, name, grid, kv] = match.elements[i];
-  const head = `${name}${grid ? ` · ${grid}` : ''}${kv ? ` · ${kv} kV` : ''}`;
-  if (!values || values.m[i] === null) return `${head}\nno value at this time`;
-  if (values.off.includes(i)) return `${head}\nswitched off`;
-  const v = values.v[i];
-  const r = values.r[i];
-  if (v === null) return `${head}\nno valid value`;
-  const loading = values.m[i] === 0;
-  const power = values.m[i] === 2;
-  const f = (x: number) => (loading ? `${x.toFixed(1)} %` : power ? `${x.toFixed(1)} MW` : `${x.toFixed(3)} p.u.`);
-  const d = r === null ? '' : ` (${v - r >= 0 ? '+' : ''}${loading ? `${(v - r).toFixed(1)} pp` : power ? `${(v-r).toFixed(1)} MW` : (v - r).toFixed(3)} against REF ${f(r)})`;
-  return `${head}\n${f(v)}${d}`;
-}
-
 /**
- * The network map at one time: an SVG exported from the operator's Figma map, every equipment layer coloured by
- * its value (branches by loading, busbars by voltage). Hover shows the value, click opens the element in the
+ * The network map at one time: original SVG colours preserve voltage levels; a separate background shows
+ * results (branches by loading, busbars by voltage). Hover shows the value, click opens the element in the
  * asset view. Built for large maps: the drawing is inserted once, a new time only changes colours, and zooming and
  * panning move one GPU layer without rendering React.
  */
-export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElementId, onElementsLoaded, mode='results', costs, costScale }: {
+export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElementId, onElementsLoaded, mode='results', costs, costScale, dataRevision='' }: {
   scenarioId: string;
   t: number;
   onPickAsset?: (elementId: string) => void;
@@ -126,6 +111,7 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
   mode?: 'results' | 'redispatch';
   costs?: { element_id: string; cost_eur: number | null }[];
   costScale?: number;
+  dataRevision?: string;
 }) {
   const { analysis } = useAnalysis();
   const { grid, kv } = useGridFilter();
@@ -138,9 +124,14 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
   const [map, setMap] = useState<{ key: string; svg: string; match: MapMatch } | null>(null);
   const [loaded, setValues] = useState<{ map: string; data: MapValues } | null>(null);
   const [error, setError] = useState('');
+  const [contrast,setContrast]=useState(()=>readParam('contrast')==='strong'?'strong':'normal');
+  const [hovered,setHovered]=useState<{mapKey:string;index:number}|null>(null);
   const host = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const tip = useRef<HTMLDivElement>(null);
+  const lastPointer=useRef({x:0,y:0});
+  const hideTimer=useRef(0);
+  const hoverKey=useRef('');
   const view = useRef({ x: 0, y: 0, k: 1 });
   const pending = useRef(0);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -155,6 +146,7 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
   }, [mapRevision]);
   const name = list?.maps.some(m=>m.name===chosen)?chosen:list?.maps[0]?.name ?? null;
   const mapKey = `${name}|${analysis}|${mapRevision}`;
+  const hoveredIndex=hovered?.mapKey===mapKey?hovered.index:null;
   const costsById=useMemo(()=>new Map(costs?.map(c=>[c.element_id,c.cost_eur])??[]),[costs]);
   const maxCost=costScale??costMagnitude(costs?.map(c=>c.cost_eur)??[]);
 
@@ -225,49 +217,63 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
     const target = host.current;
     if (!target) return;
     target.replaceChildren();
-    if (drawing && drawing !== 'invalid') target.appendChild(drawing.svg);
+    if (drawing && drawing !== 'invalid') {
+      target.appendChild(drawing.svg);
+      prepareHeatBackground(drawing.svg, drawing.paints);
+    }
     view.current = { x: 0, y: 0, k: 1 };
     apply();
   }, [drawing]);
 
-  // Colours of the current time: only the style of the collected shapes changes, the drawing stays.
+  // Only the background changes colour. The SVG's line/fill colours retain their original meaning.
   useEffect(() => {
     if (!drawing || drawing === 'invalid' || !values) return;
     const off = new Set(values.off);
     const elements = shownMap?.match.elements ?? [];
     drawing.paints.forEach((paint, i) => {
-      // Outside the header's grid or voltage-level filter: drawn grey and faint, so the rest stands out.
+      // Filters dim the original drawing without replacing its voltage-level colours.
       const [, , elementGrid, elementKv] = elements[i] ?? [];
       const outside = (grid !== null && elementGrid !== grid) || (kv !== null && elementKv !== kv);
       const cost = costsById.get(elements[i]?.[0]);
       const isPlant=['ElmSym','ElmGenstat','ElmPvsys'].includes(elements[i]?.[4]??'');
-      const colour = outside ? theme.mutedText : mode==='redispatch'
-        ? isPlant ? costHeatColour(cost,maxCost,colors.bands.severe,colors.neg,theme.mutedText) : theme.mutedText
+      const colour = mode==='redispatch'
+        ? costHeatColour(cost,maxCost,colors.bands.severe,colors.neg,theme.mutedText)
         : colourOf(values, i, colors, theme.mutedText);
-      const dashed = off.has(i) ? '6 5' : '';
-      const faint = outside ? '0.18' : mode==='redispatch' ? isPlant&&cost!=null?'1':'0.35'
-        : values.m[i] === null || (values.v[i] === null && !off.has(i)) ? '0.45' : '';
-      for (const shape of paint.strokes) { shape.style.stroke = colour; shape.style.strokeDasharray = dashed; }
-      for (const shape of paint.fills) shape.style.fill = colour;
-      for (const shape of paint.all) shape.style.opacity = faint;
+      const hasHeat = !outside && !off.has(i) && (mode==='redispatch'
+        ? isPlant && cost != null : values.v[i] != null && (values.m[i]===0 || values.m[i]===1));
+      if (paint.heat) {
+        paint.heat.style.color = colour;
+        paint.heat.style.display = hasHeat ? '' : 'none';
+        const value=values.v[i];
+        const critical=value!=null&&(values.m[i]===0 ? value>=LOADING_LIMITS.warning
+          : values.m[i]===1 && (value<(values.lo[i]??ASSESSMENT.voltageBandPu.lower)+ASSESSMENT.voltageMarginPu || value>(values.up[i]??ASSESSMENT.voltageBandPu.upper)-ASSESSMENT.voltageMarginPu));
+        paint.heat.style.opacity=mode==='redispatch'
+          ? contrast==='normal'?'0.35':'0.52'
+          : critical ? contrast==='normal'?'0.32':'0.50' : contrast==='normal'?'0.16':'0.26';
+      }
+      paint.strokes.forEach((shape,j) => { shape.style.strokeDasharray = off.has(i) ? '6 5' : paint.dashes[j]; });
+      paint.all.forEach((shape,j) => { shape.style.opacity = outside ? '0.18' : paint.opacity[j]; });
     });
-  }, [drawing, values, colors, theme.mutedText, grid, kv, shownMap,mode,costsById,maxCost]);
+  }, [drawing, values, colors, theme.mutedText, grid, kv, shownMap,mode,costsById,maxCost,contrast]);
 
   useEffect(()=>{
     if(!drawing||drawing==='invalid'||!shownMap)return;
-    drawing.svg.querySelectorAll('[data-selected]').forEach(node=>node.removeAttribute('data-selected'));
     const i=shownMap.match.elements.findIndex(e=>e[0]===selectedElementId);
-    if(i>=0)drawing.svg.querySelectorAll(`[data-index="${i}"]`).forEach(node=>node.setAttribute('data-selected','true'));
+    outlineEquipment(drawing.svg,i>=0?drawing.paints[i]?.heat:null,'selected');
   },[drawing,shownMap,selectedElementId]);
+
+  useEffect(()=>{
+    if(drawing&&drawing!=='invalid')outlineEquipment(drawing.svg,hoveredIndex==null?null:drawing.paints[hoveredIndex]?.heat,'hover');
+  },[drawing,hoveredIndex]);
 
   useEffect(()=>{
     if(!drawing||drawing==='invalid'||!shownMap)return;
     drawing.svg.querySelector('[data-cost-labels]')?.remove();
-    if(!costs)return;
+    if(!costs||mode!=='redispatch')return;
     const group=document.createElementNS('http://www.w3.org/2000/svg','g');group.setAttribute('data-cost-labels','true');
     for(const item of costs){
       const i=shownMap.match.elements.findIndex(e=>e[0]===item.element_id);
-      const node=drawing.svg.querySelector<SVGGraphicsElement>(`[data-index="${i}"]`);
+      const node=drawing.svg.querySelector<SVGGraphicsElement>(`[data-index="${i}"]:not([data-map-hit])`);
       if(!node)continue;
       const box=node.getBBox();const label=document.createElementNS('http://www.w3.org/2000/svg','text');
       const rootMatrix=drawing.svg.getCTM();const matrix=node.getCTM();
@@ -280,13 +286,14 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
     }
     drawing.svg.append(group);
     return ()=>group.remove();
-  },[drawing,shownMap,costs]);
+  },[drawing,shownMap,costs,mode]);
 
   // Wheel and trackpad: smooth zoom around the pointer (a pinch arrives as wheel with ctrlKey, in small steps).
   useEffect(() => {
     const element = frame.current;
     if (!element) return;
     const wheel = (event: WheelEvent) => {
+      if(event.target instanceof Element&&event.target.closest('.ab-map__hover'))return;
       event.preventDefault();
       const box = element.getBoundingClientRect();
       const step = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
@@ -302,18 +309,47 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
     const node = target instanceof Element ? target.closest('[data-index]') : null;
     return node ? Number(node.getAttribute('data-index')) : null;
   };
+  const positionTip=()=>{
+    const box=tip.current; const area=frame.current?.getBoundingClientRect();
+    if(!box||!area||box.hidden)return;
+    box.style.maxWidth=`${Math.max(0,area.width-24)}px`;
+    box.style.maxHeight=`${Math.max(0,Math.min(520,area.height-24))}px`;
+    const {x,y}=lastPointer.current;
+    const px=x-area.left,py=y-area.top;
+    const left=px+18+box.offsetWidth<area.width?px+18:px-box.offsetWidth-18;
+    const top=py+18+box.offsetHeight<area.height?py+18:py-box.offsetHeight-18;
+    box.style.transform=`translate(${Math.max(12,Math.min(area.width-box.offsetWidth-12,left))}px,${Math.max(12,Math.min(area.height-box.offsetHeight-12,top))}px)`;
+  };
+  useLayoutEffect(()=>{
+    positionTip();
+    const observer=new ResizeObserver(positionTip);
+    if(tip.current)observer.observe(tip.current);
+    if(frame.current)observer.observe(frame.current);
+    return ()=>observer.disconnect();
+  },[hoveredIndex,drawing]);
+  useEffect(()=>()=>window.clearTimeout(hideTimer.current),[]);
+  const keepTip=()=>{window.clearTimeout(hideTimer.current);hideTimer.current=0;};
+  const hideTip=()=>{
+    if(hideTimer.current)return;
+    hideTimer.current=window.setTimeout(()=>{
+      hideTimer.current=0;
+      if(tip.current?.contains(document.activeElement))return;
+      hoverKey.current='';setHovered(null);
+    },250);
+  };
+  const closeTip=()=>{keepTip();hoverKey.current='';setHovered(null);};
+  const openTip=(i:number,x:number,y:number)=>{
+    keepTip();
+    lastPointer.current={x,y};
+    const key=`${mapKey}|${i}`;
+    if(hoverKey.current!==key){hoverKey.current=key;setHovered({mapKey,index:i});}
+    positionTip();
+  };
   const showTip = (event: ReactPointerEvent | null) => {
-    const box = tip.current;
-    if (!box) return;
+    if(event?.target instanceof Element&&event.target.closest('.ab-map__hover'))return;
     const i = event ? indexAt(event.target) : null;
-    const area = frame.current?.getBoundingClientRect();
-    if (i === null || !shownMap || !area || !event) { box.hidden = true; return; }
-    const cost=costsById.get(shownMap.match.elements[i][0]);
-    const costText=mode==='redispatch'?'\nRedispatch: '+(cost==null?'keine Kosten für diese Stunde':cost.toLocaleString('de-DE',{style:'currency',currency:'EUR'})+' / UTC-Stunde'):'';
-    const text = tooltip(shownMap.match, values, i)+costText;
-    if (box.textContent !== text) box.textContent = text;
-    box.style.transform = `translate(${event.clientX - area.left + 14}px, ${event.clientY - area.top + 14}px)`;
-    box.hidden = false;
+    if(i===null||!shownMap||!event){hideTip();return;}
+    openTip(i,event.clientX,event.clientY);
   };
   const onDown = (event: ReactPointerEvent) => {
     frame.current?.setPointerCapture(event.pointerId);
@@ -338,7 +374,7 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
     const dy = now.y - last.y;
     if (!gesture.current.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
     gesture.current.moved = true;
-    showTip(null);
+    closeTip();
     move({ ...view.current, x: view.current.x + dx, y: view.current.y + dy });
   };
   const onUp = (event: ReactPointerEvent) => {
@@ -348,7 +384,7 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
     if (event.type === 'pointercancel' || moved || !shownMap) return;
     // Pointer capture sends pointerup to the frame; hit-test the SVG underneath the release position.
     const i = indexAt(document.elementFromPoint(event.clientX, event.clientY));
-    if (i !== null && onPickAsset) onPickAsset(shownMap.match.elements[i][0]);
+    if (i !== null) { onPickAsset?.(shownMap.match.elements[i][0]);openTip(i,event.clientX,event.clientY); }
   };
   const onDoubleClick = (event: ReactMouseEvent) => {
     const area = frame.current?.getBoundingClientRect();
@@ -362,6 +398,7 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
       <li>Die SVG-Datei in diesen Ordner kopieren, zum Beispiel <code>nord.svg</code>. Mehrere Karten können nebeneinander liegen.</li>
       <li>„Karten neu laden“ klicken und oben die Karte auswählen. Der Server muss nicht neu gestartet werden.</li></ol>
     <p>Eine Ebene pro Betriebsmittel in der Gruppe „Elements“, benannt wie in PowerFactory. Kraftwerke können in einer Gruppe „Generators“ liegen. Ein neues SVG liefert die Zeichnung; Ergebniswerte kommen aus der gewählten Analyse.</p>
+    <p>Zusätzlich zur SVG: Ergebnisdatenbank mit Stammdaten, Szenarien und Zeitreihen (bei Parquet-Speicherung auch der zugehörige <code>.values</code>-Ordner). Für Redispatch: Stunden-CSV mit Szenario-ID, Kraftwerk-ID, UTC-Intervall, MWh und €/MWh. Eine separate Zuordnungsdatei ist bei passenden SVG-Ebenennamen nicht nötig.</p>
     <button type="button" className="ab-chip" onClick={()=>setMapRevision(n=>n+1)}>Karten neu laden</button>
     {listError&&<p role="alert">{listError}</p>}
   </details>;
@@ -381,7 +418,9 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
             {list.maps.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
           </select></label>
         )}
-        {mode==='results'?<><span className="ab-sub">Auslastung:</span>
+        <span className="ab-sub">Linienfarben = Spannungsebene · Heatmap im Hintergrund</span>
+        <label className="ab-map__contrast">Heatmap-Kontrast <select className="ab-control" aria-label="Heatmap-Kontrast" value={contrast} onChange={e=>{setContrast(e.target.value);writeParam('contrast',e.target.value);}}><option value="strong">Stark</option><option value="normal">Dezent</option></select></label>
+        {mode==='results'?<><span className="ab-sub">Hintergrund Auslastung:</span>
         {[[colors.bands.ok, `< ${l.warning} %`], [colors.bands.high, `${l.warning}–${l.overload} %`], [colors.bands.light, `${l.overload}–${l.clear} %`],
           [colors.bands.clear, `${l.clear}–${l.severe} %`], [colors.bands.severe, `≥ ${l.severe} %`]].map(([color, text]) => (
           <span key={text} className="ab-map__key"><i style={{ background: color }} />{text}</span>
@@ -392,7 +431,7 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
             <i style={{background:`linear-gradient(to right, ${colors.neg}, #e8eef2, ${colors.bands.severe})`}}/>
             <span>+{maxCost.toLocaleString('de-DE',{maximumFractionDigits:2})} € / h</span>
           </span>
-          <span className="ab-sub">Kraftwerke nach Kostenbetrag · gleiche Skala für alle Szenarien dieser Stunde · grau = keine Kostendaten</span>
+          <span className="ab-sub">Kraftwerk-Hintergrund nach Kostenbetrag · gleiche Skala für alle Szenarien dieser Stunde · ohne Hintergrund = keine Kostendaten</span>
         </>}
         <button type="button" className="ab-chip" onClick={() => zoomCentre(1.5)} aria-label="Zoom in">+</button>
         <button type="button" className="ab-chip" onClick={() => zoomCentre(1 / 1.5)} aria-label="Zoom out">−</button>
@@ -402,10 +441,16 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
       {(error || drawing === 'invalid') && <div className="ab-empty" role="alert">{error || 'The map is not valid SVG.'}</div>}
       {!shownMap && !error && <div className="ab-empty" aria-busy>Loading network map …</div>}
       <div ref={frame} className="ab-map__frame" title="Wheel or pinch: zoom · drag: move · double-click: zoom in (Shift: out)"
-        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+        onPointerDown={onDown} onPointerMove={onMove} onPointerOver={event=>{if(!pointers.current.size)showTip(event);}} onPointerUp={onUp} onPointerCancel={onUp}
         onPointerLeave={() => showTip(null)} onDoubleClick={onDoubleClick}>
         <div ref={host} className="ab-map__canvas" />
-        <div ref={tip} className="ab-map__tip" hidden />
+        <div ref={tip} className="ab-map__hover" hidden={hoveredIndex===null} role="region" aria-label="Stundenvergleich beim Hover" tabIndex={0}
+          onPointerEnter={keepTip} onPointerLeave={hideTip} onFocus={keepTip} onBlur={hideTip}
+          onPointerDown={event=>event.stopPropagation()} onDoubleClick={event=>event.stopPropagation()}
+          onKeyDown={event=>{if(event.key==='Escape'){event.stopPropagation();closeTip();}}}>
+          {hoveredIndex!==null&&shownMap&&<MapEquipmentHover analysis={analysis} t={t} elementId={shownMap.match.elements[hoveredIndex][0]}
+            name={shownMap.match.elements[hoveredIndex][1]} scenarioId={scenarioId} revision={`${mapRevision}|${dataRevision}`}/>}
+        </div>
       </div>
       {m && (m.unmatched_layers.length > 0 || m.ambiguous_layers.length > 0 || m.counts.elements_without_layer > 0 || m.repeated_layers.length > 0) && (
         <details className="ab-map__report">

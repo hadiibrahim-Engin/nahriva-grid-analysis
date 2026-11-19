@@ -107,3 +107,48 @@ def at_time(store, analysis, t, element=None, grid=None, kv=None):
         results.append(entry)
     return {'analysis': analysis, 't': t, 'hour_start': t - t % 3600, 'scenarios': results, 'plants': generators,
             'element': dict(selected) if selected else None, 'delivery': delivery}
+
+
+def equipment_at_time(store, analysis, t, element):
+    """All recorded QDS metrics for one equipment at exactly t, across all scenarios.
+
+    Kept separate from the page summary: hovering never scans values of every equipment. Shared reference
+    runs are read once. Missing samples stay null; Redispatch belongs only to the selected generator/hour.
+    """
+    analysis = across.resolve_analysis(store.db, analysis)
+    selected = store.db.execute('SELECT * FROM gl_elements WHERE assessment_id=? AND element_id=?', (analysis, element)).fetchone()
+    if not selected:
+        return None
+    delivery = redispatch.latest(store.db, analysis)
+    costs = redispatch.for_hour(store.db, delivery, t) if selected['class_name'] in redispatch.PLANT_CLASSES else {}
+    samples, metadata = {}, {}
+
+    def read(run):
+        if run not in samples:
+            samples[run] = dict(values.query(store.db, run,
+                'SELECT se.metric_id,v.value FROM analysis_series se JOIN analysis_values v ON v.series_id=se.id '
+                'WHERE se.run_id=? AND se.element_id=? AND v.t=?', (run, element, t))) if run else {}
+            metadata[run] = {r['id']: dict(r) for r in store.db.execute(
+                'SELECT m.id,m.name,m.unit,COALESCE(l.lower,m.lower) AS lower,COALESCE(l.upper,m.upper) AS upper '
+                'FROM analysis_series se JOIN analysis_metrics m ON m.run_id=se.run_id AND m.id=se.metric_id '
+                'LEFT JOIN pf_element_limits l ON l.run_id=se.run_id AND l.element_id=se.element_id AND l.metric_id=se.metric_id '
+                'WHERE se.run_id=? AND se.element_id=?', (run, element))} if run else {}
+        return samples[run], metadata[run]
+
+    result = []
+    for row, runs in _scenarios(store, analysis):
+        actual, actual_meta = read(runs.get('OUTAGE'))
+        reference, ref_meta = read(runs.get('REF'))
+        metrics = []
+        for key, meta in (ref_meta | actual_meta).items():
+            value, ref = actual.get(key), reference.get(key)
+            metrics.append({**meta, 'value': value, 'ref': ref,
+                            'delta': value-ref if value is not None and ref is not None else None})
+        _ids, _chosen, windows, equipment = across._outage_context(store, row)
+        off = selected['name'] in equipment and any(a <= t <= b for a, b in windows)
+        rd = costs.get((row['id'], element))
+        result.append({'id': row['id'], 'name': row['name'], 'has_time': bool(actual), 'has_qds': 'OUTAGE' in runs,
+                       'outaged': off, 'metrics': metrics,
+                       'redispatch': {k: float(rd[k]) for k in ('energy_mwh', 'price_eur_per_mwh', 'cost_eur')} if rd else None})
+    return {'analysis': analysis, 't': t, 'hour_start': t-t % 3600, 'element': dict(selected),
+            'scenarios': result, 'delivery': delivery}

@@ -64,6 +64,39 @@ def test_exact_hour_asset_and_generators_are_kept_separate_from_redispatch(store
     assert all(s['value'] is None and not s['has_time'] for s in absent['scenarios'])
 
 
+@pytest.mark.parametrize('class_name,expected', [('ElmLne', {'loading', 'active_power'}), ('ElmTerm', {'voltage'}), ('ElmSym', {'active_power'})])
+def test_hover_all_metrics_across_scenarios_are_exact_samples_with_units(store, class_name, expected):
+    analysis, _scenario, _plant, t = context(store)
+    element = store.db.execute('SELECT element_id FROM gl_elements WHERE assessment_id=? AND class_name=? LIMIT 1', (analysis, class_name)).fetchone()[0]
+    result = network.equipment_at_time(store, analysis, t, element)
+    assert len(result['scenarios']) == 6
+    for row in result['scenarios']:
+        _scenario, runs = timepoint._scenario(store, row['id'])
+        assert {m['id'] for m in row['metrics']} == expected
+        for metric in row['metrics']:
+            assert metric['unit'] in {'%', 'MW', 'p.u.'}
+            for kind, field in [('OUTAGE', 'value'), ('REF', 'ref')]:
+                raw = values.query(store.db, runs[kind], 'SELECT v.value FROM analysis_series se JOIN analysis_values v ON v.series_id=se.id WHERE se.run_id=? AND se.element_id=? AND se.metric_id=? AND v.t=?', (runs[kind], element, metric['id'], t))
+                assert metric[field] == raw[0][0]
+            assert metric['delta'] == pytest.approx(metric['value'] - metric['ref'])
+    missing = network.equipment_at_time(store, analysis, t-1, element)
+    assert all(not s['has_time'] and all(m['value'] is None and m['ref'] is None and m['delta'] is None for m in s['metrics']) for s in missing['scenarios'])
+
+
+def test_hover_redispatch_is_for_selected_generator_and_hour_and_outage_state_is_separate(store):
+    analysis, scenario, plant, t = context(store)
+    redispatch.import_csv(store, analysis, 'hover.csv', 'planned', delivery(scenario, plant, t, '-25.5', '42.75'))
+    result = network.equipment_at_time(store, analysis, t+1800, plant)
+    own = next(s for s in result['scenarios'] if s['id']==scenario)
+    assert not own['has_time'] and own['redispatch'] == {'energy_mwh': -25.5, 'price_eur_per_mwh': 42.75, 'cost_eur': -1090.125}
+    assert all(s['redispatch'] is None for s in result['scenarios'] if s['id']!=scenario)
+    line = store.db.execute("SELECT element_id FROM gl_elements WHERE assessment_id=? AND name='Line 02 - 03'", (analysis,)).fetchone()[0]
+    branch = network.equipment_at_time(store, analysis, t, line)
+    assert next(s for s in branch['scenarios'] if s['id']==scenario)['outaged']
+    assert all(s['redispatch'] is None for s in branch['scenarios'])
+    assert network.equipment_at_time(store, analysis, t, 'unknown') is None
+
+
 def test_hourly_costs_preserve_sign_zero_missing_values_and_latest_revision(store):
     analysis, scenario, plant, t = context(store)
     redispatch.import_csv(store, analysis, 'first.csv', 'planned', delivery(scenario,plant,t,'-2.5','80.125'))
@@ -126,6 +159,10 @@ def test_network_routes_and_network_mode_cannot_import(store, monkeypatch):
         assert client.get('/api/simulation/network/timeline?metric=unknown').status_code == 422
         assert client.get('/api/simulation/network/timeline?start=2&end=1').status_code == 422
         assert client.get('/api/simulation/network/at-time',params={'analysis':analysis,'t':t,'element':plant}).json()['element']['element_id']==plant
+        assert len(client.get('/api/simulation/network/equipment-at-time',params={'analysis':analysis,'t':t,'element':plant}).json()['scenarios'])==6
+        assert client.get('/api/simulation/network/equipment-at-time',params={'analysis':analysis,'t':t,'element':'unknown'}).status_code==404
+        assert client.get('/api/simulation/network/equipment-at-time',params={'analysis':'other','t':t,'element':plant}).status_code==404
+        assert client.get('/api/simulation/network/equipment-at-time',params={'t':t}).status_code==422
         body={'analysis':analysis,'source':'x.csv','quantity_kind':'delivered','csv':delivery(scenario,plant,t)}
         assert client.post('/api/simulation/redispatch/import',json=body).status_code == 403
         monkeypatch.setattr(settings,'ALLOW_DB_SWITCH',True)

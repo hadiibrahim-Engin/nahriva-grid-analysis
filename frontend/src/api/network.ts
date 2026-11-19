@@ -21,11 +21,24 @@ export interface NetworkHour {
   plants: PlantHour[];
   element: { element_id: string; name: string; class_name: string; grid: string; nominal_kv: number | null } | null;
 }
+export interface EquipmentMetric {
+  id: string; name: string; unit: string; lower: number | null; upper: number | null;
+  value: number | null; ref: number | null; delta: number | null;
+}
+export interface EquipmentHour {
+  analysis: string; t: number; hour_start: number; delivery: Delivery | null;
+  element: NonNullable<NetworkHour['element']>;
+  scenarios: { id: string; name: string; has_time: boolean; has_qds: boolean; outaged: boolean;
+    metrics: EquipmentMetric[]; redispatch: { energy_mwh: number; price_eur_per_mwh: number; cost_eur: number } | null }[];
+}
 export const networkApi = {
   async timeline(params: { analysis: string | null; element?: string; metric: NetworkMetric; start?: number; end?: number }, signal: AbortSignal) {
     return (await api.get<NetworkTimeline>('/network/timeline', { params, signal })).data;
   },
   async hour(params: { analysis: string | null; t: number; element?: string; grid: string | null; kv: number | null }, signal: AbortSignal) {
     return (await api.get<NetworkHour>('/network/at-time', { params, signal })).data;
+  },
+  async equipmentHour(params: { analysis: string | null; t: number; element: string }, signal: AbortSignal) {
+    return (await api.get<EquipmentHour>('/network/equipment-at-time', { params, signal })).data;
   },
 };

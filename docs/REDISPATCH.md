@@ -52,8 +52,18 @@ cover all grids; grid/voltage filters restrict map emphasis and the generator ta
 ## Demo and remaining adapters
 
 `backend/.venv/bin/python scripts/prepare_network_demo.py` creates a separate copy of the existing synthetic
-IEEE39 example, generator SVG layers and 3,942 explicitly synthetic hourly Redispatch rows (six scenarios,
-nine generators, 73 hours). It never changes the source database. The page marks this delivery as demo data.
+IEEE39 example, voltage-coloured generator SVG layers and explicitly synthetic hourly Redispatch rows. The
+current example covers 673 hours around all six maintenance periods, nine generators and all six scenarios
+(36,342 rows). Daily morning/evening profiles, weekday/weekend demand and slowly varying weather drive a
+congestion-dependent planning volume. Three units increase and three decrease output with exactly balanced
+MWh; the other three remain at zero. Outside a scenario's maintenance window, or below the congestion threshold,
+explicit zeros are supplied. Upward offers exceed avoided downward generation costs, so signed credits and
+net positive hourly costs are visible. Missing hours outside the delivery remain unknown.
+
+This illustrative planning model is not an economic dispatch optimiser or a post-Redispatch power-flow
+calculation; native QDS results continue to show the original pre-Redispatch state. The page labels this clearly
+as synthetic data. The source database is never changed. `--refresh-demo` refreshes only a previously labelled
+IEEE39 demo, adds an immutable delivery revision and updates its demo SVG; earlier revisions remain available.
 
 The original deferred brief remains in `output/prompts/datenbank-redispatch-prompt.md`. External source formats,
 measure IDs, versioned external-asset mappings, sub-hour deliveries, settlement-specific sign rules and automatic
