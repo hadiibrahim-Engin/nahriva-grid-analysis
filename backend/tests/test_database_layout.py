@@ -166,3 +166,21 @@ def test_the_progress_row_is_created_by_the_first_note_and_updated_in_place(tmp_
     assert store.progress()["started_at"] >= first["started_at"] and store.progress()["current"] is None
     assert store.db.execute("SELECT COUNT(*) FROM pf_progress").fetchone()[0] == 1
     store.close()
+
+
+def test_layout_18_gains_hourly_lookup_indexes(tmp_path):
+    from app.simulation.store import LAYOUT_VERSION
+
+    path = create_dummy_database(tmp_path / "indexed.sqlite3")
+    indexes = ("gl_plants_by_name", "rd_hours_by_time")
+    with sqlite3.connect(path) as db:
+        for name in indexes:
+            db.execute(f"DROP INDEX {name}")
+        db.execute("PRAGMA user_version=18")
+    store = ScenarioStore(path)
+    try:
+        assert store.db.execute("PRAGMA user_version").fetchone()[0] == LAYOUT_VERSION
+        for name in indexes:
+            assert table_sql(store.db, name).startswith("CREATE INDEX")
+    finally:
+        store.close()

@@ -25,7 +25,10 @@ T = TypeVar("T")
 class TTLCache:
     """LRU + TTL. Eviction happens on get and on insert."""
 
-    def __init__(self, *, max_entries: int, ttl_seconds: float) -> None:
+    def __init__(self, *, max_entries: int, ttl_seconds: float, max_bytes: int | None = None) -> None:
+        # max_bytes is for caches of encoded byte strings.
+        self._max_bytes = max_bytes
+        self._bytes = 0
         self._max = max_entries
         self._ttl = ttl_seconds
         self._store: OrderedDict[Any, tuple[float, Any]] = OrderedDict()
@@ -45,7 +48,9 @@ class TTLCache:
                         self._store.move_to_end(key)
                         self.hits += 1
                         return value
-                    self._store.pop(key, None)
+                    self._store.pop(key)
+                    if self._max_bytes is not None:
+                        self._bytes -= len(value)
 
                 pending = self._inflight.get(key)
                 if pending is None:
@@ -69,10 +74,15 @@ class TTLCache:
             raise
 
         with self._lock:
-            self._store[key] = (time.monotonic() + self._ttl, value)
-            self._store.move_to_end(key)
-            while len(self._store) > self._max:
-                self._store.popitem(last=False)
+            size = len(value) if self._max_bytes is not None else 0
+            if self._max_bytes is None or size <= self._max_bytes:
+                self._store[key] = (time.monotonic() + self._ttl, value)
+                self._bytes += size
+                while (len(self._store) > self._max
+                       or self._max_bytes is not None and self._bytes > self._max_bytes):
+                    _, (_, old) = self._store.popitem(last=False)
+                    if self._max_bytes is not None:
+                        self._bytes -= len(old)
             pending = self._inflight.pop(key, None)
             if pending is not None:
                 pending.set()
@@ -81,6 +91,7 @@ class TTLCache:
     def clear(self) -> None:
         with self._lock:
             self._store.clear()
+            self._bytes = 0
 
 
 # Shared cache for analytics service results. 512 entries at a few KB

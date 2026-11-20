@@ -136,6 +136,7 @@ _VALUES_SQL = """
     WHERE se.run_id = ? AND se.metric_id = ?
 """
 _ELEMENTS_CACHE = TTLCache(max_entries=8, ttl_seconds=3600)
+_SAMPLE_CACHE = TTLCache(max_entries=8, ttl_seconds=60)
 # The sorted elements of the last few snapshots: "show more" and the CSV export read further pages from here.
 _SNAPSHOT_CACHE = TTLCache(max_entries=4, ttl_seconds=600)
 
@@ -155,6 +156,36 @@ def _values_at(path, run_id, metric, t):
     db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, check_same_thread=False)
     try:
         return {row[0]: row[1] for row in values.query(db, run_id, _VALUES_SQL, (t, run_id, metric))}
+    finally:
+        db.close()
+
+
+def _metrics_at(path, run_id, metrics, t):
+    """One scan for the map's metrics instead of reopening/scanning a Parquet run per metric.
+
+    Cache only immutable Parquet runs, bounded to eight snapshots. File identity prevents reuse after a
+    restore/replacement. Legacy SQLite remains uncached so changes on that storage path stay visible.
+    """
+    if run_id is None:
+        return {metric: {} for metric in metrics}
+    database=Path(path).resolve()
+    db=sqlite3.connect(database.as_uri()+'?mode=ro',uri=True,check_same_thread=False)
+    try:
+        def compute():
+            found={metric:{} for metric in metrics}
+            sql=('SELECT se.metric_id,se.element_id,v.value FROM analysis_series se '
+                 'JOIN analysis_values v ON v.series_id=se.id WHERE v.t=? AND se.run_id=? '
+                 'AND se.metric_id IN ('+','.join('?' for _ in metrics)+')')
+            for metric,element,value in values.query(db,run_id,sql,(t,run_id,*metrics), named=False):
+                found[metric][element]=value
+            return found
+        file=values.file_of(db,database,run_id)
+        if file is None:
+            return compute()
+        stat=file.stat()
+        identity=database.stat()
+        key=(str(database),identity.st_dev,identity.st_ino,run_id,stat.st_ino,stat.st_mtime_ns,stat.st_size,tuple(metrics),t)
+        return _SAMPLE_CACHE.get_or_compute(key,compute)
     finally:
         db.close()
 

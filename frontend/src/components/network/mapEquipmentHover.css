@@ -22,4 +22,9 @@
 .ab-map-hover__notice { padding:14px; margin:0; }
 .ab-map__contrast { display:inline-flex; align-items:center; gap:4px; color:var(--grid-muted); font-size:11px; }
 .ab-map__contrast select { width:auto; padding:3px 5px; font-size:11px; }
+.ab-map__performance { padding:7px 10px; border:1px solid var(--grid-border); border-radius:6px; background:var(--grid-surface); color:var(--grid-text); font-size:11px; }
+.ab-map__performance summary { cursor:pointer; font-weight:600; }
+.ab-map__performance>div { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:6px; font-variant-numeric:tabular-nums; }
+.ab-map__performance small { display:block; margin-top:5px; color:var(--grid-muted); font-size:9px; }
+.ab-map__pending { position:absolute; top:10px; left:10px; z-index:3; padding:6px 9px; border:1px solid var(--grid-border); border-radius:5px; background:var(--grid-surface); color:var(--grid-text); font-size:11px; pointer-events:none; }
 @media (prefers-contrast:more) { .ab-map__hover { border-color:var(--grid-text); } }

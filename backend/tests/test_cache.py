@@ -77,3 +77,13 @@ def test_concurrent_misses_share_single_compute():
     assert calls["n"] == 1
     assert cache.misses == 1
     assert cache.hits == 4
+
+
+def test_byte_budget_evicts_lru_and_bypasses_oversize_values():
+    cache = TTLCache(max_entries=10, ttl_seconds=60, max_bytes=6)
+    assert cache.get_or_compute("a", lambda: b"abc") == b"abc"
+    assert cache.get_or_compute("b", lambda: b"defg") == b"defg"
+    assert cache.get_or_compute("large", lambda: b"1234567") == b"1234567"
+    assert cache.get_or_compute("b", lambda: None) == b"defg"
+    assert cache.get_or_compute("a", lambda: b"xy") == b"xy"
+    assert cache.get_or_compute("large", lambda: b"new") == b"new"

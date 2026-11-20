@@ -322,3 +322,46 @@ def test_a_scenario_calculated_again_replaces_the_earlier_runs_in_the_scenario_l
     assert len(earlier) == 2 and not earlier & ids  # the earlier calculation of this scenario is not offered again
     assert {"reference-2", "outage-2"} <= ids
     assert len(offered) == 7 * 2 + 2  # the seven scenarios that were not calculated again keep their runs
+
+
+def test_custom_limits_on_prepared_cells_match_full_reduction(tmp_path):
+    from app.simulation import across
+
+    store = ScenarioStore(create_dummy_database(tmp_path / "thresholds.sqlite3"))
+    try:
+        scenario = store.db.execute("SELECT id FROM pf_scenarios LIMIT 1").fetchone()[0]
+        across.prepare_cells(store, scenario)
+        for limits in [(120.0, 100.0, 120.0), (77.5, 83.0, 110.0)]:
+            assert across._prepared_cells(store.db, scenario, limits) == across._scenario_cells(store, scenario, limits)
+    finally:
+        store.close()
+
+
+def test_cached_evaluation_tracks_wal_commits_and_response_encoding(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.simulation import across, settings
+
+    path = create_dummy_database(tmp_path / "changes.sqlite3")
+    monkeypatch.setattr(settings, "ANALYSIS_DB_PATH", str(path))
+    store = ScenarioStore(path)
+    try:
+        scenario = store.db.execute("SELECT id FROM pf_scenarios LIMIT 1").fetchone()[0]
+        across.prepare_cells(store, scenario)
+        url = f"/api/simulation/across-scenarios/{scenario}/cells"
+        with TestClient(app) as client:
+            compressed = client.get(url, headers={"Accept-Encoding": "gzip"})
+            plain = client.get(url, headers={"Accept-Encoding": "identity"})
+            assert compressed.headers["content-encoding"] == "gzip"
+            assert "content-encoding" not in plain.headers
+            assert plain.json() == compressed.json()
+            validator = {"Accept-Encoding": "gzip", "If-None-Match": compressed.headers["etag"]}
+            assert client.get(url, headers=validator).status_code == 304
+            missing = "/api/simulation/across-scenarios/no-such-scenario/cells"
+            assert client.get(missing, headers={"If-None-Match": "*"}).status_code == 404
+            with store.db:
+                store.db.execute("UPDATE pf_scenario_cells SET payload=json_set(payload,'$.period_hours',9876) "
+                                 "WHERE scenario_id=?", (scenario,))
+            assert client.get(url, headers=validator).json()["period_hours"] == 9876
+    finally:
+        store.close()

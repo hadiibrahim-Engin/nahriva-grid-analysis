@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from app.core.cache import TTLCache
 from app.simulation import values
 from app.simulation.grids import grid_name
-from app.simulation.store import outage_key
+from app.simulation.store import database_revision, outage_key
 
 LOADING = "loading"
 VOLTAGE = "voltage"
@@ -307,10 +307,6 @@ def scenario_index(store, analysis=None):
     }
 
 
-def _lodf_stamp(db):
-    return db.execute("SELECT MAX(computed_at) FROM pf_lodf").fetchone()[0]
-
-
 def _scenario_lodf_stamp(db, scenario_id):
     """When the LODF of this scenario's outages was calculated (None without LODF): a later LODF run of other
     outages leaves the summary of this scenario valid."""
@@ -321,13 +317,44 @@ def _scenario_lodf_stamp(db, scenario_id):
     return db.execute("SELECT MAX(computed_at) FROM pf_lodf WHERE outage_key=?", (key,)).fetchone()[0]
 
 
-def _prepared_cells(db, scenario_id, limits):
-    """The summary the PowerFactory script stored when it saved the scenario, if it is still valid."""
+def _prepared_cells(db, scenario_id, limits, *, decode=json.loads):
+    """Reuse the imported evaluation while its LODF is current, including for custom loading limits."""
     row = db.execute(
-        "SELECT payload FROM pf_scenario_cells WHERE scenario_id=? AND limits=? AND lodf_stamp IS ?",
-        (scenario_id, json.dumps(list(limits)), _scenario_lodf_stamp(db, scenario_id)),
+        "SELECT limits,payload FROM pf_scenario_cells WHERE scenario_id=? AND lodf_stamp IS ?",
+        (scenario_id, _scenario_lodf_stamp(db, scenario_id)),
     ).fetchone()
-    return json.loads(row[0]) if row else None
+    if row is None:
+        return None
+    stored, cells = json.loads(row[0]), decode(row[1])
+    if list(limits) == stored:
+        return cells
+
+    # Only hours_over depends on these thresholds. Preserve missing and switched-off
+    # series, the outage-window extremes, voltage assessment and element ordering.
+    active = [line for line in cells["lines"] if line["cell"]["hours_over"] is not None]
+    if not active:
+        return cells
+    if all(limit in stored for limit in limits):
+        indices = [stored.index(limit) for limit in limits]
+        for line in active:
+            hours = line["cell"]["hours_over"]
+            line["cell"]["hours_over"] = [hours[i] for i in indices]
+        return cells
+
+    run = _runs(db, scenario_id).get("OUTAGE")
+    if not run:
+        return None
+    counts = ",".join("SUM(CASE WHEN v.value>? THEN 1 ELSE 0 END)" for _ in limits)
+    sql = "SELECT se.element_id,COUNT(*),MIN(v.t),MAX(v.t)," + counts + _VALUES + " GROUP BY se.element_id"
+    by_element = {line["id"]: line["cell"] for line in active}
+    for cell in by_element.values():
+        cell["hours_over"] = None
+    for element, n, start, end, *above in values.query(db, run, sql, (*limits, run, LOADING), named=False):
+        cell = by_element.get(element)
+        if cell is not None:
+            step = _step_hours(n, start, end)
+            cell["hours_over"] = [count * step for count in above]
+    return cells
 
 
 def scenario_cells(store, scenario_id, limits=DEFAULT_LIMITS):
@@ -336,8 +363,7 @@ def scenario_cells(store, scenario_id, limits=DEFAULT_LIMITS):
     Read from pf_scenario_cells when the script prepared it, otherwise reduced from the stored values.
     """
     db = store.db
-    stamp = _lodf_stamp(db)
-    key = (getattr(store, "path", None), scenario_id, tuple(limits), stamp)
+    key = (store.path, database_revision(store.db), scenario_id, tuple(limits))
     return _CELLS_CACHE.get_or_compute(
         key,
         lambda: _with_nominal_kv(db, scenario_id,
@@ -345,13 +371,18 @@ def scenario_cells(store, scenario_id, limits=DEFAULT_LIMITS):
     )
 
 
-def _with_nominal_kv(db, scenario_id, cells):
+def _with_nominal_kv(db, scenario_id, cells, nominal_by_analysis=None):
     """The nominal voltage of every element from its analysis' master data (None when it was not stored)."""
     if cells is None:
         return None
     row = db.execute("SELECT analysis_id FROM pf_scenarios WHERE id=?", (scenario_id,)).fetchone()
-    nominal = dict(db.execute("SELECT element_id, nominal_kv FROM gl_elements WHERE assessment_id=?",
-                              (row[0],)).fetchall()) if row and row[0] else {}
+    analysis = row[0] if row else None
+    if nominal_by_analysis is None:
+        nominal_by_analysis = {}
+    if analysis not in nominal_by_analysis:
+        nominal_by_analysis[analysis] = dict(db.execute(
+            "SELECT element_id, nominal_kv FROM gl_elements WHERE assessment_id=?", (analysis,)))
+    nominal = nominal_by_analysis[analysis]
     for item in cells["lines"] + cells["buses"]:
         item["nominal_kv"] = nominal.get(item["id"])
     return cells

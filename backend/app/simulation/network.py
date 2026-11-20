@@ -68,6 +68,7 @@ def at_time(store, analysis, t, element=None, grid=None, kv=None):
         "AND class_name IN ('ElmSym','ElmGenstat','ElmPvsys') ORDER BY name", (analysis,))
         if (grid is None or r['grid'] == grid) and (kv is None or r['nominal_kv'] == kv)]
     selected = store.db.execute('SELECT * FROM gl_elements WHERE assessment_id=? AND element_id=?', (analysis, element)).fetchone() if element else None
+    plant_ids = [plant["element_id"] for plant in plants]
     results, generators = [], []
     for row, runs in scenarios:
         entry = {'id': row['id'], 'name': row['name'], 'loading_max': None, 'loading_over': None, 'value': None, 'ref': None,
@@ -82,14 +83,12 @@ def at_time(store, analysis, t, element=None, grid=None, kv=None):
                 vals = []
                 for kind in ('OUTAGE', 'REF'):
                     run = runs.get(kind)
-                    found = values.query(store.db, run,
-                        'SELECT v.value FROM analysis_series se JOIN analysis_values v ON v.series_id=se.id '
-                        'WHERE se.run_id=? AND se.element_id=? AND se.metric_id=? AND v.t=?', (run, element, metric, t)) if run else []
-                    vals.append(found[0][0] if found else None)
+                    found = values.element_values_at(store.db, run, metric, t, [element])
+                    vals.append(found.get(element))
                 entry.update(value=vals[0], ref=vals[1], metric=metric)
                 _ids, _chosen, windows, equipment = across._outage_context(store, row)
                 entry['outaged'] = selected['name'] in equipment and any(a <= t <= b for a, b in windows)
-            power = timepoint._values_at(store.path, runs['OUTAGE'], 'active_power', t)
+            power = values.element_values_at(store.db, runs['OUTAGE'], 'active_power', t, plant_ids)
         else:
             power = {}
         hour_rows = []
@@ -125,14 +124,15 @@ def equipment_at_time(store, analysis, t, element):
 
     def read(run):
         if run not in samples:
-            samples[run] = dict(values.query(store.db, run,
-                'SELECT se.metric_id,v.value FROM analysis_series se JOIN analysis_values v ON v.series_id=se.id '
-                'WHERE se.run_id=? AND se.element_id=? AND v.t=?', (run, element, t))) if run else {}
-            metadata[run] = {r['id']: dict(r) for r in store.db.execute(
-                'SELECT m.id,m.name,m.unit,COALESCE(l.lower,m.lower) AS lower,COALESCE(l.upper,m.upper) AS upper '
-                'FROM analysis_series se JOIN analysis_metrics m ON m.run_id=se.run_id AND m.id=se.metric_id '
+            rows = store.db.execute(
+                'SELECT se.id AS series_id,m.id,m.name,m.unit,COALESCE(l.lower,m.lower) AS lower,'
+                'COALESCE(l.upper,m.upper) AS upper FROM analysis_series se '
+                'JOIN analysis_metrics m ON m.run_id=se.run_id AND m.id=se.metric_id '
                 'LEFT JOIN pf_element_limits l ON l.run_id=se.run_id AND l.element_id=se.element_id AND l.metric_id=se.metric_id '
-                'WHERE se.run_id=? AND se.element_id=?', (run, element))} if run else {}
+                'WHERE se.run_id=? AND se.element_id=?', (run, element)).fetchall() if run else []
+            series = {r['series_id']: r['id'] for r in rows}
+            samples[run] = {series[sid]: v for sid, v in values.samples_at(store.db, run, t, series).items()}
+            metadata[run] = {r['id']: {k: r[k] for k in ('id', 'name', 'unit', 'lower', 'upper')} for r in rows}
         return samples[run], metadata[run]
 
     result = []

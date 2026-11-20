@@ -147,4 +147,5 @@ export const views = {
   },
 };
 
-export const utc = (t: number) => new Date(t * 1000).toLocaleString('en-GB', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' });
+const utcFormatter = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' });
+export const utc = (t: number) => utcFormatter.format(t * 1000);

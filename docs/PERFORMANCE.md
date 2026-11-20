@@ -1,3 +1,46 @@
+# Network dashboard follow-up — 2026-11-20
+
+The baseline is the first optimization pass documented below. Both passes used the same local database with 30,000 assets, six scenarios and 35 hourly timestamps.
+
+| Operation | Previous pass | Current |
+|---|---:|---:|
+| Reopen the network page in Chrome, until hourly colours appear | 1,395 ms | 1,215 ms |
+| Advance one hour in Chrome, click through painted update | 298 ms | 188 ms |
+| Fetch the SVG over loopback HTTP with a warm server cache | 48 ms | 2.5 ms |
+| Fetch and decode all map-to-equipment matches over loopback HTTP | 177 ms | 25 ms |
+| Fetch a full map hour including reference, changing scenario and time, over loopback HTTP | 238 ms | 200 ms |
+| Fetch the network hour for all scenarios over loopback HTTP | 69 ms | 32 ms |
+| First three-scenario evaluation, fresh API process | 497 ms | 451 ms |
+| Fetch an unchanged three-scenario evaluation again, API | 50 ms | 3.3 ms with a validator |
+| Evaluate one scenario with seven different loading thresholds, API median | 292 ms | 250 ms |
+
+Chrome navigation is the median of three repeat visits to `/network?perf=1`; hour changes are the median of seven consecutive forward clicks followed by the response, disappearance of the loading overlay and two animation frames. A separate visit after restarting the server took 2.16 s with the new build (2.51 s recorded in the previous pass). The loopback benchmark has seven requests per operation and includes gzip, decompression and client decoding. SVG and match numbers in the table are unconditional transfers. The API measurements use FastAPI TestClient. The repeated evaluation without a validator took 50 ms in both versions. The canonical JSON digests of all seven full map, hour, evaluation and custom-limit responses matched the previous version.
+
+The renderer requests scenario samples by numeric series ID. It reuses the metric and limit columns when the server confirms the same layout. Consecutive display-only hours took a median of **34 ms** over loopback. Median decoded size was **225 kB** versus **825 kB** for the full response in this benchmark. The SVG and its equipment match can be served as precompressed bytes. Chrome loads the scenario-time chart when its section enters the viewport. Database layout 19 adds indexes for hourly redispatch rows and the plant list when an existing database opens.
+
+# Interactive dashboard performance — 2026-11-20
+
+The local stress demo contains 30,000 mapped assets, six outage scenarios, 35 hourly timestamps and 11,000,500 synthetic QDS samples. The starting workspace already included SVG viewport culling and batched map-metric reads. The measurements below compare that version with the optimized one.
+
+| Operation | Before | After |
+|---|---:|---:|
+| Chrome navigation to map with hourly colours, first visit after server start | 3.63 s | 2.51 s |
+| Same navigation, median of the next three visits | 3.00 s | 1.44 s |
+| Map values, changing hour and scenario, loopback HTTP median | 616 ms | 238 ms |
+| Hourly summary across all scenarios, loopback HTTP median | 192 ms | 69 ms |
+| Equipment hover across all scenarios, loopback HTTP median | 51 ms | 45 ms |
+| Evaluation of the first three scenarios, first API request | 701 ms | 502 ms |
+| Same three-scenario evaluation, median of seven requests | 230 ms | 51 ms |
+| Evaluation of one scenario with different loading limits on each request, median of seven | 573 ms | 247 ms |
+
+The HTTP figures use seven requests from `scripts/benchmark_network_stress_demo.py`, including gzip, transfer over loopback, decompression and JSON parsing. Full unconditional transfers of the SVG and match respectively took 45 and 172 ms before, 48 and 177 ms after. Browsers revalidating identical resources now receive an empty 304. Chrome timings run from navigation to the map's second animation-frame indicator with the requested hour displayed, using `/network?perf=1`. Browser timings include script, SVG scene setup and data loading. Disk caches could be warm even on the first visit.
+
+Evaluation timings use FastAPI TestClient including JSON decoding. The custom-limit requests use the first scenario and limits `[82.25 + k, 110]` for `k = 0…6`. Full decoded response digests matched across versions for the evaluation, custom limits, map values and hourly summary. Production data, native PowerFactory calculations and remote connections need separate measurements.
+
+The map builds its selector from a searchable asset list and mounts up to 200 matching choices while open. Geometry measurement uses transformed edge vectors. The backend reads the selected series keys for generator and hover values and joins only the series and limits needed for map colours. Changing loading thresholds reuses prepared voltage results, outages and extrema. Repeated evaluation requests reuse encoded responses in a 64 MiB cache keyed by database revision, thresholds and requested scenarios.
+
+---
+
 # Import and storage follow-up — 2026-11-15
 
 The follow-up reduces wide-import latency and import RAM, adds complete cross-format sample access and serialized

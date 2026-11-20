@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, Map as MapIcon, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react';
 import AnalysisPicker from '../components/AnalysisPicker';
+import SearchableDropdown from '../components/SearchableDropdown';
 import GridPicker from '../components/GridPicker';
 import VoltageLevelPicker from '../components/VoltageLevelPicker';
 import LimitsDialog from '../components/LimitsDialog';
@@ -12,16 +13,24 @@ import { readParam, writeParam } from '../util/shareLink';
 import { applyGridThemeMode, storedThemeMode } from '../util/theme';
 import { downloadText, toCsv } from '../util/csv';
 import { costMagnitude } from '../util/mapHeat';
-import ScenarioTimeHeatmap from '../components/network/ScenarioTimeHeatmap';
+import { useInView } from '../hooks/useInView';
+import NetworkMap from '../components/views/NetworkMap';
 import RedispatchImportDialog from '../components/network/RedispatchImportDialog';
 import '../network.css';
 
-const NetworkMap = lazy(()=>import('../components/views/NetworkMap'));
+const ScenarioTimeHeatmap = lazy(() => import('../components/network/ScenarioTimeHeatmap'));
 type MapElement = [string, string, string | null, number | null, string | null];
-const date = (t: number) => new Date(t*1000).toLocaleString('de-DE', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' });
-const money = (n: number | null | undefined) => n == null ? '—' : n.toLocaleString('de-DE', { style:'currency', currency:'EUR' });
-const number = (n: number | null | undefined, digits=1) => n == null ? '—' : n.toLocaleString('de-DE', { maximumFractionDigits: digits });
+const utcDate = new Intl.DateTimeFormat('de-DE', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' });
+const euro = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
+const decimals = [0, 1, 2, 3].map(maximumFractionDigits => new Intl.NumberFormat('de-DE', { maximumFractionDigits }));
+const date = (t: number) => utcDate.format(t * 1000);
+const money = (n: number | null | undefined) => n == null ? '—' : euro.format(n);
+const number = (n: number | null | undefined, digits=1) => n == null ? '—' : decimals[digits].format(n);
 const code = (i: number) => `S${String(i+1).padStart(2,'0')}`;
+type AssetChoice = { id: string; name: string };
+const assetId = (item: AssetChoice) => item.id;
+const assetName = (item: AssetChoice) => item.name;
+const compareAssets = (a: AssetChoice, b: AssetChoice) => a.name.localeCompare(b.name);
 const NO_TIMES: number[] = [];
 const empty = <div className="nw-empty" role="status">Ergebnisse werden geladen …</div>;
 
@@ -37,6 +46,7 @@ export default function NetworkPage() {
   });
   const [element, setElement] = useState<string | null>(()=>readParam('element'));
   const [mapElements, setMapElements] = useState<MapElement[]>([]);
+  const [heatRef, heatVisible] = useInView<HTMLElement>({ rootMargin: '0px' });
   const [heatMetric, setHeatMetric] = useState<NetworkMetric>('loading');
   const [elementHeat, setElementHeat] = useState(false);
   const [mapMode, setMapMode] = useState<'results' | 'redispatch'>(()=>readParam('layer')==='cost'?'redispatch':'results');
@@ -118,11 +128,20 @@ export default function NetworkPage() {
   },[current,plantScope,scenario?.id,plantQuery]);
   const costLabels = useMemo(()=>(current?.plants ?? []).filter(p=>p.scenario_id===scenario?.id).map(p=>({element_id:p.element_id,cost_eur:p.cost_eur})),[current,scenario?.id]);
   const costScale=useMemo(()=>costMagnitude((current?.plants??[]).map(p=>p.cost_eur)),[current]);
-  const elementChoices = useMemo(()=>{
-    const items=new Map(mapElements.map(e=>[e[0],{id:e[0],name:e[1]}]));
-    for(const p of current?.plants ?? [])items.set(p.element_id,{id:p.element_id,name:p.name});
-    return [...items.values()].sort((a,b)=>a.name.localeCompare(b.name));
-  },[mapElements,current]);
+  const mapChoices = useMemo(() => {
+    const choices = mapElements.map(([id, name]) => ({ id, name })).sort(compareAssets);
+    return { choices, names: new Map(choices.map(item => [item.id, item.name])) };
+  }, [mapElements]);
+  const elementChoices = useMemo(() => {
+    const extra = new Map<string, AssetChoice>();
+    for (const plant of current?.plants ?? []) {
+      if (mapChoices.names.get(plant.element_id) !== plant.name) {
+        extra.set(plant.element_id, { id: plant.element_id, name: plant.name });
+      }
+    }
+    if (!extra.size) return mapChoices.choices;
+    return [...mapChoices.choices.filter(item => !extra.has(item.id)), ...extra.values()].sort(compareAssets);
+  }, [mapChoices, current]);
   const backQuery = new URLSearchParams(window.location.search); backQuery.set('view','network'); backQuery.delete('t'); backQuery.delete('element');
   const currentUnit = current?.scenarios.find(s=>s.metric)?.metric==='voltage' ? 'p.u.' : current?.scenarios.find(s=>s.metric)?.metric==='active_power' ? 'MW' : '%';
   const generatorSelected = ['ElmSym','ElmGenstat','ElmPvsys'].includes(current?.element?.class_name ?? '');
@@ -166,7 +185,9 @@ export default function NetworkPage() {
           </section>
           {!mapFocus&&inspectorVisible&&<aside className="nw-inspector" aria-label="Betriebsmittel über alle Szenarien">
             <div className="nw-inspector-title"><span className="nw-eyebrow">Betriebsmittel</span>{element&&<button className="nw-icon" aria-label="Auswahl aufheben" onClick={()=>pickElement(null)}><X size={14}/></button>}</div>
-            <select className="nw-asset-select" aria-label="Betriebsmittel auswählen" value={element??''} onChange={e=>pickElement(e.target.value||null)}><option value="">Auf der Karte auswählen</option>{elementChoices.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select>
+            <SearchableDropdown className="nw-asset-select" label="Betriebsmittel auswählen"
+              placeholder="Auf der Karte auswählen" items={elementChoices} idOf={assetId} labelOf={assetName}
+              value={element} onChange={pickElement} emptyHint="Keine passenden Betriebsmittel" allowReset={false} />
             <h2>{selectedName??'Netzüberblick'}</h2>
             <p className="nw-muted">{current?.element ? `${current.element.grid} · ${number(current.element.nominal_kv)} kV` : 'Ein Klick zeigt die zeitgleichen Werte in allen Szenarien.'}</p>
             <div className="nw-inspector-stats"><div><span>{selectedName?'Szenariowert':'Max. Auslastung · Gesamtnetz'}</span><strong>{number(selectedName?selectedHour?.value:selectedHour?.loading_max,3)} <small>{selectedName?currentUnit:'%'}</small></strong></div><div><span>{selectedName?'Referenz REF':'Grenzverletzungen · Gesamtnetz'}</span><strong>{number(selectedName?selectedHour?.ref:selectedHour?.loading_over,3)} <small>{selectedName?currentUnit:''}</small></strong></div></div>
@@ -182,7 +203,7 @@ export default function NetworkPage() {
             <p className="nw-muted">— bedeutet nicht verfügbar. Bekannte Kosten sind Teilsummen; fehlende Kraftwerke werden nicht als 0 € gezählt.</p>
           </aside>}
         </div>
-        {!mapFocus&&<><section id="network-heatmap" className="nw-section" aria-label="Szenarien-Zeit-Heatmap">
+        {!mapFocus&&<><section ref={heatRef} id="network-heatmap" className="nw-section" aria-label="Szenarien-Zeit-Heatmap">
           <div className="nw-section-heading"><div><span className="nw-eyebrow">Szenario × Zeit</span><h2>Wo wird es kritisch?</h2><p>{elementHeat&&selectedName?selectedName:'Gesamtnetz, unabhängig von Netz- und Spannungsfilter'} · {effectiveMetric==='voltage'?'Minimum':effectiveMetric==='redispatch'?'Betragsgrößte bekannte Stundenkosten':'Maximum'} je Zeitfenster. Klick öffnet Szenario und tatsächlichen Zeitpunkt.</p></div>
             <div className="nw-actions"><label className="nw-checkbox"><input type="checkbox" checked={elementHeat} disabled={!element} onChange={e=>{
               setElementHeat(e.target.checked);
@@ -190,7 +211,7 @@ export default function NetworkPage() {
             }}/>Gewähltes Element</label>
               <select aria-label="Heatmap-Messgröße" value={effectiveMetric} onChange={e=>setHeatMetric(e.target.value as NetworkMetric)}><option value="loading">Auslastung %</option><option value="voltage">Spannung p.u.</option>{generatorSelected&&elementHeat&&<option value="active_power">Erzeugung MW</option>}<option value="redispatch">Redispatch € / Stunde</option></select></div></div>
           {heatError&&<p role="alert" className="nw-error">{heatError}</p>}
-          {heatData ? heatData.scenarios.some(s=>s.cells.some(c=>c!==null)) ? <ScenarioTimeHeatmap data={heatData} scenario={scenario?.id??null} t={t} onPick={(id,time)=>{pickScenario(id);pickTime(time);}}/>
+          {heatData ? heatData.scenarios.some(s=>s.cells.some(c=>c!==null)) ? <Suspense fallback={empty}>{heatVisible && <ScenarioTimeHeatmap data={heatData} scenario={scenario?.id??null} t={t} onPick={(id,time)=>{pickScenario(id);pickTime(time);}}/>}</Suspense>
             : <div className="nw-empty">{effectiveMetric==='redispatch'?'Noch keine Redispatch-Kosten für diese Auswahl importiert.':'Für diese Messgröße liegen keine Werte vor.'}</div>:!heatError&&empty}
           <div className="nw-scenario-key">{scenarios.map((s,i)=><button key={s.id} aria-pressed={s.id===scenario?.id} onClick={()=>pickScenario(s.id)}><b>{code(i)}</b>{s.name}</button>)}</div>
         </section>

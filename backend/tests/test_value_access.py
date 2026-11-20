@@ -149,3 +149,44 @@ def test_layout_15_adds_original_evaluation_storage_without_inventing_verdicts(t
         assert store.db.execute('SELECT COUNT(*) FROM analysis_values').fetchone()[0] == before
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("parquet", [False, True])
+def test_selected_hour_reads_preserve_null_zero_and_missing_series(tmp_path, parquet):
+    path = create_dummy_database(tmp_path / "selected.sqlite3")
+    store = ScenarioStore(path)
+    try:
+        db = store.db
+        run, metric, element, series, t = db.execute(
+            "SELECT s.run_id,s.metric_id,s.element_id,s.id,v.t FROM analysis_series s "
+            "JOIN analysis_values v ON v.series_id=s.id ORDER BY s.id,v.t LIMIT 1").fetchone()
+        next_t = db.execute("SELECT MIN(t) FROM analysis_values WHERE series_id=? AND t>?", (series, t)).fetchone()[0]
+        with db:
+            db.execute("UPDATE analysis_values SET value=NULL WHERE series_id=? AND t=?", (series, t))
+            db.execute("UPDATE analysis_values SET value=0 WHERE series_id=? AND t=?", (series, next_t))
+        if parquet:
+            parquet_run(db, path, run)
+        selection = [f"unknown-{i}" for i in range(1000)] + [element]
+        assert values.element_values_at(db, run, metric, t, selection) == {element: None}
+        assert values.element_values_at(db, run, metric, next_t, selection) == {element: 0}
+        assert values.element_values_at(db, run, metric, t - 1, selection) == {}
+    finally:
+        store.close()
+
+
+def test_dense_parquet_time_slice_excludes_unrequested_series(tmp_path):
+    path = tmp_path / "dense.sqlite3"
+    store = ScenarioStore(path)
+    try:
+        db = store.db
+        writer = values.ValueWriter(path, "dense")
+        with db:
+            db.execute("INSERT INTO analysis_runs VALUES('dense','dense','p','s','test','completed')")
+            for sid in range(400):
+                writer.add(sid, [0], [None if sid == 1 else float(sid)])
+            db.execute("INSERT INTO pf_run_values VALUES(?,?,?,?,?,?)", ("dense", *writer.close()))
+        ids = [i for i in range(400) if i % 3 != 2]
+        assert values.samples_at(db, "dense", 0, ids) == {i: None if i == 1 else float(i) for i in ids}
+        assert values.samples_at(db, "dense", 1, ids) == {}
+    finally:
+        store.close()

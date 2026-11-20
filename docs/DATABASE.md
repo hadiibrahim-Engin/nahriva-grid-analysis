@@ -10,10 +10,10 @@ dashboard reads both. New archive restorations retain Parquet. PowerFactory writ
 dashboard can additionally import explicit Redispatch deliveries through the same serialized write lock.
 The SQLite file uses WAL mode, so reading never blocks the script and the script never blocks a reader.
 
-Layout version: **18** (`PRAGMA user_version`; results schema 2 in `schema_migrations`). The tables are defined in
+Layout version: **19** (`PRAGMA user_version`; results schema 2 in `schema_migrations`). The tables are defined in
 `backend/app/analysis/migrations/002_analysis.sql` (results), `backend/app/simulation/store.py` (PowerFactory bridge,
 summaries, views) and `backend/app/simulation/gridlens_store.py` (analyses, master data, native results). An older
-file is brought up to date once when it is opened. Layout 18 adds `rd_imports` and `rd_hours`, defined in
+file is brought up to date once when it is opened. Layout 19 indexes generator lookups and hourly Redispatch reads. Layout 18 adds `rd_imports` and `rd_hours`, defined in
 `backend/app/simulation/redispatch.py`: immutable delivery revisions and supplied hourly MWh, EUR/MWh and exact
 signed costs. These are distinct from native power-flow measurements and included in analysis archives.
 The import contract is described in [REDISPATCH.md](REDISPATCH.md).

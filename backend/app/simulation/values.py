@@ -322,28 +322,77 @@ def _query_cursor(db, run_id, sql, params, lock):
         cursor.close()
 
 
-def iter_query(db, run_id, sql, params=(), *, batch_size=16384, lock=None):
+def iter_query(db, run_id, sql, params=(), *, batch_size=16384, lock=None, named=True):
     """Bounded raw query stream on either engine. Close the generator when stopping iteration early."""
     if not 1 <= batch_size <= 1_000_000:
         raise ValueError('batch_size must be between 1 and 1000000')
     with _query_cursor(db, run_id, sql, params, lock) as (cursor, sqlite):
-        row_type = None if sqlite else _row_type([d[0] for d in cursor.description])
+        row_type = None if sqlite or not named else _row_type([d[0] for d in cursor.description])
         while True:
             batch = cursor.fetchmany(batch_size)
             if not batch:
                 break
-            yield from batch if sqlite else map(row_type._make, batch)
+            yield from batch if row_type is None else map(row_type._make, batch)
 
 
-def query(db, run_id, sql, params=(), lock=None):
+def query(db, run_id, sql, params=(), lock=None, *, named=True):
     """Query one run in SQLite or Parquet. `lock` guards only the shared SQLite connection, never DuckDB work."""
-    return list(iter_query(db, run_id, sql, params, lock=lock))
+    return list(iter_query(db, run_id, sql, params, lock=lock, named=named))
 
 
 def file_of(db, database, run_id):
     """Path of the run's value file, or None when its values are in SQLite."""
     path = _location(db, run_id)
     return None if path is None else folder(database) / path
+
+
+def samples_at(db, run_id, t, series_ids):
+    """Read just the requested numeric series keys at one time. IDs belong to run_id."""
+    if not series_ids:
+        return {}
+    ids = list(series_ids)
+    file = file_of(db, database_of(db), run_id)
+    if file is not None:
+        # The range also lets Parquet skip row groups. This lookup needs no metadata
+        # tables in DuckDB, even on the very first request of the run.
+        low, high = min(ids), max(ids)
+        with _instance().cursor() as cursor:
+            if len(ids) >= 256 and high - low + 1 <= 2 * len(ids):
+                # Dense map selections already cover most of the range. Avoid binding
+                # thousands of individual parameters while still returning only requested IDs.
+                wanted = set(ids)
+                rows = cursor.execute("SELECT series_id,value FROM read_parquet(?) WHERE t=? AND series_id BETWEEN ? AND ?",
+                                      (str(file), t, low, high)).fetchall()
+                return {sid: v for sid, v in rows if sid in wanted}
+            return dict(cursor.execute(
+                "SELECT series_id, value FROM read_parquet(?) WHERE t=? AND series_id BETWEEN ? AND ? "
+                "AND series_id IN (SELECT unnest(?))", [str(file), t, low, high, ids],
+            ).fetchall())
+    found = {}
+    for batch in _id_batches(ids):
+        marks = ",".join("?" for _ in batch)
+        found.update(db.execute(f"SELECT series_id,value FROM analysis_values WHERE t=? AND series_id IN ({marks})",
+                                (t, *batch)))
+    return found
+
+
+def _id_batches(ids):
+    # Also supported by SQLite builds with the historical 999-variable limit.
+    for start in range(0, len(ids), 900):
+        yield ids[start:start + 900]
+
+
+def element_values_at(db, run_id, metric, t, elements):
+    """One exact sample per selected element, across both storage formats."""
+    if not run_id or not elements:
+        return {}
+    series = {}
+    for batch in _id_batches(elements):
+        marks = ",".join("?" for _ in batch)
+        series.update(db.execute(
+            f"SELECT id,element_id FROM analysis_series WHERE run_id=? AND metric_id=? AND element_id IN ({marks})",
+            (run_id, metric, *batch)))
+    return {series[sid]: value for sid, value in samples_at(db, run_id, t, series).items()}
 
 
 def iter_samples(db, *, run_id=None, scenario_id=None, start=None, end=None, batch_size=16384):

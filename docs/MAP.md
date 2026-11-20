@@ -31,6 +31,17 @@ Heatmap contrast defaults to **Dezent**, with narrow backgrounds and stronger em
 behind the original SVG strokes. Transparent hit areas make thin lines easier to hover/click. `?contrast=normal`
 keeps the softer setting in a link. Neither contrast nor outlines replace voltage-level colours.
 
+Maps above 2,000 equipment open in a **Detailansicht** with readable equipment labels. **Gesamtnetz** shows the
+overview; **Detailansicht** centres the selected equipment (or a central equipment in drawing order). Zoom/pan
+change the native SVG `viewBox`, so Safari redraws vector paths and text at display resolution instead of scaling
+a cached bitmap. A spatial index activates equipment in the visible area plus a small edge buffer. Backgrounds
+and wider hit areas are created on demand, and only visible equipment receives colour updates. The counter
+reports active equipment out of the full matched total; all equipment and results remain available.
+
+In the large overview, text smaller than 7 screen pixels and uncritical backgrounds are suppressed to reduce
+clutter and drawing cost. Generator cost labels are shown in detail views. The analysis, scenario comparisons
+and time-series clock continue to cover the complete network, independently of the viewport.
+
 ## Map colouring, focus mode and loading another map
 
 The original SVG stroke/fill colours are preserved, including the operator's voltage-level colours. A separate,
@@ -101,7 +112,7 @@ no values), so the dashboard is exactly as fast as without a map.
 
 Choose a scenario and a time (critical times or the time course). The map shows that time; hover shows name, grid,
 nominal voltage and the exact across-scenario values described above; a click opens the
-element in the **Asset** view. Wheel or +/− zooms, dragging moves, **Fit** resets. Below the map the dashboard lists
+element in the **Asset** view. Wheel or +/− zooms, dragging moves, **Gesamtnetz** resets. Below the map the dashboard lists
 layers without an element, names that exist in several grids, repeated layer names (Figma appends `_2`) and
 elements of the analysis that have no layer.
 
@@ -117,15 +128,15 @@ Historical measurements before the separate background layer, with a synthetic m
 | Zoom (wheel, 40 steps) and hover | no frame over 25 ms, no long task |
 | Move (drag) | no frame over 25 ms while moving; one frame of 40–50 ms when grabbing (the browser finds the element under the pointer) |
 
-The drawing and background geometry are inserted once per map; a new time changes only background colours/visibility; zoom and
-move change one `translate3d` transform per frame on a compositor layer, without React rendering, and the browser
-redraws it sharp after a zoom off the main thread. The server matches layers once per map file and analysis (cache),
+Those historical measurements used a compositor transform. It caused persistent blurry SVG text in Safari on
+the 30,000-equipment stress map and has been replaced with native viewBox zoom plus viewport culling.
+The server matches layers once per map file and analysis (cache),
 and sends the values of a time as compact columns in the order of the matched elements (550 kB raw for 20,000
 elements, a few kB compressed) instead of one object per element. Before these changes the same map took 4.5 s to
 appear and stalled 90–120 ms at the start and end of every zoom or move.
 
 Controls: wheel or trackpad pinch zooms around the pointer, drag moves, double-click zooms in (Shift: out),
-two-finger pinch on touch screens, +/− around the centre, **Fit** resets.
+two-finger pinch on touch screens, +/− around the centre, **Gesamtnetz** resets, **Detailansicht** centres equipment.
 
 ## Safety
 
@@ -143,5 +154,74 @@ Figma to see the expected layer structure, change it, and export it back.
 ## Limits
 
 - The map is static: positions come from the drawing, not from PowerFactory.
-- Measured up to 20,000 equipment layers (see Speed). Far larger maps should be split per grid or voltage level.
+- The supplied 30,000-equipment stress map uses indexed viewport rendering; far larger drawings still need measurement.
 - Geographic routes (a JSON of line routes) are not supported yet; they would use the same matching.
+
+## Reproducible 30,000-equipment stress demo
+
+`backend/.venv/bin/python scripts/prepare_network_stress_demo.py` builds a separate database in
+`backend/data/network-stress-30000/`. It refuses to overwrite an existing database. The data goes through the
+real native runtime/bridge import with synthetic PowerFactory objects, not merely copied SVG symbols.
+
+The generated drawing has 100 regions and exactly **30,000 unique, matched equipment layers**: 13,410 lines,
+1,490 transformers, 14,900 busbars and 200 generators. Six independent maintenance scenarios share 35 hourly
+timestamps (a reference plus six scenario runs): 11,000,500 QDS values and 42,000 supplied synthetic Redispatch
+rows, covering every generator/scenario/hour. Up/down volumes balance exactly. The SVG is approximately 3.76 MB.
+This is a performance fixture, not an electrically validated network, an OPF or an N-1 benchmark.
+
+Start with `backend/.venv/bin/python scripts/serve.py --db backend/data/network-stress-30000/network-stress.sqlite3 --host 127.0.0.1 --port 8767`.
+Open `/network?map=stress-30000&focus=map&perf=1`. The optional performance panel shows matched equipment,
+original geometry count, SVG size, fetch times, SVG background/hit-layer construction and drawing latency.
+Hover timings omit the 120 ms debounce. Drawing latency extends through two animation frames; it does not
+guarantee GPU completion. Construction excludes XML parsing. These are local browser observations, not an SLA.
+
+`backend/.venv/bin/python scripts/benchmark_network_stress_demo.py` independently measures seven HTTP requests
+per endpoint against the running loopback server and writes `http-benchmark.json` next to the database.
+It includes gzip transport, decompression and JSON decoding, not browser rendering. Existing server/OS caches
+may be warm; the report does not claim a cold disk or cold process.
+
+Historical observations on 2026-11-20, before native vector zoom and viewport rendering:
+
+| Observation | Time |
+|---|---:|
+| SVG + layer matching fetch | 257 ms |
+| SVG background/hit-layer construction | 961 ms |
+| First drawing through two animation frames | 3,598 ms |
+| Subsequent hour: values fetch | 2,045 ms |
+| Subsequent hour: drawing through two animation frames | 300 ms |
+| One equipment's six-scenario hover data | 71 ms |
+
+The independent HTTP run's median was 917 ms for map values, 219 ms for the all-scenario hour summary and
+60 ms for equipment hover (seven samples; see the saved report for every measurement). These observations
+cover different requests/cache states and should not be added into a single page-load estimate.
+
+A subsequent cost-mode scenario switch showed 2,403 ms for values, 300 ms through the drawing frames and
+1,275 ms for rebuilding 200 generator cost labels. Cost labels have their own timer in the panel; concurrent
+page/map requests mean these times are not a serial end-to-end latency breakdown. The saved browser report
+includes these slower observations as well. Cost labels use direct equipment-node references rather than
+searching the entire large SVG once per generator.
+
+The initial stress test exposed repeated style/layout work while inserting equipment backgrounds. Backgrounds
+and transparent hit areas now build in detached fragments and attach in two batches. Loading-colour maps also
+avoid a full repaint when a selected asset refreshes unchanged Redispatch details.
+
+### Native-vector viewport update
+
+The subsequent optimisation keeps the complete 30,000-equipment dataset but initially activates 271 equipment
+in a readable detail view. Halo/hit geometry is now created only when required, cost labels use cached world
+bounds, and native viewBox zoom stays sharp during and after a drag. The demo's bus labels were increased from
+6 to 12 SVG units. Exact UTC map samples are fetched in one multi-metric scan per run instead of three; immutable
+Parquet snapshots have an eight-entry, 60-second cache keyed by database/file identity. Legacy SQLite reads
+remain uncached. Missing samples are never interpolated or turned into zeros.
+
+One local Safari run with warm server/OS caches recorded 247 ms for map fetch, 1,203 ms for initial scene setup,
+234 ms for values and 115 ms through two drawing frames. A subsequent pan activated 267 equipment and recorded
+22 ms through the drawing frames; six-scenario generator hover took 65 ms. This is not an FPS measurement or
+GPU-completion guarantee. See `browser-observations-vector.json`. The independent full-30,000-value HTTP run
+recorded a median of 616 ms versus the previous 917 ms (`http-benchmark-vector.json`); first-run metadata work
+and cache states differ from subsequent single-scenario hour changes in the browser.
+
+
+## Hourly map API
+
+`GET /api/simulation/maps/{name}/values?scenario=…&t=…` returns the full columns, including scenario values (`v`) and reference values (`r`), in match order. The dashboard sends `display=true` to request scenario values, outage indices and a layout token. The first such response includes metric (`m`) and limit (`lo`, `up`) columns. Subsequent requests can send the last token as `known_layout`. The server omits those three columns only when it confirms the same layout. A new token comes with a complete set of columns and replaces the client's previous layout.

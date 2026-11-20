@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -12,6 +13,23 @@ from app.analysis.series import insert_values
 from app.simulation import values
 from app.simulation.gridlens_store import TABLES as GRIDLENS_TABLES
 from app.simulation.redispatch import TABLES as REDISPATCH_TABLES
+
+
+def database_revision(db):
+    """Cache identity of the connected database, including local in-memory fixtures."""
+    path = values.database_of(db)
+    if not path:
+        return db, db.total_changes
+    # In WAL mode new commits can be visible long before the main database changes.
+    def identity(filename):
+        st = os.stat(filename)
+        return st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size
+
+    main = identity(path)
+    try:
+        return main, identity(str(path) + "-wal")
+    except FileNotFoundError:
+        return main, None
 
 
 def now():
@@ -213,7 +231,13 @@ VIEWS = """
 
 # PRAGMA user_version after set-up. Raise it whenever PF_TABLES or VIEWS change, so every existing
 # database is brought up to date once when it is next opened.
-LAYOUT_VERSION = 18
+LAYOUT_VERSION = 19
+
+HOUR_INDEXES = """
+    CREATE INDEX IF NOT EXISTS gl_plants_by_name ON gl_elements(assessment_id, name)
+        WHERE class_name IN ('ElmSym','ElmGenstat','ElmPvsys');
+    CREATE INDEX IF NOT EXISTS rd_hours_by_time ON rd_hours(import_id, start_t);
+"""
 
 # Columns added to tables of earlier layouts: (table, column, declaration). New files get them from the CREATE.
 ADDED_COLUMNS = (
@@ -278,13 +302,15 @@ class ScenarioStore:
 
     def _set_up(self):
         """Create what is missing and bring an earlier layout up to date; runs once per database file."""
-        self.db.execute("PRAGMA journal_mode=WAL")
-        schema.apply(self.db)
-        self.db.executescript(PF_TABLES + values.TABLE + GRIDLENS_TABLES + REDISPATCH_TABLES)
-        for table, column, declaration in ADDED_COLUMNS:
-            if column not in {row[1] for row in self.db.execute("PRAGMA table_info(" + table + ")")}:
-                self.db.execute("ALTER TABLE {} ADD COLUMN {} {}".format(table, column, declaration))
-        self.db.executescript(BACKFILL + VIEWS)
+        if schema.needs_setup(self.db, 18):
+            self.db.execute("PRAGMA journal_mode=WAL")
+            schema.apply(self.db)
+            self.db.executescript(PF_TABLES + values.TABLE + GRIDLENS_TABLES + REDISPATCH_TABLES)
+            for table, column, declaration in ADDED_COLUMNS:
+                if column not in {row[1] for row in self.db.execute("PRAGMA table_info(" + table + ")")}:
+                    self.db.execute("ALTER TABLE {} ADD COLUMN {} {}".format(table, column, declaration))
+            self.db.executescript(BACKFILL + VIEWS)
+        self.db.executescript(HOUR_INDEXES)
         schema.mark_set_up(self.db, LAYOUT_VERSION)
 
     def close(self):

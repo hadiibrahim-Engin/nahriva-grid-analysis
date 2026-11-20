@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import api from '../../api/client';
 import { ASSESSMENT } from '../../config/assessment';
 import { LOADING_LIMITS } from '../../config/loadingBands';
@@ -8,8 +8,9 @@ import { useGridFilter } from '../../hooks/useGridFilter';
 import { readAcrossColors, type AcrossColors } from '../../util/acrossColors';
 import { readParam, writeParam } from '../../util/shareLink';
 import { costHeatColour, costMagnitude } from '../../util/mapHeat';
-import { outlineEquipment, prepareHeatBackground } from '../../util/mapBackground';
+import { clearMapBackground, outlineEquipment, prepareHeatBackground } from '../../util/mapBackground';
 import MapEquipmentHover from '../network/MapEquipmentHover';
+import { SvgMapViewport } from '../../util/svgMapViewport';
 
 interface MapInfo { name: string; bytes: number }
 interface MapMatch {
@@ -25,17 +26,21 @@ interface MapMatch {
 }
 /** GET /maps/{name}/values: columns in the order of `elements` (m: 0 loading, 1 voltage, null not in the run). */
 interface MapValues {
+  scenario_id:string;
   t: number;
   in_window: boolean;
   m: (0 | 1 | 2 | null)[];
   v: (number | null)[];
-  r: (number | null)[];
   lo: (number | null)[];
   up: (number | null)[];
   off: number[];
 }
 /** Keep the original drawing separate from the result background. */
-interface Paint { strokes: SVGElement[]; dashes: string[]; all: SVGElement[]; opacity: string[]; heat: SVGGElement | null }
+type MapColumns = Pick<MapValues, 'm' | 'lo' | 'up'>;
+type DisplayValues = Omit<MapValues, keyof MapColumns> & Partial<MapColumns> & { layout: string };
+
+interface Paint { strokes: SVGElement[]; dashes: string[]; all: SVGElement[]; opacity: string[]; nodes:SVGGraphicsElement[]; heat: SVGGElement | null; hit:SVGGElement|null; visible:boolean }
+interface MapTimings { fetchMs?:number; buildMs?:number; valuesMs?:number; drawMs?:number; hoverMs?:number; labelsMs?:number; shapes?:number; svgBytes?:number }
 
 const SHAPES = 'path,line,polyline,polygon,rect,circle,ellipse';
 const DROP = 'script,foreignObject,iframe,object,embed,audio,video';
@@ -48,29 +53,33 @@ function sanitize(text: string): SVGSVGElement | null {
   const svg = doc.documentElement;
   if (doc.querySelector('parsererror') || svg.nodeName.toLowerCase() !== 'svg') return null;
   svg.querySelectorAll(DROP).forEach((node) => node.remove());
-  for (const node of [svg, ...Array.from(svg.querySelectorAll('*'))]) {
-    for (const attribute of Array.from(node.attributes)) {
-      const name = attribute.name.toLowerCase();
-      const value = attribute.value.trim().toLowerCase();
-      if (name.startsWith('on') || ((name === 'href' || name === 'xlink:href') && !value.startsWith('#') && !value.startsWith('data:image/'))) {
-        node.removeAttribute(attribute.name);
+  const walker = doc.createTreeWalker(svg, NodeFilter.SHOW_ELEMENT);
+  do {
+    const node = walker.currentNode as Element;
+    for (const attribute of node.getAttributeNames()) {
+      const name = attribute.toLowerCase();
+      if (name.startsWith('on')) node.removeAttribute(attribute);
+      else if (name === 'href' || name === 'xlink:href') {
+        const value = node.getAttribute(attribute)!.trim().toLowerCase();
+        if (!value.startsWith('#') && !value.startsWith('data:image/')) node.removeAttribute(attribute);
       }
     }
-  }
+  } while (walker.nextNode());
   svg.removeAttribute('width');
   svg.removeAttribute('height');
   svg.setAttribute('class', 'ab-map__svg');
-  return document.importNode(svg, true) as unknown as SVGSVGElement;
+  return document.adoptNode(svg) as unknown as SVGSVGElement;
 }
 
 /** Marks every matched layer (one pass over all ids, not one search per layer) and collects its colour shapes. */
 function prepare(svg: SVGSVGElement, layers: Record<string, number>, count: number): Paint[] {
-  const paints: Paint[] = Array.from({ length: count }, () => ({ strokes: [], dashes: [], all: [], opacity: [], heat: null }));
+  const paints: Paint[] = Array.from({ length: count }, () => ({ strokes: [], dashes: [], all: [], opacity: [], nodes:[], heat: null, hit:null,visible:true }));
   for (const node of Array.from(svg.querySelectorAll<SVGElement>('[id]'))) {
     const index = layers[node.id];
     if (index === undefined) continue;
     node.setAttribute('data-index', String(index));
     const paint = paints[index];
+    if(node instanceof SVGGraphicsElement)paint.nodes.push(node);
     for (const shape of node.matches(SHAPES) ? [node] : Array.from(node.querySelectorAll<SVGElement>(SHAPES))) {
       const stroke = shape.getAttribute('stroke');
       paint.all.push(shape);
@@ -83,7 +92,7 @@ function prepare(svg: SVGSVGElement, layers: Record<string, number>, count: numb
 
 function colourOf(values: MapValues, i: number, colors: AcrossColors, muted: string): string {
   const v = values.v[i];
-  if (v === null || values.off.includes(i)) return muted;
+  if (v === null) return muted;
   if (values.m[i] === 0) {
     const l = LOADING_LIMITS;
     return v >= l.severe ? colors.bands.severe : v > l.clear ? colors.bands.clear : v > l.overload
@@ -96,11 +105,17 @@ function colourOf(values: MapValues, i: number, colors: AcrossColors, muted: str
   return v < lower + ASSESSMENT.voltageMarginPu || v > upper - ASSESSMENT.voltageMarginPu ? colors.bands.high : colors.bands.ok;
 }
 
+function criticalValue(values:MapValues,i:number):boolean {
+  const value=values.v[i];
+  return value!=null&&(values.m[i]===0?value>=LOADING_LIMITS.warning:values.m[i]===1&&
+    (value<(values.lo[i]??ASSESSMENT.voltageBandPu.lower)+ASSESSMENT.voltageMarginPu || value>(values.up[i]??ASSESSMENT.voltageBandPu.upper)-ASSESSMENT.voltageMarginPu));
+}
+
 /**
  * The network map at one time: original SVG colours preserve voltage levels; a separate background shows
  * results (branches by loading, busbars by voltage). Hover shows the value, click opens the element in the
  * asset view. Built for large maps: the drawing is inserted once, a new time only changes colours, and zooming and
- * panning move one GPU layer without rendering React.
+ * panning update the native SVG viewBox and visible equipment without rendering React.
  */
 export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElementId, onElementsLoaded, mode='results', costs, costScale, dataRevision='' }: {
   scenarioId: string;
@@ -123,9 +138,14 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
   const [listError,setListError]=useState('');
   const [map, setMap] = useState<{ key: string; svg: string; match: MapMatch } | null>(null);
   const [loaded, setValues] = useState<{ map: string; data: MapValues } | null>(null);
+  const layout = useRef<{ map: string; token: string; columns: MapColumns } | null>(null);
   const [error, setError] = useState('');
   const [contrast,setContrast]=useState(()=>readParam('contrast')==='strong'?'strong':'normal');
   const [hovered,setHovered]=useState<{mapKey:string;index:number}|null>(null);
+  const [profiling]=useState(()=>readParam('perf')==='1');
+  const [timings,setTimings]=useState<MapTimings>({});
+  const recordTiming=useCallback((part:Partial<MapTimings>)=>{if(profiling)setTimings(previous=>({...previous,...part}));},[profiling]);
+  const recordHoverTiming=useCallback((ms:number)=>recordTiming({hoverMs:ms}),[recordTiming]);
   const host = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const tip = useRef<HTMLDivElement>(null);
@@ -134,6 +154,13 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
   const hoverKey=useRef('');
   const view = useRef({ x: 0, y: 0, k: 1 });
   const pending = useRef(0);
+  const viewport=useRef<SvgMapViewport<Paint>|null>(null);
+  const backgrounds=useRef<ReturnType<typeof prepareHeatBackground>|null>(null);
+  const selectedIndex=useRef<number|undefined>(undefined);
+  const paintVisible=useRef<()=>void>(()=>undefined);
+  const labelVisible=useRef<()=>void>(()=>undefined);
+  const settleTimer=useRef(0);
+  const [visibleCount,setVisibleCount]=useState(0);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ moved: boolean; distance: number } | null>(null);
 
@@ -147,37 +174,53 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
   const name = list?.maps.some(m=>m.name===chosen)?chosen:list?.maps[0]?.name ?? null;
   const mapKey = `${name}|${analysis}|${mapRevision}`;
   const hoveredIndex=hovered?.mapKey===mapKey?hovered.index:null;
-  const costsById=useMemo(()=>new Map(costs?.map(c=>[c.element_id,c.cost_eur])??[]),[costs]);
-  const maxCost=costScale??costMagnitude(costs?.map(c=>c.cost_eur)??[]);
+  // Selecting an asset refreshes page details; unchanged cost deliveries must not repaint 30,000 loading halos.
+  const activeCosts=mode==='redispatch'?costs:undefined;
+  const costsById=useMemo(()=>new Map(activeCosts?.map(c=>[c.element_id,c.cost_eur])??[]),[activeCosts]);
+  const maxCost=mode==='redispatch'?(costScale??costMagnitude(activeCosts?.map(c=>c.cost_eur)??[])):0;
 
   useEffect(() => {
     if (!name) return;
     const controller = new AbortController();
+    const started=performance.now();
     const params = analysis === null ? {} : { analysis };
     Promise.all([
       api.get<string>(`/maps/${encodeURIComponent(name)}.svg`, { signal: controller.signal, responseType: 'text' }),
       api.get<MapMatch>(`/maps/${encodeURIComponent(name)}/match`, { signal: controller.signal, params }),
     ])
-      .then(([svg, match]) => { setMap({ key: mapKey, svg: svg.data, match: match.data }); setError(''); })
+      .then(([svg, match]) => { setMap({ key: mapKey, svg: svg.data, match: match.data }); setError('');
+        recordTiming({fetchMs:performance.now()-started,svgBytes:new Blob([svg.data]).size}); })
       .catch((e: unknown) => {
         if (controller.signal.aborted) return;
         const detail = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail;
         setError(detail ?? 'The network map could not be loaded.');
       });
     return () => controller.abort();
-  }, [name, analysis, mapKey]);
+  }, [name, analysis, mapKey,recordTiming]);
 
   // The previous time's colours stay until the next time has arrived.
   useEffect(() => {
     if (!name) return;
     const controller = new AbortController();
-    api.get<MapValues>(`/maps/${encodeURIComponent(name)}/values`, { signal: controller.signal, params: { scenario: scenarioId, t } })
-      .then((response) => setValues({ map: mapKey, data: response.data }))
-      .catch(() => { if (!controller.signal.aborted) setError('The values of this time could not be loaded.'); });
+    const started=performance.now();
+    const previous = layout.current?.map === mapKey ? layout.current : null;
+    api.get<DisplayValues>(`/maps/${encodeURIComponent(name)}/values`, {
+      signal: controller.signal,
+      params: { scenario: scenarioId, t, display: true, known_layout: previous?.token },
+    }).then(({ data }) => {
+      if (controller.signal.aborted) return;
+      const columns = data.m && data.lo && data.up ? { m: data.m, lo: data.lo, up: data.up }
+        : previous?.token === data.layout ? previous.columns : null;
+      if (!columns) throw new Error('Missing map layout');
+      layout.current = { map: mapKey, token: data.layout, columns };
+      setValues({ map: mapKey, data: { ...data, ...columns } });
+      recordTiming({ valuesMs: performance.now() - started });
+    }).catch(() => { if (!controller.signal.aborted) setError('The values of this time could not be loaded.'); });
     return () => controller.abort();
-  }, [name, scenarioId, t, mapKey]);
+  }, [name, scenarioId, t, mapKey,recordTiming]);
 
   const shownMap = map?.key === mapKey ? map : null;
+  const elementIndex=useMemo(()=>new Map(shownMap?.match.elements.map((element,i)=>[element[0],i])??[]),[shownMap]);
   // Values of another map have another order; the previous time of the same map is kept while the next loads.
   const values = loaded?.map === mapKey ? loaded.data : null;
   const drawing = useMemo(() => {
@@ -187,16 +230,20 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
   }, [shownMap]);
   useEffect(()=>{ if(shownMap) onElementsLoaded?.(shownMap.match.elements); },[shownMap,onElementsLoaded]);
 
-  // Moves the drawing: one transform on one element, at most once per frame. translate3d keeps the drawing on its
-  // own compositor layer, so moving costs no repaint and the browser redraws it sharp off the main thread after a
-  // zoom. (Measured with 20,000 layers: switching will-change, a pointer-events rule or a :active cursor on the way
-  // made the browser restyle every node, 50–120 ms per gesture.)
+  // A native viewBox redraws SVG paths/text at the actual display resolution, including Safari.
+  // A CSS compositor scale would enlarge a cached bitmap and keep the entire large network active.
   const apply = () => {
     pending.current = 0;
-    const canvas = host.current;
-    if (!canvas) return;
-    const { x, y, k } = view.current;
-    canvas.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
+    const scene=viewport.current,area=frame.current;
+    if(!scene||!area)return;
+    if(scene.update(view.current,area.clientWidth,area.clientHeight)){
+      if(!scene.overview)backgrounds.current?.ensure(scene.visible);
+      paintVisible.current();labelVisible.current();
+      const selected=selectedIndex.current;
+      outlineEquipment(scene.svg,selected==null?null:scene.paints[selected]?.heat,'selected');
+    }
+    window.clearTimeout(settleTimer.current);
+    settleTimer.current=window.setTimeout(()=>setVisibleCount(scene.visible.size),120);
   };
   const move = (next: { x: number; y: number; k: number }) => {
     view.current = next;
@@ -212,25 +259,62 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
     if (box) zoomAt(box.width / 2, box.height / 2, factor);
   };
   const fit = () => move({ x: 0, y: 0, k: 1 });
+  const detail=()=>{
+    const scene=viewport.current,area=frame.current;
+    if(scene&&area)move(scene.detail(area.clientWidth,area.clientHeight,selectedElementId?elementIndex.get(selectedElementId):undefined));
+  };
 
   useLayoutEffect(() => {
+    const started=performance.now();
     const target = host.current;
     if (!target) return;
     target.replaceChildren();
+    target.style.transform='none';
+    viewport.current=null;
     if (drawing && drawing !== 'invalid') {
       target.appendChild(drawing.svg);
-      prepareHeatBackground(drawing.svg, drawing.paints);
+      backgrounds.current=prepareHeatBackground(drawing.svg, drawing.paints);
+      viewport.current=new SvgMapViewport(drawing.svg,drawing.paints);
     }
     view.current = { x: 0, y: 0, k: 1 };
+    const area=frame.current;
+    if(viewport.current&&area&&drawing&&drawing!=='invalid'&&drawing.paints.length>2000&&readParam('overview')!=='1')
+      view.current=viewport.current.detail(area.clientWidth,area.clientHeight,selectedElementId?elementIndex.get(selectedElementId):undefined);
     apply();
-  }, [drawing]);
+    if(drawing&&drawing!=='invalid')recordTiming({buildMs:performance.now()-started,shapes:drawing.paints.reduce((n,p)=>n+p.all.length,0)});
+    let width=area?.clientWidth??0,height=area?.clientHeight??0;
+    const scene=viewport.current;
+    const observer=new ResizeObserver(()=>{
+      if(area&&scene&&(width!==area.clientWidth||height!==area.clientHeight)){
+        view.current=scene.reframe(area.clientWidth,area.clientHeight,view.current.k);
+        width=area.clientWidth;height=area.clientHeight;
+      }
+      apply();
+    });
+    if(area)observer.observe(area);
+    return ()=>{
+      observer.disconnect();window.clearTimeout(settleTimer.current);cancelAnimationFrame(pending.current);
+      scene?.dispose();if(viewport.current===scene)viewport.current=null;
+      backgrounds.current=null;
+      if(drawing&&drawing!=='invalid')clearMapBackground(drawing.svg,drawing.paints);
+    };
+    // Initial scene/selection only; hour/asset changes must not rebuild or reset the viewport.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawing,recordTiming]);
 
   // Only the background changes colour. The SVG's line/fill colours retain their original meaning.
   useEffect(() => {
     if (!drawing || drawing === 'invalid' || !values) return;
+    let first=0,second=0;
     const off = new Set(values.off);
+    const paint=()=>{
+    const started=performance.now();
     const elements = shownMap?.match.elements ?? [];
-    drawing.paints.forEach((paint, i) => {
+    const scene=viewport.current;
+    if(scene?.overview)backgrounds.current?.ensure([...scene.visible].filter(i=>mode==='redispatch'
+      ? costsById.get(elements[i]?.[0])!=null&&costsById.get(elements[i]?.[0])!==0 : criticalValue(values,i)),false);
+    for(const i of viewport.current?.visible??[]){
+      const paint=viewport.current?.paints[i];if(!paint)continue;
       // Filters dim the original drawing without replacing its voltage-level colours.
       const [, , elementGrid, elementKv] = elements[i] ?? [];
       const outside = (grid !== null && elementGrid !== grid) || (kv !== null && elementKv !== kv);
@@ -238,29 +322,34 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
       const isPlant=['ElmSym','ElmGenstat','ElmPvsys'].includes(elements[i]?.[4]??'');
       const colour = mode==='redispatch'
         ? costHeatColour(cost,maxCost,colors.bands.severe,colors.neg,theme.mutedText)
-        : colourOf(values, i, colors, theme.mutedText);
-      const hasHeat = !outside && !off.has(i) && (mode==='redispatch'
+        : off.has(i) ? theme.mutedText : colourOf(values, i, colors, theme.mutedText);
+      let hasHeat = !outside && !off.has(i) && (mode==='redispatch'
         ? isPlant && cost != null : values.v[i] != null && (values.m[i]===0 || values.m[i]===1));
       if (paint.heat) {
         paint.heat.style.color = colour;
+        const critical=criticalValue(values,i);
+        if(viewport.current?.overview)hasHeat=hasHeat&&(mode==='redispatch'?cost!==0:critical);
         paint.heat.style.display = hasHeat ? '' : 'none';
-        const value=values.v[i];
-        const critical=value!=null&&(values.m[i]===0 ? value>=LOADING_LIMITS.warning
-          : values.m[i]===1 && (value<(values.lo[i]??ASSESSMENT.voltageBandPu.lower)+ASSESSMENT.voltageMarginPu || value>(values.up[i]??ASSESSMENT.voltageBandPu.upper)-ASSESSMENT.voltageMarginPu));
         paint.heat.style.opacity=mode==='redispatch'
           ? contrast==='normal'?'0.35':'0.52'
           : critical ? contrast==='normal'?'0.32':'0.50' : contrast==='normal'?'0.16':'0.26';
       }
       paint.strokes.forEach((shape,j) => { shape.style.strokeDasharray = off.has(i) ? '6 5' : paint.dashes[j]; });
       paint.all.forEach((shape,j) => { shape.style.opacity = outside ? '0.18' : paint.opacity[j]; });
-    });
-  }, [drawing, values, colors, theme.mutedText, grid, kv, shownMap,mode,costsById,maxCost,contrast]);
+    }
+    cancelAnimationFrame(first);cancelAnimationFrame(second);
+    if(profiling)first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>recordTiming({drawMs:performance.now()-started}));});
+    };
+    paintVisible.current=paint;paint();
+    return ()=>{paintVisible.current=()=>undefined;cancelAnimationFrame(first);cancelAnimationFrame(second);};
+  }, [drawing, values, colors, theme.mutedText, grid, kv, shownMap,mode,costsById,maxCost,contrast,profiling,recordTiming]);
 
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     if(!drawing||drawing==='invalid'||!shownMap)return;
-    const i=shownMap.match.elements.findIndex(e=>e[0]===selectedElementId);
-    outlineEquipment(drawing.svg,i>=0?drawing.paints[i]?.heat:null,'selected');
-  },[drawing,shownMap,selectedElementId]);
+    const i=selectedElementId?elementIndex.get(selectedElementId):undefined;
+    selectedIndex.current=i;
+    outlineEquipment(drawing.svg,i==null?null:drawing.paints[i]?.heat,'selected');
+  },[drawing,shownMap,selectedElementId,elementIndex]);
 
   useEffect(()=>{
     if(drawing&&drawing!=='invalid')outlineEquipment(drawing.svg,hoveredIndex==null?null:drawing.paints[hoveredIndex]?.heat,'hover');
@@ -268,25 +357,28 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
 
   useEffect(()=>{
     if(!drawing||drawing==='invalid'||!shownMap)return;
-    drawing.svg.querySelector('[data-cost-labels]')?.remove();
+    let group:SVGGElement|null=null;
+    const label=()=>{
+    group?.remove();group=null;
     if(!costs||mode!=='redispatch')return;
-    const group=document.createElementNS('http://www.w3.org/2000/svg','g');group.setAttribute('data-cost-labels','true');
+    const started=performance.now();
+    group=document.createElementNS('http://www.w3.org/2000/svg','g');group.setAttribute('data-cost-labels','true');
     for(const item of costs){
-      const i=shownMap.match.elements.findIndex(e=>e[0]===item.element_id);
-      const node=drawing.svg.querySelector<SVGGraphicsElement>(`[data-index="${i}"]:not([data-map-hit])`);
-      if(!node)continue;
-      const box=node.getBBox();const label=document.createElementNS('http://www.w3.org/2000/svg','text');
-      const rootMatrix=drawing.svg.getCTM();const matrix=node.getCTM();
-      const point=new DOMPoint(box.x+box.width/2,box.y+box.height);
-      const position=rootMatrix&&matrix?point.matrixTransform(rootMatrix.inverse().multiply(matrix)):point;
-      label.setAttribute('x',String(position.x));label.setAttribute('y',String(position.y+15));
-      label.setAttribute('text-anchor','middle');label.setAttribute('class','ab-map__cost-label');label.setAttribute('data-index',String(i));
+      const i=elementIndex.get(item.element_id);
+      if(i===undefined||!drawing.paints[i]?.visible||viewport.current?.overview)continue;
+      const box=viewport.current?.boxes[i];if(!box)continue;
+      const label=document.createElementNS('http://www.w3.org/2000/svg','text');
+      label.setAttribute('x',String(box.x+box.width+8));label.setAttribute('y',String(box.y+box.height-3));
+      label.setAttribute('text-anchor','start');label.setAttribute('class','ab-map__cost-label');label.setAttribute('data-index',String(i));
       label.textContent=item.cost_eur===null?'RD —':`${item.cost_eur.toLocaleString('de-DE',{maximumFractionDigits:2})} €`;
       group.append(label);
     }
     drawing.svg.append(group);
-    return ()=>group.remove();
-  },[drawing,shownMap,costs,mode]);
+    recordTiming({labelsMs:performance.now()-started});
+    };
+    labelVisible.current=label;label();
+    return ()=>{labelVisible.current=()=>undefined;group?.remove();};
+  },[drawing,shownMap,costs,mode,elementIndex,recordTiming]);
 
   // Wheel and trackpad: smooth zoom around the pointer (a pinch arrives as wheel with ctrlKey, in small steps).
   useEffect(() => {
@@ -435,8 +527,16 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
         </>}
         <button type="button" className="ab-chip" onClick={() => zoomCentre(1.5)} aria-label="Zoom in">+</button>
         <button type="button" className="ab-chip" onClick={() => zoomCentre(1 / 1.5)} aria-label="Zoom out">−</button>
-        <button type="button" className="ab-chip" onClick={fit}>Fit</button>
+        <button type="button" className="ab-chip" onClick={fit}>Gesamtnetz</button>
+        {(m?.counts.matched??0)>2000&&<button type="button" className="ab-chip" onClick={detail}>Detailansicht</button>}
+        {m&&<span className="ab-sub">{visibleCount.toLocaleString('de-DE')} von {m.counts.matched.toLocaleString('de-DE')} Betriebsmitteln im Ausschnitt</span>}
       </div>
+      {profiling&&<details className="ab-map__performance" open>
+        <summary>Performance · {(m?.counts.matched??0).toLocaleString('de-DE')} Betriebsmittel · {(timings.shapes??0).toLocaleString('de-DE')} Originalformen · {((timings.svgBytes??0)/1e6).toLocaleString('de-DE',{maximumFractionDigits:2})} MB SVG</summary>
+        <div>{([['Karte laden',timings.fetchMs],['SVG-Ebenen aufbauen',timings.buildMs],['Stundenwerte laden',timings.valuesMs],['Werte bis zum Zeichenframe',timings.drawMs],['Hover-Daten',timings.hoverMs]] as const).map(([label,ms])=><span key={label}>{label}: <b>{ms==null?'—':`${ms.toLocaleString('de-DE',{maximumFractionDigits:0})} ms`}</b></span>)}</div>
+        {mode==='redispatch'&&<div>Kostenlabels aufbauen: <b>{timings.labelsMs==null?'—':`${timings.labelsMs.toLocaleString('de-DE',{maximumFractionDigits:0})} ms`}</b></div>}
+        <small>Messung in diesem Browser. Laden enthält Server und Übertragung; Ebenenaufbau misst Einfügen und Erzeugen der Hintergründe ohne XML-Parsing. Zeichenframe enthält zwei Animationsframes, aber keine garantierte GPU-Fertigstellung. Hover ohne die 120-ms-Verzögerung; kurzfristig zwischengespeicherte Antworten können nahezu 0 ms benötigen.</small>
+      </details>}
       {mapFiles}
       {(error || drawing === 'invalid') && <div className="ab-empty" role="alert">{error || 'The map is not valid SVG.'}</div>}
       {!shownMap && !error && <div className="ab-empty" aria-busy>Loading network map …</div>}
@@ -444,12 +544,13 @@ export default function NetworkMap({ scenarioId, t, onPickAsset, selectedElement
         onPointerDown={onDown} onPointerMove={onMove} onPointerOver={event=>{if(!pointers.current.size)showTip(event);}} onPointerUp={onUp} onPointerCancel={onUp}
         onPointerLeave={() => showTip(null)} onDoubleClick={onDoubleClick}>
         <div ref={host} className="ab-map__canvas" />
+        {shownMap&&(values?.t!==t||values.scenario_id!==scenarioId)&&<div className="ab-map__pending" role="status">Stundenwerte werden aktualisiert …</div>}
         <div ref={tip} className="ab-map__hover" hidden={hoveredIndex===null} role="region" aria-label="Stundenvergleich beim Hover" tabIndex={0}
           onPointerEnter={keepTip} onPointerLeave={hideTip} onFocus={keepTip} onBlur={hideTip}
           onPointerDown={event=>event.stopPropagation()} onDoubleClick={event=>event.stopPropagation()}
           onKeyDown={event=>{if(event.key==='Escape'){event.stopPropagation();closeTip();}}}>
           {hoveredIndex!==null&&shownMap&&<MapEquipmentHover analysis={analysis} t={t} elementId={shownMap.match.elements[hoveredIndex][0]}
-            name={shownMap.match.elements[hoveredIndex][1]} scenarioId={scenarioId} revision={`${mapRevision}|${dataRevision}`}/>}
+            name={shownMap.match.elements[hoveredIndex][1]} scenarioId={scenarioId} revision={`${mapRevision}|${dataRevision}`} onTiming={profiling?recordHoverTiming:undefined}/>}
         </div>
       </div>
       {m && (m.unmatched_layers.length > 0 || m.ambiguous_layers.length > 0 || m.counts.elements_without_layer > 0 || m.repeated_layers.length > 0) && (

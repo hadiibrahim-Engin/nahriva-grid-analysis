@@ -7,8 +7,8 @@ const time = (t:number) => new Date(t*1000).toLocaleString('de-DE',{timeZone:'UT
 const label = (metric:EquipmentMetric) => ({loading:'Auslastung',voltage:'Spannung',active_power:'Wirkleistung'}[metric.id]??metric.name);
 
 /** One debounced request per equipment/time; pointer motion never refetches the table. */
-export default function MapEquipmentHover({analysis,t,elementId,name,scenarioId,revision}: {
-  analysis:string|null; t:number; elementId:string; name:string; scenarioId:string; revision:string;
+export default function MapEquipmentHover({analysis,t,elementId,name,scenarioId,revision,onTiming}: {
+  analysis:string|null; t:number; elementId:string; name:string; scenarioId:string; revision:string; onTiming?:(ms:number)=>void;
 }) {
   const [result,setResult]=useState<{key:string;data:EquipmentHour}|null>(null);
   const [error,setError]=useState('');
@@ -18,6 +18,7 @@ export default function MapEquipmentHover({analysis,t,elementId,name,scenarioId,
   useEffect(()=>{
     const controller=new AbortController(); setError('');
     const timer=window.setTimeout(()=>{
+      const started=performance.now();
       const cached=cache.get(key);
       const request=cached&&Date.now()-cached.at<15_000 ? Promise.resolve(cached.data)
         : networkApi.equipmentHour({analysis,t,element:elementId},controller.signal);
@@ -26,10 +27,11 @@ export default function MapEquipmentHover({analysis,t,elementId,name,scenarioId,
         cache.set(key,{data,at:Date.now()});
         if(cache.size>32)cache.delete(cache.keys().next().value!);
         setResult({key,data});
+        onTiming?.(performance.now()-started);
       }).catch(()=>{if(!controller.signal.aborted)setError('Stundenvergleich konnte nicht geladen werden.');});
     },120);
     return ()=>{window.clearTimeout(timer);controller.abort();};
-  },[analysis,t,elementId,revision,retry,key,cache]);
+  },[analysis,t,elementId,revision,retry,key,cache,onTiming]);
   const data=result?.key===key?result.data:null;
   const metrics=useMemo(()=>{
     const found=new Map<string,EquipmentMetric>();

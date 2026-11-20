@@ -96,3 +96,73 @@ def test_the_map_api_lists_serves_without_scripts_and_matches(api):
     assert "default-src 'none'" in svg.headers["content-security-policy"]
     assert api.get("/api/simulation/maps/plant/match").json()["counts"]["matched"] == 3
     assert api.get("/api/simulation/maps/nope/match").status_code == 404
+
+
+def test_batched_map_metrics_equal_individual_reads_preserve_missing_times_and_cache_immutable_runs(database,monkeypatch):
+    from app.simulation import values
+    store=ScenarioStore(str(database))
+    try:
+        run=store.db.execute("SELECT run_id FROM pf_scenario_runs WHERE kind='OUTAGE' LIMIT 1").fetchone()[0]
+        t=store.db.execute('SELECT MIN(t) FROM pf_run_times WHERE run_id=?',(run,)).fetchone()[0]
+        expected={metric:timepoint._values_at(database,run,metric,t) for metric in maps.METRICS}
+        timepoint._SAMPLE_CACHE.clear()
+        original=values.query
+        calls=[]
+        def counted(*args,**kwargs):
+            calls.append(1)
+            return original(*args,**kwargs)
+        monkeypatch.setattr(values,'query',counted)
+        assert timepoint._metrics_at(database,run,maps.METRICS,t)==expected
+        assert len(calls)==1
+        assert timepoint._metrics_at(database,run,maps.METRICS,t)==expected
+        assert len(calls)==(1 if values.file_of(store.db,database,run) else 2)
+        assert timepoint._metrics_at(database,run,maps.METRICS,t-1)=={metric:{} for metric in maps.METRICS}
+        assert timepoint._metrics_at(database,None,maps.METRICS,t)=={metric:{} for metric in maps.METRICS}
+    finally:
+        store.close()
+
+
+def test_browser_revalidates_both_map_resources(api, tmp_path, monkeypatch):
+    monkeypatch.setenv("OA_MAP_DIR", str(tmp_path))
+    file = tmp_path / "plant.svg"
+    file.write_text(SVG)
+    for suffix in (".svg", "/match"):
+        url = "/api/simulation/maps/plant" + suffix
+        response = api.get(url)
+        check = {"If-None-Match": response.headers["etag"]}
+        assert api.get(url, headers=check).status_code == 304
+        file.write_text(file.read_text().replace("Line_L0", "Removed_Line"))
+        updated = api.get(url, headers=check)
+        assert updated.status_code == 200 and updated.headers["etag"] != response.headers["etag"]
+        file.write_text(SVG)
+
+
+def test_display_reuses_only_the_current_map_layout(api, database, tmp_path, monkeypatch):
+    monkeypatch.setenv("OA_MAP_DIR", str(tmp_path))
+    file = tmp_path / "plant.svg"
+    file.write_text(SVG)
+    store = ScenarioStore(database)
+    try:
+        scenario = store.db.execute("SELECT id FROM pf_scenarios LIMIT 1").fetchone()[0]
+        times = [r[0] for r in store.db.execute("SELECT DISTINCT t FROM pf_run_times ORDER BY t LIMIT 2")]
+    finally:
+        store.close()
+    url = "/api/simulation/maps/plant/values"
+
+    def fetch(t, **options):
+        response = api.get(url, params={"scenario": scenario, "t": t, **options})
+        response.raise_for_status()
+        return response.json()
+
+    first = fetch(times[0], display=True)
+    full = fetch(times[0])
+    assert first == {**{k: v for k, v in full.items() if k != "r"}, "layout": first["layout"]}
+    for t in [times[1], times[0] - 1]:
+        next_hour = fetch(t, display=True, known_layout=first["layout"])
+        assert next_hour == {**{k: v for k, v in fetch(t).items() if k not in ("r", "m", "lo", "up")},
+                             "layout": first["layout"]}
+    assert next_hour["v"] == [None, None]
+    file.write_text(SVG.replace("North_Busbar_B0", "no_match"))
+    updated = fetch(times[0], display=True, known_layout=first["layout"])
+    assert updated["layout"] != first["layout"]
+    assert updated["m"] == [0] and updated["v"] == full["v"][:1]

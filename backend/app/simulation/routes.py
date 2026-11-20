@@ -1,14 +1,18 @@
 import importlib.util
+import gzip
 import hashlib
 import json
 import uuid
+from functools import partial
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic_core import from_json
 from pydantic import BaseModel, Field, ConfigDict
+from app.core.cache import TTLCache
 from app.analysis.bootstrap import get_repository, select_database
 from app.simulation import across, areas, gridlens_store, compare, data, grids, inventory, maps, network, redispatch, settings, states, timepoint
-from app.simulation.store import ScenarioStore, catalog_signature, now
+from app.simulation.store import ScenarioStore, catalog_signature, database_revision, now
 
 router = APIRouter(prefix="/api/simulation", tags=["PowerFactory scenarios"])
 
@@ -179,11 +183,28 @@ def overview(request: Request, analysis: str | None = Query(None, max_length=200
         "database_path": settings.ANALYSIS_DB_PATH,
         "mode": settings.ANALYSIS_MODE,
     })
-    # The dashboard asks every few seconds; mostly nothing changed. With the tag the browser asks "still this one?"
-    # and gets an empty 304 instead of the whole overview again (no-cache: it must ask every time).
-    tag = 'W/"' + hashlib.sha256(response.body).hexdigest()[:24] + '"'
-    headers = {"ETag": tag, "Cache-Control": "no-cache"}
-    if tag in (t.strip() for t in request.headers.get("if-none-match", "").split(",")):
+    return _revalidate(request, response)
+
+
+def _revision_etag(key):
+    return 'W/"' + hashlib.sha256(repr(key).encode()).hexdigest() + '"'
+
+
+def _matches_etag(request, tag, *, exists=True):
+    validators = {item.strip().removeprefix("W/") for item in request.headers.get("if-none-match", "").split(",")}
+    return (exists and "*" in validators) or tag.removeprefix("W/") in validators
+
+
+def _accepts_gzip(request):
+    return "gzip" in {token.strip().lower() for token in request.headers.get("accept-encoding", "").split(",")}
+
+
+def _revalidate(request, response):
+    """Let the browser reuse an identical snapshot across reloads and database switches."""
+    digest = hashlib.sha256(response.body).hexdigest()
+    tag = f'W/"{digest}"'
+    headers = {"ETag": tag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
+    if _matches_etag(request, tag):
         return Response(status_code=304, headers=headers)
     response.headers.update(headers)
     return response
@@ -201,6 +222,11 @@ def across_index(analysis: str | None = Query(None, max_length=200), db=Depends(
     return across.scenario_index(db, analysis)
 
 
+# Bound retained JSON independently of the number of assets and requested threshold combinations.
+_decode_cells = partial(from_json, cache_strings='keys')
+_cells_json = TTLCache(max_entries=64, ttl_seconds=600, max_bytes=64 * 1024 * 1024)
+
+
 class Relevance(BaseModel):
     """The thresholds of the dashboard's evaluation; above FULL_LIST_LIMIT elements only what they make relevant is sent."""
     warning: float = 80.0
@@ -208,12 +234,48 @@ class Relevance(BaseModel):
     band_upper: float = 1.1
     margin: float = 0.02
 
-    def apply(self, cells):
-        return across.relevant_cells(cells, self.warning, (self.band_lower, self.band_upper), self.margin)
+    def response(self, request, store, ids, limits, *, batch):
+        band = (self.band_lower, self.band_upper)
+        ids = tuple(dict.fromkeys(ids))
+        # Browsers advertise gzip as a plain token. Leave other encodings/quality
+        # preferences to the application's normal compression middleware.
+        compress = _accepts_gzip(request)
+        limits = tuple(limits)
+        key = (store.path, database_revision(store.db), ids, limits, self.warning, band, self.margin, batch, compress)
+
+        tag = _revision_etag(("evaluation-v1", key))
+        headers = {"ETag": tag, "Cache-Control": "private, no-cache", "Vary": "Accept-Encoding"}
+        if _matches_etag(request, tag, exists=False):
+            return Response(status_code=304, headers=headers)
+
+        def render():
+            nominal = {}
+            result = {}
+            for scenario in ids:
+                prepared = across._prepared_cells(store.db, scenario, limits, decode=_decode_cells)
+                if prepared is None:
+                    cells = across.scenario_cells(store, scenario, limits)
+                    result[scenario] = across.relevant_cells(cells, self.warning, band, self.margin)
+                else:
+                    listed = across.relevant_cells(prepared, self.warning, band, self.margin)
+                    result[scenario] = across._with_nominal_kv(store.db, scenario, listed, nominal)
+            payload = {"cells": result} if batch else result[ids[0]]
+            if payload is None:
+                raise HTTPException(404, "Scenario not found.")
+            body = JSONResponse(payload).body
+            return gzip.compress(body, compresslevel=3, mtime=0) if compress else body
+
+        body = _cells_json.get_or_compute(key, render)
+        if _matches_etag(request, tag):
+            return Response(status_code=304, headers=headers)
+        if compress:
+            headers["Content-Encoding"] = "gzip"
+        return Response(body, media_type="application/json", headers=headers)
 
 
 @router.get("/across-scenarios/cells")
 def across_cells_batch(
+    request: Request,
     ids: list[str] = Query(..., min_length=1, max_length=50),
     over: list[float] = Query(list(across.DEFAULT_LIMITS), min_length=1, max_length=5),
     relevance: Relevance = Depends(),
@@ -224,23 +286,19 @@ def across_cells_batch(
     The dashboard loads the scenarios in a few growing groups instead of one request each: fewer round trips, and each
     group arrives in one piece, so the summary is evaluated a few times instead of once per scenario.
     """
-    return JSONResponse({"cells": {i: relevance.apply(across.scenario_cells(db, i, tuple(over))) for i in dict.fromkeys(ids)}})
+    return relevance.response(request, db, ids, over, batch=True)
 
 
 @router.get("/across-scenarios/{scenario_id}/cells")
 def across_cells(
+    request: Request,
     scenario_id: str,
     over: list[float] = Query(list(across.DEFAULT_LIMITS), min_length=1, max_length=5),
     relevance: Relevance = Depends(),
     db=Depends(store),
 ):
     """Reduced values of one scenario, loaded on demand and cached."""
-    result = relevance.apply(across.scenario_cells(db, scenario_id, tuple(over)))
-    if result is None:
-        raise HTTPException(404, "Scenario not found.")
-    # Sent as it is: the dashboard asks for every scenario on each visit, and FastAPI would first walk every element
-    # once more (several ms per scenario, more than reading it).
-    return JSONResponse(result)
+    return relevance.response(request, db, [scenario_id], over, batch=False)
 
 
 @router.get("/across-scenarios")
@@ -280,37 +338,70 @@ def network_maps():
     return {"folder": str(maps.folder()), "maps": maps.available()}
 
 
+_map_bytes = TTLCache(max_entries=24, ttl_seconds=600, max_bytes=32 * 1024 * 1024)
+
+
+def _map_resource(request, revision, render, media_type, headers=None):
+    if revision is None:
+        raise HTTPException(404, "Map not found.")
+    tag = _revision_etag(("network-map-v1", media_type, revision))
+    headers = {**(headers or {}), "ETag": tag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
+    if _matches_etag(request, tag, exists=False):
+        return Response(status_code=304, headers=headers)
+    compress = _accepts_gzip(request)
+
+    def encode():
+        body = render()
+        return gzip.compress(body, compresslevel=3, mtime=0) if compress else body
+
+    body = _map_bytes.get_or_compute((revision, compress), encode)
+    if _matches_etag(request, tag):
+        return Response(status_code=304, headers=headers)
+    if compress:
+        headers["Content-Encoding"] = "gzip"
+    return Response(body, media_type=media_type, headers=headers)
+
+
 @router.get("/maps/{name}.svg")
-def network_map(name: str):
-    """One map as stored. Sent with a policy that forbids scripts, so the file cannot run code when opened."""
-    try:
+def network_map(request: Request, name: str):
+    """One map as stored, with script execution disabled when opened directly."""
+    def svg_bytes():
         svg = maps.read(name)
+        if svg is None:
+            raise FileNotFoundError(name)
+        return svg.encode()
+
+    try:
+        return _map_resource(request, maps.file_revision(name), svg_bytes, "image/svg+xml", {
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:",
+            "X-Content-Type-Options": "nosniff"})
+    except FileNotFoundError:
+        raise HTTPException(404, "Map not found.") from None
     except ValueError as error:
         raise HTTPException(422, str(error)) from None
-    if svg is None:
-        raise HTTPException(404, "Map not found.")
-    return Response(svg, media_type="image/svg+xml", headers={
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:",
-        "X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache"})
 
 
 @router.get("/maps/{name}/match")
-def network_map_match(name: str, analysis: str | None = Query(None, max_length=200), db=Depends(store)):
+def network_map_match(request: Request, name: str, analysis: str | None = Query(None, max_length=200), db=Depends(store)):
     """Which map layer shows which element of the analysis (default: the newest), and what is left over."""
     try:
-        result = maps.match(db.db, name, analysis)
+        revision = maps.match_revision(db.db, name, analysis)
+        return _map_resource(request, revision, lambda: JSONResponse(maps.match(db.db, name, revision=revision)).body,
+                             "application/json")
+    except FileNotFoundError:
+        raise HTTPException(404, "Map not found.") from None
     except ValueError as error:
         raise HTTPException(422, str(error)) from None
-    if result is None:
-        raise HTTPException(404, "Map not found.")
-    return JSONResponse(result)  # sent as built: 20,000 layers would otherwise be walked once more
 
 
 @router.get("/maps/{name}/values")
-def network_map_values(name: str, scenario: str = Query(..., max_length=200), t: int = Query(...), db=Depends(store)):
+def network_map_values(name: str, scenario: str = Query(..., max_length=200), t: int = Query(...),
+                       display: bool = False, known_layout: str | None = Query(None, max_length=64), db=Depends(store)):
     """The numbers of every map element at time t (compact columns in the order of the match's `elements`)."""
     try:
-        result = maps.values(db, name, scenario, t)
+        result = maps.values(db, name, scenario, t, display=display, known_layout=known_layout)
+    except FileNotFoundError:
+        raise HTTPException(404, "Map not found.") from None
     except ValueError as error:
         raise HTTPException(422, str(error)) from None
     if result is None:
